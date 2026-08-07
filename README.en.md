@@ -185,6 +185,19 @@ See [SECURITY.md](SECURITY.md) for reporting and credential-handling guidance.
 
 ## Quick Start
 
+### Download and Install
+
+Download the Apple Silicon build from [GitHub Releases](https://github.com/huaxx-lab/leetcode-ai-helper/releases/latest):
+
+- `LeetCode-助手-mac-arm64.dmg`: open it and drag the application into Applications;
+- `LeetCode-助手-mac-arm64.zip`: extract it and move the application into Applications manually.
+
+Public builds currently use an ad-hoc local signature and are not notarized with an Apple Developer ID. On first launch, right-click the application in Finder and choose Open. If macOS still reports that the application is damaged, verify that the package came from this repository and run:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/LeetCode 助手.app"
+```
+
 ### Requirements
 
 The current build and installation workflow targets Apple Silicon macOS:
@@ -238,7 +251,7 @@ Deleting the source checkout or rebuilding the app does not remove this data. Re
 
 ## Build
 
-Build an Apple Silicon `.app` and a signed zip archive:
+Build an Apple Silicon `.app`, signed zip archive, and drag-to-install DMG:
 
 ```bash
 npm run package:mac
@@ -249,6 +262,7 @@ Artifacts are written to:
 ```text
 dist.noindex/mac-arm64/LeetCode 助手.app
 dist.noindex/LeetCode-助手-mac-arm64.zip
+dist.noindex/LeetCode-助手-mac-arm64.dmg
 ```
 
 Build and replace the application in `/Applications`:

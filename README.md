@@ -185,6 +185,19 @@ Token 估算针对中文、英文、代码和标点采用不同权重，并缓�
 
 ## 快速开始
 
+### 直接下载安装
+
+从 [GitHub Releases](https://github.com/huaxx-lab/leetcode-ai-helper/releases/latest) 下载 Apple Silicon 版本：
+
+- `LeetCode-助手-mac-arm64.dmg`：打开后将应用拖入“应用程序”；
+- `LeetCode-助手-mac-arm64.zip`：解压后手动移动到“应用程序”。
+
+当前公开构建使用 ad-hoc 本地签名，尚未经过 Apple Developer ID 公证。首次启动时请在 Finder 中右键应用并选择“打开”。如果 macOS 仍提示应用已损坏，请确认安装包来自本仓库后执行：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/LeetCode 助手.app"
+```
+
 ### 环境要求
 
 当前构建和安装流程针对 Apple Silicon macOS：
@@ -238,7 +251,7 @@ chmod +x start.sh
 
 ## 构建项目
 
-生成 Apple Silicon `.app` 和签名后的 zip：
+生成 Apple Silicon `.app`、签名后的 zip 和可拖拽安装的 DMG：
 
 ```bash
 npm run package:mac
@@ -249,6 +262,7 @@ npm run package:mac
 ```text
 dist.noindex/mac-arm64/LeetCode 助手.app
 dist.noindex/LeetCode-助手-mac-arm64.zip
+dist.noindex/LeetCode-助手-mac-arm64.dmg
 ```
 
 直接替换安装到 `/Applications`：
