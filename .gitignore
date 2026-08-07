@@ -1,0 +1,30 @@
+# Dependencies and generated assets
+node_modules/
+.renderer-assets/
+build/
+dist.noindex/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+.DS_Store
+.idea/
+.vscode/
+
+# Internal working notes
+DEVELOPMENT_NOTES.md
+OPTIMIZATION_SUMMARY.md
+
+# Local coverage output
+coverage/
+.nyc_output/

@@ -1,0 +1,267 @@
+<p align="center">
+  <img src="assets/app-icon.svg" width="104" height="104" alt="LeetCode AI Helper icon">
+</p>
+
+<h1 align="center">LeetCode AI Helper</h1>
+
+<p align="center"><strong>Turn every question and submission into traceable evidence that can be reviewed and revised over time.</strong></p>
+
+<p align="center">A macOS learning workspace that connects LeetCode practice, AI review, knowledge capture, evidence-based mastery, and adaptive spaced repetition.</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-13%2B-292E33?logo=apple&logoColor=white" alt="macOS 13+">
+  <img src="https://img.shields.io/badge/Electron-43.2-47848F?logo=electron&logoColor=white" alt="Electron 43.2">
+  <img src="https://img.shields.io/badge/Node.js-22%2B-3C873A?logo=nodedotjs&logoColor=white" alt="Node.js 22+">
+  <img src="https://img.shields.io/badge/version-v1.0.0-2563EB" alt="Version 1.0.0">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F766E" alt="MIT License"></a>
+</p>
+
+<p align="center">
+  <a href="#showcase">Showcase</a> ·
+  <a href="#core-capabilities">Core Capabilities</a> ·
+  <a href="#how-it-works">How It Works</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="README.md">简体中文</a>
+</p>
+
+---
+
+<a id="showcase"></a>
+
+## Product Showcase
+
+### Submission History and AI Review
+
+Every attempt keeps its own conclusion. Real judge feedback, source changes, and performance data explain why that attempt failed, what changed, and what deserves attention next.
+
+<p align="center">
+  <img src="docs/screenshots/submission-review.png" width="100%" alt="LeetCode problem, submission history, and AI review">
+</p>
+
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/knowledge-map.png" alt="Knowledge map"></td>
+    <td width="50%" align="center"><img src="docs/screenshots/learning-insights.png" alt="Learning insights"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Knowledge map</strong><br>Organize problems into stable paths and inspect topic coverage, weak branches, and related items.</td>
+    <td align="center"><strong>Learning insights</strong><br>Track actual progress through mastery, evidence volume, study rhythm, and growth history.</td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/focus-home.png" alt="Today's review and focus entry"></td>
+    <td width="50%" align="center"><img src="docs/screenshots/provider-settings.png" alt="AI provider settings"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Today's review</strong><br>Build a daily queue from due and weak items, then cycle through practice, feedback, and reassessment.</td>
+    <td align="center"><strong>AI providers</strong><br>Use DeepSeek, Alibaba Cloud, OpenCode Go, or another compatible endpoint.</td>
+  </tr>
+</table>
+
+<a id="core-capabilities"></a>
+
+## Core Capabilities
+
+- **Automatic knowledge capture, not manual bookmarking**: only unseen user messages and new submissions are analyzed incrementally. Each item retains a normalized problem snapshot, source references, and time. A stable `canonicalKey` merges the same concept across conversations instead of creating duplicate cards.
+- **Extract the underlying concept from a specific problem**: AI maps the surface question to an algorithmic pattern, data structure, language mechanism, or common API, then records fine-grained labels and genuine prerequisites. A controlled taxonomy keeps the knowledge map stable instead of allowing the model to invent a new hierarchy on every pass.
+- **Measure mastery from evidence, not exposure**: explicit gaps, repeated struggle, independent application, correct explanations, submission outcomes, and diagnostic answers become confidence-weighted signals. Mastery score, evidence count, and current state evolve with new observations, so later performance can overturn an earlier assessment.
+- **A distinct learning trail for every submission**: analysis is keyed by `submissionId` and can use compiler errors, runtime failures, failed cases, pass counts, code differences, and performance changes. A new implementation never inherits an old conclusion, and a delayed older task cannot overwrite a newer cumulative summary.
+- **Review driven by both weakness and memory**: FSRS schedules intervals while mastery, confidence, overdue time, and weak-item priority determine the daily queue. The plan changes as new evidence arrives instead of behaving like a fixed reminder list.
+- **Every review produces new evidence**: the system generates a minimal lesson and a targeted multiple-choice, short-answer, completion, or coding exercise. Evaluation identifies demonstrated strengths, remaining gaps, and one actionable next step, then feeds the result back into mastery and scheduling.
+- **A knowledge map that matures into reusable methods**: items aggregate under stable topics to reveal coverage, mastery distribution, and related problems. Once a topic has enough evidence, the system derives recognition cues, steps, concrete pitfalls, and a compilable general code skeleton rather than storing one problem's answer.
+- **Focused, replaceable supporting tools**: video appears only for LeetCode problems or clearly durable learning topics. AI routing supports DeepSeek, Alibaba Cloud, OpenCode Go, and compatible endpoints. Eclipse JDT LS is optional, while local Java assistance remains available without a server.
+
+<a id="how-it-works"></a>
+
+## How It Works
+
+The application is organized around evidence, not chat count. Original questions and judge results establish what happened, AI structures and diagnoses it, and the scheduler decides what should be learned next.
+
+```mermaid
+flowchart TD
+  A[Questions / LeetCode submissions] --> B[Incremental evidence detection]
+  B --> C[Problem snapshot and source anchors]
+  B --> D[Core concept and prerequisites]
+  C --> E[Cross-conversation item merge]
+  D --> E
+  E --> F[Mastery / confidence / evidence history]
+  F --> G[FSRS and weakness-prioritized queue]
+  G --> H[Minimal lesson and targeted assessment]
+  H --> I[Score / diagnosis / next action]
+  I --> F
+  E --> J[Knowledge map and topic templates]
+```
+
+Three rules keep the loop honest: model answers are not evidence of learning; seeing a solution is not mastery; and attempts are appended rather than overwritten, so every assessment remains traceable to a question, submission, or diagnostic result.
+
+## Security
+
+- The repository contains no API keys, account cookies, SSH private keys, or deployment addresses.
+- Provider keys are entered in the application and encrypted with Electron `safeStorage` before local persistence. Existing plaintext settings are migrated after startup.
+- LeetCode and Bilibili login state stays in isolated Electron sessions and is never stored in the repository.
+- Remote Java completion is disabled until it is explicitly configured with local environment variables.
+- `.env.local`, private keys, dependencies, application data, and build output are ignored by Git.
+
+See [SECURITY.md](SECURITY.md) for reporting and credential-handling guidance.
+
+<a id="quick-start"></a>
+
+## Quick Start
+
+### Requirements
+
+The current build and installation workflow targets Apple Silicon macOS:
+
+- macOS 13 or newer;
+- Node.js 22 and npm;
+- Xcode Command Line Tools;
+- Python 3 for the `node-gyp` native build;
+- an API key from a supported AI provider.
+
+Install the command line tools with:
+
+```bash
+xcode-select --install
+```
+
+Use `nvm`, `fnm`, or Homebrew to install Node.js 22. The project includes an Electron native module, so do not skip dependency install scripts.
+
+### Install and Run
+
+```bash
+git clone https://github.com/huaxx-lab/leetcode-ai-helper.git
+cd leetcode-ai-helper
+npm install
+npm start
+```
+
+If macOS blocks the local Electron binary, use the startup script. It clears quarantine attributes and applies a local ad-hoc signature:
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+### First-Time Setup
+
+1. Open Settings and select DeepSeek, Alibaba Cloud, OpenCode Go, or add a custom provider.
+2. Enter the API Base URL, API key, and model; refresh the model list and save.
+3. Open Learning Activity > LeetCode and sign in to LeetCode China.
+4. Import a study plan or synchronize submissions, then open a problem to run, submit, and review code.
+
+Application data is stored outside the repository at:
+
+```text
+~/Library/Application Support/leetcode-ai-helper/
+```
+
+Deleting the source checkout or rebuilding the app does not remove this data. Redact account information, source code, history, and credentials before sharing logs.
+
+<a id="build"></a>
+
+## Build
+
+Build an Apple Silicon `.app` and a signed zip archive:
+
+```bash
+npm run package:mac
+```
+
+Artifacts are written to:
+
+```text
+dist.noindex/mac-arm64/LeetCode 助手.app
+dist.noindex/LeetCode-助手-mac-arm64.zip
+```
+
+Build and replace the application in `/Applications`:
+
+```bash
+npm run install:mac
+```
+
+The default is an ad-hoc local signature. To use an installed Developer ID Application certificate:
+
+```bash
+MAC_CODE_SIGN_IDENTITY="Developer ID Application: Example (TEAMID)" npm run package:mac
+```
+
+## Optional Remote Java Completion
+
+Without the remote service, local syntax validation and basic completion remain available. The remote HTTP gateway listens only on `127.0.0.1` and is reached through an SSH local port forward.
+
+### 1. Deploy the server
+
+Use a Debian or Ubuntu server. Upload the service directory and run the installer:
+
+```bash
+scp -r scripts/remote-lsp ubuntu@example.com:/tmp/leetcode-lsp
+ssh ubuntu@example.com
+cd /tmp/leetcode-lsp
+sudo bash install.sh
+```
+
+The script installs Java 21, Eclipse JDT LS, and a systemd unit. Verify it with:
+
+```bash
+sudo systemctl status leetcode-lsp
+curl http://127.0.0.1:9092/health
+```
+
+Do not expose port 9092 through the server firewall. The desktop client reaches it through SSH.
+
+### 2. Configure the client
+
+```bash
+cp .env.example .env.local
+```
+
+Edit `.env.local`:
+
+```dotenv
+LEETCODE_LSP_SSH_HOST=example.com
+LEETCODE_LSP_SSH_USER=ubuntu
+LEETCODE_LSP_SSH_PORT=22
+LEETCODE_LSP_TARGET_PORT=9092
+LEETCODE_LSP_SSH_IDENTITY_FILE=/absolute/path/to/ssh_private_key
+```
+
+Verify key permissions and non-interactive SSH access, then launch through the script:
+
+```bash
+chmod 600 /absolute/path/to/ssh_private_key
+ssh -o BatchMode=yes ubuntu@example.com true
+./start.sh
+```
+
+`.env.local` is ignored by Git. Never put private key contents in an environment file.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `npm start` | Prepare renderer assets and launch the development app |
+| `./start.sh` | Load `.env.local`, locally sign Electron, and launch |
+| `npm run rebuild:native` | Rebuild the macOS native module for the current Electron version |
+| `npm run package:mac` | Build the `.app` and zip archive |
+| `npm run install:mac` | Build and install into `/Applications` |
+
+## Repository Layout
+
+```text
+src/main/                   Electron lifecycle, IPC, and restricted preload bridges
+src/renderer/               Desktop interface, interaction state, and visual styles
+src/core/                   Learning engine, knowledge merging, code checks, content processing
+src/integrations/           LeetCode, video, AI providers, and streaming protocols
+src/platform/               macOS window placement, display profiles, and media cache
+assets/                     Application and provider icons
+native/                     Native macOS Liquid Glass and window capabilities
+scripts/                    Build, signing, install, and optional remote LSP scripts
+test/                       Regression and security tests without account data
+docs/screenshots/           Real product screenshots used by the README
+```
+
+## Contributing
+
+Run the project regression suite before submitting a change. Do not commit real API keys, cookies, server addresses, private keys, application data, or build output. The project is available under the [MIT License](LICENSE).
+
+> LeetCode is a trademark of its respective owner. This independent open-source project is not affiliated with or endorsed by LeetCode.

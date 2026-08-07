@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>询问 AI</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18212b;
+      --blue: #0877e6;
+      --blue-soft: rgba(8, 119, 230, .09);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      border-radius: 19px;
+    }
+    body {
+      position: relative;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      color: #075fae;
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+    }
+    button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      width: 100%;
+      height: 100%;
+      padding: 0 13px;
+      color: var(--ink);
+      background: transparent;
+      border: 0;
+      border-radius: 18px;
+      box-shadow: none;
+      font: 650 12px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      letter-spacing: 0;
+      cursor: default;
+      transition: color 120ms ease, transform 120ms ease;
+      -webkit-app-region: no-drag;
+    }
+    button:hover {
+      color: #0077ed;
+      background: transparent;
+      box-shadow: none;
+      transform: scale(1.025);
+    }
+    button:active { transform: scale(.965); background: transparent; }
+    button:focus-visible {
+      outline: 2px solid rgba(0, 119, 237, 0.72);
+      outline-offset: -3px;
+    }
+    svg { width: 14px; height: 14px; color: currentColor; flex: 0 0 auto; }
+    @media (prefers-reduced-motion: reduce) {
+      button { transition-duration: .01ms; }
+    }
+  </style>
+</head>
+<body>
+  <button id="ask" type="button" aria-label="询问 AI">
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M7.1 4.8 2.8 10l4.3 5.2M12.9 4.8l4.3 5.2-4.3 5.2M11.6 3.3 8.4 16.7" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span>询问 AI</span>
+  </button>
+  <script>
+    document.getElementById('ask').addEventListener('click', () => window.bubbleApi.ask());
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') window.bubbleApi.dismiss();
+    });
+  </script>
+</body>
+</html>

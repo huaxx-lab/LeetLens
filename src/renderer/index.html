@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' blob: https: http://127.0.0.1:*; connect-src 'self' https: http://127.0.0.1:*; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'">
+  <title>LeetCode AI</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="../../.renderer-assets/katex/dist/katex.min.css">
+</head>
+<body>
+  <!-- Titlebar -->
+  <div class="titlebar">
+    <div class="titlebar-drag"></div>
+    <div class="mac-controls" aria-label="窗口控制">
+      <button class="mac-window-button mac-close" id="btn-close" type="button" aria-label="退出应用">
+        <svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true"><path d="m2.5 2.5 5 5m0-5-5 5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      </button>
+      <button class="mac-window-button mac-minimize" id="btn-minimize" type="button" aria-label="最小化到程序坞">
+        <svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true"><path d="M2 5h6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+      <button class="mac-window-button mac-fullscreen" id="btn-fullscreen" type="button" title="全屏" aria-label="切换全屏">
+        <svg class="fs-enter" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M.6 5.9V.6h5.3L.6 5.9ZM9.4 4.1v5.3H4.1L9.4 4.1Z" fill="currentColor"/></svg>
+        <svg class="fs-exit" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M4.4.9v3.5H.9L4.4.9ZM5.6 9.1V5.6h3.5L5.6 9.1Z" fill="currentColor"/></svg>
+      </button>
+    </div>
+    <div class="titlebar-left">
+      <svg class="app-mark" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+        <path d="M7.25 4.75 2.75 10l4.5 5.25M12.75 4.75 17.25 10l-4.5 5.25M11.5 3.5l-3 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="titlebar-label">LeetCode 助手</span>
+    </div>
+    <div class="titlebar-actions">
+      <button class="tb-btn" id="btn-pin-window" type="button" title="保持窗口置顶" aria-label="保持窗口置顶" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="m9 4 6 6m-8.5 1.5 6 6M14 3l7 7-3.5 1.5-4 4L12 19l-7-7 3.5-1.5 4-4L14 3Z" stroke-linecap="round" stroke-linejoin="round"/><path d="m8.5 15.5-5 5" stroke-linecap="round"/></svg>
+      </button>
+      <button class="tb-btn" id="btn-new-chat" type="button" aria-label="新建对话">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+      </button>
+      <button class="tb-btn" id="btn-learning" type="button" aria-label="学习中心" aria-controls="learning-overlay" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16ZM20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="tb-btn" id="btn-usage" type="button" aria-label="Token 统计" aria-controls="usage-overlay" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 19V11M12 19V5M19 19v-8" stroke-linecap="round"/></svg>
+      </button>
+      <button class="tb-btn" id="btn-history" type="button" aria-label="历史对话" aria-controls="history-overlay" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
+      </button>
+      <button class="tb-btn" id="btn-settings" type="button" aria-label="设置" aria-controls="settings-overlay" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Chat -->
+  <main class="chat-container" id="chat-container">
+    <div class="messages" id="messages" role="region" aria-label="对话内容">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-clock"></div>
+        <h2>准备解题</h2>
+        <p>选中题目或直接输入</p>
+      </div>
+    </div>
+    <nav class="chat-rail" id="chat-rail" aria-label="提问导航"></nav>
+    <button class="scroll-bottom-btn hidden" id="btn-scroll-bottom" type="button" aria-label="回到底部">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="input-bar">
+      <div class="input-composer-shell">
+      <div class="queued-message hidden" id="queued-message" role="status" aria-live="polite">
+        <span class="queued-message-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h11M8 12h11M8 18h7M4 6h.01M4 12h.01M4 18h.01" stroke-linecap="round"/><path d="M18 16v5M15.5 18.5h5" stroke-linecap="round"/></svg></span>
+        <div class="queued-message-copy"><strong id="queued-message-count">待发送 1 条</strong><span id="queued-message-preview"></span></div>
+        <button class="queued-message-clear" id="btn-clear-queue" type="button" title="清空队列" aria-label="清空待发送队列"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round"/></svg></button>
+      </div>
+      <div class="composer-card">
+        <textarea class="chat-input" id="chat-input" placeholder="输入或粘贴题目…" rows="1" maxlength="100000" aria-label="输入问题" spellcheck="false"></textarea>
+      <div class="composer-mode-row">
+        <div class="chat-model-picker">
+          <button class="active-model-chip" id="btn-active-model" type="button" title="快速切换模型" aria-label="当前模型，快速切换" aria-haspopup="menu" aria-expanded="false" aria-controls="chat-model-options">
+            <span class="provider-dot" id="active-model-dot" aria-hidden="true"></span>
+            <span id="active-model-provider">DeepSeek</span>
+            <strong id="active-model-name">deepseek-v4-flash</strong>
+            <svg class="active-model-chevron" viewBox="0 0 20 20" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 8 4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="chat-model-options" id="chat-model-options" role="menu" aria-label="快速切换模型" aria-hidden="true" data-open="false" inert></div>
+        </div>
+        <div class="reasoning-picker">
+          <button class="reasoning-trigger" id="btn-reasoning" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="reasoning-options" title="调整下一次请求的推理强度">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8.5 5.5A3.5 3.5 0 0 0 5 9v.4A3.6 3.6 0 0 0 6 16.3V17a3 3 0 0 0 5 2.2V5.8a3 3 0 0 0-2.5-.3ZM15.5 5.5A3.5 3.5 0 0 1 19 9v.4a3.6 3.6 0 0 1-1 6.9V17a3 3 0 0 1-5 2.2V5.8a3 3 0 0 1 2.5-.3Z" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 10h3M13 14h3M8 16h3M13 8h3" stroke-linecap="round"/></svg>
+            <span>推理</span><strong id="reasoning-value">高</strong>
+            <svg class="reasoning-chevron" viewBox="0 0 20 20" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 8 4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="reasoning-options hidden" id="reasoning-options" role="menu" aria-label="推理强度">
+            <button type="button" role="menuitemradio" data-reasoning-effort="off" aria-checked="false"><span>关闭</span><i aria-hidden="true"></i></button>
+            <button type="button" role="menuitemradio" data-reasoning-effort="low" aria-checked="false"><span>低</span><i aria-hidden="true"></i></button>
+            <button type="button" role="menuitemradio" data-reasoning-effort="high" aria-checked="true"><span>高</span><i aria-hidden="true"></i></button>
+            <button type="button" role="menuitemradio" data-reasoning-effort="max" aria-checked="false"><span>最大</span><i aria-hidden="true"></i></button>
+          </div>
+        </div>
+        <span class="composer-status-spacer"></span>
+        <div class="context-meter-wrap">
+          <button class="context-meter" id="context-meter" type="button" aria-label="上下文使用量 0%" aria-controls="settings-overlay">
+            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle class="context-meter-track" cx="10" cy="10" r="7.5"/><circle class="context-meter-value" id="context-meter-value" cx="10" cy="10" r="7.5" pathLength="100"/></svg>
+          </button>
+          <div class="context-meter-popover hidden" id="context-meter-popover" role="status" aria-hidden="true"></div>
+        </div>
+        <button class="btn-send" id="btn-send" type="button" aria-label="发送" disabled>
+          <svg class="send-icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14-7-4.5 14-2.7-5.1L5 12Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="queue-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 7h9M5 12h7M5 17h5M17 14v6M14 17h6" stroke-linecap="round"/></svg>
+          <svg class="stop-icon" viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+        </button>
+      </div>
+      </div>
+      </div>
+    </div>
+
+    <section class="video-workspace hidden" id="video-workspace" role="dialog" aria-labelledby="video-workspace-title">
+      <header class="video-workspace-toolbar">
+        <div class="video-toolbar-main">
+          <button class="video-tool-button video-back-button" id="btn-close-video" type="button" aria-label="返回这道题"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="m14 6-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <div class="video-question-context"><strong id="video-workspace-title">题目视频</strong><span id="video-question-label"></span></div>
+          <button class="video-tool-button bili-account-button" id="btn-bili-account" type="button" aria-label="B站账号" data-auth="guest">
+            <span class="bili-account-avatar hidden" id="bili-account-avatar"></span>
+            <svg class="bili-mark" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 4 2.4 3M16 4l-2.4 3M5.5 7.5h13A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5V10a2.5 2.5 0 0 1 2.5-2.5Z" stroke-linecap="round" stroke-linejoin="round"/><path d="m9.5 12.5 2.5 2 2.5-2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="video-tabs" role="tablist" aria-label="视频视图">
+          <button class="video-tab active" id="video-tab-player" type="button" role="tab" tabindex="0" aria-selected="true" aria-controls="video-player-view">播放</button>
+          <button class="video-tab" id="video-tab-history" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="video-history-view">历史<span class="video-history-count hidden" id="video-history-count">0</span></button>
+        </div>
+      </header>
+
+      <div class="video-workspace-body">
+        <section class="video-view video-player-view" id="video-player-view" role="tabpanel" aria-labelledby="video-tab-player">
+          <div class="video-stage" id="video-stage">
+            <div class="video-stage-state" id="video-stage-state" role="status">
+              <div class="video-stage-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 5.5 18 12 8 18.5v-13Z" stroke-linejoin="round"/></svg></div>
+              <strong id="video-stage-title">等待视频请求</strong>
+              <span id="video-stage-detail">从当前题目匹配讲解</span>
+              <button class="video-stage-action" id="btn-video-retry" type="button">重新匹配</button>
+            </div>
+            <div class="video-player-mount hidden" id="video-player-mount" aria-label="视频播放器"></div>
+          </div>
+          <div class="video-now-row">
+            <div class="video-now-copy">
+              <strong id="video-now-title">视频讲解</strong>
+              <span id="video-now-source">等待匹配</span>
+            </div>
+            <span class="video-now-plays hidden" id="video-now-plays"></span>
+            <span class="video-cache-badge hidden" id="video-cache-badge">分段缓存</span>
+            <label class="video-autoplay-control" title="自动播放时静音">
+              <input class="video-autoplay-input" id="video-autoplay-input" type="checkbox" aria-label="视频自动播放">
+              <i aria-hidden="true"></i>
+            </label>
+            <button class="video-tool-button video-rematch" id="btn-video-rematch" type="button" aria-label="换一个视频"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
+          <div class="video-candidates hidden" id="video-candidates" aria-label="智能候选视频"></div>
+        </section>
+
+        <section class="video-view video-history-view hidden" id="video-history-view" role="tabpanel" aria-labelledby="video-tab-history">
+          <div class="video-history-heading">
+            <div><strong>最近视频</strong><span>按最近打开排序</span></div>
+            <div class="video-history-actions">
+              <button class="video-tool-button video-clear-cache" id="btn-clear-video-cache" type="button" aria-label="清理媒体缓存"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3 1.1 0 2.1-.1 3-.3" stroke-linecap="round"/></svg></button>
+              <button class="video-clear-history hidden" id="btn-clear-video-history" type="button">清空</button>
+            </div>
+          </div>
+          <div class="video-history-list" id="video-history-list"></div>
+        </section>
+      </div>
+
+      <section class="bili-account-sheet hidden" id="bili-account-sheet" aria-label="B站账号">
+        <header>
+          <div class="bili-sheet-title"><svg class="bili-mark" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 4 2.4 3M16 4l-2.4 3M5.5 7.5h13A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5V10a2.5 2.5 0 0 1 2.5-2.5Z" stroke-linecap="round" stroke-linejoin="round"/><path d="m9.5 12.5 2.5 2 2.5-2" stroke-linecap="round" stroke-linejoin="round"/></svg><strong>B站账号</strong></div>
+          <button class="video-tool-button" id="btn-close-bili-account" type="button" aria-label="关闭账号面板"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </header>
+        <div class="bili-account-content" id="bili-account-content"></div>
+      </section>
+    </section>
+  </main>
+
+  <section class="image-viewer hidden" id="image-viewer" role="dialog" aria-modal="true" aria-label="图片预览">
+    <header class="image-viewer-toolbar">
+      <div class="image-viewer-meta"><strong id="image-viewer-title">图片预览</strong><span id="image-viewer-count">1 / 1</span></div>
+      <div class="image-viewer-actions">
+        <button type="button" id="btn-image-zoom-out" title="缩小" aria-label="缩小图片"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14" stroke-linecap="round"/></svg></button>
+        <button type="button" id="btn-image-reset" title="恢复大小" aria-label="恢复图片大小"><span id="image-viewer-scale">100%</span></button>
+        <button type="button" id="btn-image-zoom-in" title="放大" aria-label="放大图片"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></button>
+        <a id="btn-image-original" href="#" target="_blank" rel="noopener noreferrer" title="打开原图" aria-label="在浏览器打开原图"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M14 5h5v5M19 5l-8 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" stroke-linecap="round"/></svg></a>
+        <button type="button" id="btn-close-image-viewer" title="关闭" aria-label="关闭图片预览"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round"/></svg></button>
+      </div>
+    </header>
+    <div class="image-viewer-stage" id="image-viewer-stage">
+      <div class="image-viewer-canvas" id="image-viewer-canvas"><img id="image-viewer-image" alt=""></div>
+    </div>
+    <button class="image-viewer-nav previous" type="button" id="btn-image-previous" title="上一张" aria-label="上一张图片"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="image-viewer-nav next" type="button" id="btn-image-next" title="下一张" aria-label="下一张图片"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </section>
+
+  <!-- History overlay -->
+  <div class="overlay hidden" id="history-overlay" role="dialog" aria-labelledby="history-title">
+    <div class="overlay-header">
+      <h3 id="history-title">历史对话</h3>
+      <button class="tb-btn tb-close" id="btn-close-history" type="button" title="关闭" aria-label="关闭历史对话"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="overlay-body" id="history-list"></div>
+  </div>
+
+  <!-- Learning center overlay -->
+  <div class="overlay learning-overlay hidden" id="learning-overlay" role="dialog" aria-labelledby="learning-title">
+    <div class="learning-shell" id="learning-shell">
+      <section class="learning-workspace" id="learning-workspace" data-learning-view="today">
+        <div class="overlay-header learning-header" id="learning-content-toolbar">
+          <label class="learning-region-picker">
+            <span>学习区域</span>
+            <select id="learning-region-select" aria-label="学习区域">
+              <option value="today">今日</option>
+              <option value="leetcode">力扣</option>
+              <option value="knowledge">知识库</option>
+              <option value="insights">洞察</option>
+            </select>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+          </label>
+          <div class="learning-heading sr-only"><h3 id="learning-title">今日</h3><span id="learning-view-caption">复习计划</span></div>
+          <div class="learning-context-nav">
+            <nav class="learning-subnav" data-learning-section="knowledge" aria-label="知识库视图">
+              <button type="button" data-learning-subtab="library">学习题目</button>
+              <button type="button" data-learning-subtab="knowledge">知识图谱</button>
+              <button type="button" data-learning-subtab="templates">解题模板</button>
+            </nav>
+          </div>
+          <div class="learning-header-actions">
+            <span class="learning-sync-state" id="learning-sync-state">本地学习档案</span>
+            <button class="tb-btn learning-trash-tab" id="learning-tab-trash" type="button" data-learning-tab="trash" title="回收站" aria-label="回收站">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7M10 11v5M14 11v5"/></svg><em id="learning-trash-count" aria-hidden="true"></em>
+            </button>
+            <button class="tb-btn tb-close" id="btn-close-learning" type="button" title="关闭" aria-label="关闭学习中心"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+          </div>
+        </div>
+        <div class="learning-content" id="learning-content" aria-labelledby="learning-title"></div>
+        <section class="learning-detail hidden" id="learning-detail" aria-label="学习项详情"></section>
+      </section>
+    </div>
+  </div>
+
+  <!-- Usage overlay -->
+  <div class="overlay hidden" id="usage-overlay" role="dialog" aria-labelledby="usage-title">
+    <div class="overlay-header">
+      <h3 id="usage-title">Token 统计</h3>
+      <button class="tb-btn tb-close" id="btn-close-usage" type="button" title="关闭" aria-label="关闭 Token 统计"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="overlay-body usage-body">
+      <div class="usage-segmented" role="tablist" aria-label="统计范围">
+        <button class="usage-scope active" id="usage-scope-current" type="button" role="tab" tabindex="0" aria-selected="true" aria-controls="usage-panel" data-scope="current">当前对话</button>
+        <button class="usage-scope" id="usage-scope-all" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="usage-panel" data-scope="all">全部历史</button>
+      </div>
+      <div class="usage-panel" id="usage-panel" role="tabpanel" aria-labelledby="usage-scope-current">
+        <div class="usage-model-row">
+          <span id="usage-data-quality">最近模型 · 精确统计</span>
+          <strong id="usage-model">尚未请求</strong>
+        </div>
+        <div class="usage-grid">
+          <div class="usage-metric usage-input"><span>输入 Token</span><strong id="usage-prompt">0</strong></div>
+          <div class="usage-metric usage-output"><span>输出 Token</span><strong id="usage-completion">0</strong></div>
+          <div class="usage-metric usage-total"><span>总计</span><strong id="usage-total">0</strong></div>
+          <div class="usage-metric usage-cached"><span>缓存 Token</span><strong id="usage-cached">—</strong></div>
+          <div class="usage-metric usage-tools"><span>工具调用</span><strong id="usage-tools">0</strong></div>
+        </div>
+        <div class="cache-panel">
+          <div class="cache-heading"><span>累计缓存命中率</span><strong id="usage-cache-rate">—</strong></div>
+          <div class="cache-track" aria-hidden="true"><div class="cache-fill" id="usage-cache-fill"></div></div>
+          <p id="usage-cache-note">暂无缓存数据</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings overlay -->
+  <div class="overlay hidden" id="settings-overlay" role="dialog" aria-labelledby="settings-title">
+    <div class="overlay-header">
+      <h3 id="settings-title">设置</h3>
+      <button class="tb-btn tb-close" id="btn-close-settings" type="button" title="关闭" aria-label="关闭设置"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="settings-shell">
+      <nav class="settings-nav" role="tablist" aria-label="设置分类">
+        <button class="active" type="button" role="tab" aria-selected="true" data-settings-page="providers">供应商</button>
+        <button type="button" role="tab" aria-selected="false" data-settings-page="routing">智能任务</button>
+        <button type="button" role="tab" aria-selected="false" data-settings-page="context">上下文</button>
+      </nav>
+      <div class="settings-pages">
+        <section class="settings-page active" data-settings-panel="providers">
+          <header class="settings-section-head"><div><strong>模型供应商</strong></div><button class="settings-icon-button" id="btn-add-provider" type="button" aria-label="添加供应商"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></button></header>
+          <div class="provider-list" id="provider-list" role="listbox" aria-label="供应商列表"></div>
+          <div class="provider-editor">
+            <div class="provider-editor-head"><input type="text" id="s-provider-name" aria-label="供应商名称" placeholder="供应商名称"><button class="provider-delete hidden" id="btn-delete-provider" type="button">删除</button></div>
+            <label for="s-base">API Base URL</label>
+            <input type="text" id="s-base" placeholder="https://api.example.com" autocomplete="url" autocapitalize="none" spellcheck="false">
+            <span class="field-hint">支持根地址或完整接口路径</span>
+            <label for="s-key">API Key</label>
+            <input type="password" id="s-key" placeholder="sk-..." autocomplete="off" autocapitalize="none" spellcheck="false">
+            <div class="deepseek-account-links hidden" id="deepseek-account-links">
+              <button type="button" data-provider-link="deepseek-keys">获取 API Key</button><button type="button" data-provider-link="deepseek-balance">充值与余额</button>
+            </div>
+            <div class="deepseek-account-links hidden" id="opencode-account-links">
+              <button type="button" data-provider-link="opencode-go-auth">获取 API Key</button><button type="button" data-provider-link="opencode-go-plan">套餐与用量</button>
+            </div>
+            <label for="s-model">模型</label>
+            <div class="model-picker">
+              <div class="model-input-row">
+                <input type="search" id="s-model" placeholder="搜索或输入模型" autocomplete="off" autocapitalize="none" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="model-options">
+                <button class="model-toggle" id="btn-toggle-models" type="button" aria-label="展开模型列表"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 9 5 5 5-5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button class="model-refresh" id="btn-refresh-models" type="button" aria-label="获取模型列表"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </div>
+              <div class="model-options hidden" id="model-options" role="listbox" aria-label="可用模型"></div>
+            </div>
+            <div class="model-status" id="model-status" role="status">填写 API Key 后可获取模型列表</div>
+            <label for="s-api-mode">接口模式</label><select id="s-api-mode" class="provider-api-mode"><option value="auto">自动（推荐）</option><option value="responses">Responses API</option><option value="chat">Chat Completions</option><option value="messages">Anthropic Messages</option></select>
+          </div>
+        </section>
+        <section class="settings-page" data-settings-panel="routing">
+          <header class="settings-section-head"><div><strong>智能任务</strong></div></header>
+          <div class="task-route-list">
+            <div class="task-route-row" data-task-route="video"><div><strong>视频判断</strong><span>判断问题是否适合视频讲解</span></div><select data-task-provider aria-label="视频判断供应商"></select><input data-task-model type="text" placeholder="跟随供应商模型" aria-label="视频判断模型"></div>
+            <div class="task-route-row" data-task-route="title"><div><strong>对话归档</strong><span>生成标题与滚动摘要</span></div><select data-task-provider aria-label="对话归档供应商"></select><input data-task-model type="text" placeholder="跟随供应商模型" aria-label="对话归档模型"></div>
+            <div class="task-route-row" data-task-route="learning"><div><strong>知识沉淀</strong><span>提取知识并更新熟练度</span></div><select data-task-provider aria-label="知识沉淀供应商"></select><input data-task-model type="text" placeholder="跟随供应商模型" aria-label="知识沉淀模型"></div>
+          </div>
+        </section>
+        <section class="settings-page" data-settings-panel="context">
+          <header class="settings-section-head"><div><strong>上下文管理</strong></div></header>
+          <div class="context-setting-list">
+            <label><span><strong>上下文容量</strong><small>模型可接受的总 Token</small></span><input id="s-context-window" type="number" min="4096" step="1024"><em>Token</em></label>
+            <label><span><strong>预留输出</strong><small>为本次回答留下空间</small></span><input id="s-context-reserve" type="number" min="256" step="256"><em>Token</em></label>
+            <label><span><strong>自动压缩阈值</strong><small>按可用输入预算计算</small></span><input id="s-context-threshold" type="number" min="50" max="99" step="1"><em>%</em></label>
+            <label><span><strong>压缩目标</strong><small>压缩后回落到的水位</small></span><input id="s-context-target" type="number" min="50" max="95" step="1"><em>%</em></label>
+            <label><span><strong>最近消息</strong><small>Token 预算内优先完整保留</small></span><input id="s-context-recent" type="number" min="4" max="80" step="1"><em>条</em></label>
+            <label><span><strong>图片上限</strong><small>进入下一次模型请求</small></span><input id="s-context-images" type="number" min="0" max="24" step="1"><em>张</em></label>
+          </div>
+        </section>
+      </div>
+    </div>
+    <footer class="settings-footer"><div class="save-ok hidden" id="save-ok" role="status">已保存</div><button class="btn-primary" id="btn-save-settings" type="button">保存设置</button></footer>
+  </div>
+
+  <script src="../../.renderer-assets/markdown-it/dist/markdown-it.min.js"></script>
+  <!-- 代码高亮只在回答完成时使用，异步加载不阻塞首屏；renderer 侧已做缺失兜底。 -->
+  <script src="../../.renderer-assets/@highlightjs/cdn-assets/highlight.min.js" async></script>
+  <script src="../../.renderer-assets/dompurify/dist/purify.min.js"></script>
+  <script src="../../.renderer-assets/katex/dist/katex.min.js"></script>
+  <script src="../integrations/bilibili-video.js"></script>
+  <script src="../integrations/streaming-svg.js"></script>
+  <script src="../core/context-manager.js"></script>
+  <script src="../integrations/leetcode-navigation.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
