@@ -23,3 +23,13 @@ test('chat rail geometry uses stable percentages instead of fullscreen size over
   const updateBlock = renderer.match(/function updateChatRailActive[\s\S]*?\n  function revealChatRailFromScroll/)?.[0] || '';
   assert.doesNotMatch(updateBlock, /chatRail\.client(?:Width|Height)|active\.offsetTop/);
 });
+
+test('chat rail reveals only for explicit user scrolling', () => {
+  const primeBlock = renderer.match(/function primeChatRail[\s\S]*?\n  function scheduleRailActive/)?.[0] || '';
+  const scrollBlock = renderer.match(/messagesEl\.addEventListener\('scroll'[\s\S]*?\n  document\.addEventListener\('keydown'/)?.[0] || '';
+  assert.doesNotMatch(primeBlock, /revealChatRailFromScroll/);
+  assert.match(scrollBlock, /const userInitiatedScroll = Date\.now\(\) < scrollUserIntentUntil/);
+  assert.match(scrollBlock, /if \(userInitiatedScroll\) revealChatRailFromScroll\(\)/);
+  assert.match(styles, /body:has\(\.message\[data-streaming\]\) \.chat-rail\.has-items:not\(\.is-scroll-revealed\)[\s\S]*?pointer-events:\s*none;[\s\S]*?opacity:\s*0;/);
+  assert.match(styles, /body:has\(\.message\[data-streaming\]\) \.chat-rail-track\s*\{\s*transition:\s*none;/);
+});

@@ -1224,7 +1224,7 @@ body.is-fullscreen .chat-container:has(.chat-rail.has-items) .messages::-webkit-
   }
 }
 
-/* 刻度带整体上下平移，让当前提问始终停在正中间，形成滚动特效。 */
+/* 刻度带整体上下平移，让当前提问始终停在正中间。 */
 .chat-rail-track {
   display: flex;
   width: 100%;
@@ -1235,13 +1235,24 @@ body.is-fullscreen .chat-container:has(.chat-rail.has-items) .messages::-webkit-
      JS 会按实际高度覆写这个值（视窗被 min() 夹过，写死会偏）。 */
   padding: calc(var(--rail-h, 300px) / 2) 0;
   transform: translateY(calc((var(--rail-active-index, 0) * (var(--rail-gap, 12px) + 5px) + 2.5px) * -1));
-  transition: transform 0.38s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 
 .chat-rail.has-items:hover,
 .chat-rail.has-items:focus-within,
 .chat-rail.has-items.is-scroll-revealed { opacity: 1; }
+
+/* 模型输出会持续推动消息区自动跟随。此时只有真实用户滚动才显示导航，
+   避免指针恰好停在边缘时触发悬停，也避免轨迹随每次流式更新持续补间。 */
+body:has(.message[data-streaming]) .chat-rail.has-items:not(.is-scroll-revealed) {
+  pointer-events: none;
+  opacity: 0;
+}
+
+body:has(.message[data-streaming]) .chat-rail-track {
+  transition: none;
+}
 
 /* 浮现时刻度从右侧滑入，并按序号做微小错峰，读起来更灵动。 */
 .chat-rail.has-items:hover .chat-rail-tick,

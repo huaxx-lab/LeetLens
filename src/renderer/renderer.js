@@ -74,8 +74,11 @@
 - 只有用户同时明确要求动态图、动画或动态演示时，才可使用 SVG 的声明式 SMIL animate / animateTransform；否则图必须保持静态。
 - SVG 必须自包含，禁止脚本、事件处理器和外部资源。需要 SVG 时尽早输出完整 SVG 代码块，再继续解释。
 
-## 内置工具规则
-- 联网搜索、网页抓取、代码解释和图片搜索只在解决当前问题确有必要时调用；普通算法题不要为了展示能力而调用工具。
+## 工具真实性规则
+- 工具能力以本次请求实际提供的工具定义为准；未收到工具定义时，视为当前没有任何可调用工具。
+- 不得声称当前拥有未实际提供的联网、网页抓取、代码解释或图片搜索能力；不得虚构“联网搜索按钮”、用户授权步骤或平台开关。
+- 用户要求实时检索，但本次请求未提供搜索工具时，应直接说明“当前供应商或模型在本应用中未接入联网搜索”，不要凭记忆冒充实时结果。
+- 联网搜索、网页抓取、代码解释和图片搜索只在已实际提供且解决当前问题确有必要时调用；普通算法题不要为了展示能力而调用工具。
 - 图片搜索同样受上述图解授权约束：用户未明确要求图片或图解时，不调用图片工具、不附带搜索图片。
 - 使用工具后直接整合结论，不输出工具协议、调用参数或中间过程；引用外部事实时给出可核验来源。
 
@@ -2282,7 +2285,7 @@
     hideChatRailPreview();
     chatRail.classList.add('is-scroll-revealed');
     clearTimeout(railRevealTimer);
-    railRevealTimer = setTimeout(() => chatRail.classList.remove('is-scroll-revealed'), 1050);
+    railRevealTimer = setTimeout(() => chatRail.classList.remove('is-scroll-revealed'), 900);
   }
 
   function primeChatRail() {
@@ -2290,7 +2293,6 @@
     requestAnimationFrame(() => {
       railActiveIndex = -1;
       updateChatRailActive(true);
-      revealChatRailFromScroll();
     });
   }
 
@@ -9583,10 +9585,10 @@
   // 自然链到消息区，横向手势由浏览器原生处理；一旦在这里 preventDefault 再手动
   // 改 scrollTop，就等于把系统的惯性滚动整个替掉，滚动会明显不跟手。
   messagesEl.addEventListener('wheel', event => {
+    if (Math.abs(event.deltaY) > 0.5) scrollUserIntentUntil = Date.now() + 500;
     if (event.deltaY < 0) {
       windowTransitionPinsBottom = false;
       autoFollow = false;
-      scrollUserIntentUntil = Date.now() + 500;
     }
   }, { passive: true });
   messagesEl.addEventListener('pointerdown', () => {
@@ -9594,6 +9596,7 @@
   }, { passive: true });
   messagesEl.addEventListener('touchstart', event => {
     touchScrollY = event.touches[0]?.clientY ?? null;
+    scrollUserIntentUntil = Date.now() + 800;
   }, { passive: true });
   messagesEl.addEventListener('touchmove', event => {
     const nextY = event.touches[0]?.clientY ?? null;
@@ -9608,10 +9611,11 @@
   let scrollIdleTimer = 0;
   messagesEl.addEventListener('scroll', () => {
     const currentScrollTop = messagesEl.scrollTop;
-    if (currentScrollTop < lastScrollTop - 1 && Date.now() < scrollUserIntentUntil) autoFollow = false;
+    const userInitiatedScroll = Date.now() < scrollUserIntentUntil;
+    if (currentScrollTop < lastScrollTop - 1 && userInitiatedScroll) autoFollow = false;
     if (nearBottom()) autoFollow = true;
     lastScrollTop = currentScrollTop;
-    revealChatRailFromScroll();
+    if (userInitiatedScroll) revealChatRailFromScroll();
     scheduleRailActive();
     updateScrollButton();
     const suppressScrollChrome = fullscreenTransitioning || performance.now() < suppressScrollChromeUntil;

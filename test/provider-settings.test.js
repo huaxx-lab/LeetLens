@@ -11,6 +11,7 @@ const {
   resolveTaskModel,
   sanitizeProviderSettings
 } = require('../src/integrations/provider-settings');
+const { nativeResponseTools } = require('../src/integrations/api-utils');
 
 test('OpenCode Go is a built-in provider with the official API root', () => {
   assert.equal(PROVIDER_DEFAULTS['opencode-go'].apiBase, 'https://opencode.ai/zen/go/v1');
@@ -31,6 +32,11 @@ test('OpenCode Go models resolve to their required wire protocols', () => {
   assert.equal(buildGenerationUrl(profile, {}, 'gpt-5.6-luna').pathname, '/zen/go/v1/responses');
   assert.equal(buildGenerationUrl(profile, {}, 'minimax-m2.7').pathname, '/zen/go/v1/messages');
   assert.equal(buildGenerationUrl(profile, {}, 'kimi-k3').pathname, '/zen/go/v1/chat/completions');
+});
+
+test('OpenCode Go API calls do not inherit tools from the OpenCode client', () => {
+  const apiUrl = new URL('https://opencode.ai/zen/go/v1/responses');
+  assert.deepEqual(nativeResponseTools(apiUrl, 'gpt-5.6-luna'), []);
 });
 
 test('task routing uses the routed OpenCode Go model protocol', () => {
