@@ -17,8 +17,10 @@
 </p>
 
 <p align="center">
+  <a href="#about">About</a> ·
   <a href="#showcase">Showcase</a> ·
   <a href="#core-capabilities">Core Capabilities</a> ·
+  <a href="#context-architecture">Context Architecture</a> ·
   <a href="#how-it-works">How It Works</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="README.md">简体中文</a>
@@ -29,6 +31,16 @@
 | You focus on | AI handles automatically |
 | --- | --- |
 | Asking about gaps, writing and submitting code, and completing review assessments | Detecting learning topics, merging duplicates, diagnosing errors, extracting prerequisites, recording evidence, updating mastery, scheduling reviews, deriving topic templates, managing context, and summarizing progress |
+
+<a id="about"></a>
+
+## About
+
+LeetCode AI Helper is not an answer-generating chat wrapper. It is a personal algorithm learning system for macOS that treats questions, code submissions, judge results, and review answers as a continuous stream of learning evidence. AI handles the follow-up work: identifying a gap, extracting the underlying concept, updating mastery, and selecting the next useful exercise.
+
+It addresses three problems that compound over long-term practice: knowledge disappearing when an AI conversation ends, recurring mistakes never becoming a coherent history, and review plans requiring too much manual upkeep. The goal is not to solve problems on your behalf, but to turn each authentic attempt into an auditable, reviewable ability record that changes with later performance.
+
+The project is intended for people who already learn with AI but do not want to maintain chat archives, mistake notebooks, taxonomies, and review calendars by hand. Model providers and supporting services remain replaceable while the application owns the learning record and scheduling logic.
 
 <a id="showcase"></a>
 
@@ -138,10 +150,31 @@ flowchart TD
 
 Three rules keep the loop honest: model answers are not evidence of learning; seeing a solution is not mastery; and attempts are appended rather than overwritten, so every assessment remains traceable to a question, submission, or diagnostic result.
 
+<a id="context-architecture"></a>
+
+## Context Architecture
+
+Many AI learning tools keep a fixed number of recent messages or truncate history only after a request fails. This project treats context as an observable, compressible budget with explicit retention priorities. You continue the conversation while the application keeps the active problem, constraints, and reasoning coherent inside the model window.
+
+| Common approach | This project |
+| --- | --- |
+| Keep the last N messages | Retain content by token budget, so one large code block does not distort the window |
+| Delete the oldest messages at the limit | Pin system instructions and the original problem, inject a rolling summary, then fit the most complete recent tail |
+| Re-summarize the entire history | Persist a summary cursor and process only content added since the previous summary |
+| Start compression when the user is waiting | Prewarm near 80% utilization, trigger at 95% by default, and target roughly 82% after compression |
+| Hide why the context became shorter | Show estimated input, available budget, tokens to compression, message count, and image count; display exact provider usage when returned |
+| Send images without a budget | Accept HTTPS images only, deduplicate and cap them, gate them by model vision support, and attach at most four per request |
+
+Token estimates use separate weights for CJK text, Latin text, code punctuation, and whitespace, with per-message caching to keep long conversations responsive. If summarization fails, the current study context is not discarded: the recent tail remains available and compression can recover on a later attempt. Alibaba-compatible endpoints also receive ephemeral cache markers on sufficiently long stable prefixes, while short prompts use the provider's default behavior.
+
+The default window is 128K tokens with 8K reserved for output. Window size, recent-message retention, and image budget are configurable. Live utilization is intentionally conservative; usage returned by the provider is the precise accounting source.
+
 ## Security
 
 - The repository contains no API keys, account cookies, SSH private keys, or deployment addresses.
 - Provider keys are entered in the application and encrypted with Electron `safeStorage` before local persistence. Existing plaintext settings are migrated after startup.
+- To generate answers, summaries, and submission reviews, relevant problems, questions, and code are sent to the AI provider you select. Choose a provider and account whose privacy policy fits your requirements.
+- Conversations, learning items, and submission analyses are stored as JSON in the local application data directory and are not currently encrypted at rest. Protect the local account and inspect logs or backups before sharing them.
 - LeetCode and Bilibili login state stays in isolated Electron sessions and is never stored in the repository.
 - Remote Java completion is disabled until it is explicitly configured with local environment variables.
 - `.env.local`, private keys, dependencies, application data, and build output are ignored by Git.
@@ -307,6 +340,6 @@ docs/screenshots/           Real product screenshots used by the README
 
 ## Contributing
 
-Run the project regression suite before submitting a change. Do not commit real API keys, cookies, server addresses, private keys, application data, or build output. The project is available under the [MIT License](LICENSE).
+Read the [contribution guide](CONTRIBUTING.md) and run the regression suite before submitting a change. Do not commit real API keys, cookies, server addresses, private keys, application data, or build output. The project is available under the [MIT License](LICENSE).
 
 > LeetCode is a trademark of its respective owner. This independent open-source project is not affiliated with or endorsed by LeetCode.

@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a focused improvement to the learning workflow
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Learning problem
+      description: What recurring learning burden or missing evidence does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Proposed workflow
+      description: Describe the user action, automatic system behavior, and resulting learning evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: This request contains no credentials, account data, private code, or server configuration.
+          required: true
