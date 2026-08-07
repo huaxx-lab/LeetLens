@@ -4,9 +4,9 @@
 
 <h1 align="center">LeetCode AI Helper</h1>
 
-<p align="center"><strong>Turn every question and submission into traceable evidence that can be reviewed and revised over time.</strong></p>
+<p align="center"><strong>You focus on asking, solving, and answering. AI turns that work into the next learning step.</strong></p>
 
-<p align="center">A macOS learning workspace that connects LeetCode practice, AI review, knowledge capture, evidence-based mastery, and adaptive spaced repetition.</p>
+<p align="center">No manual notes, tagging, or review calendars. AI continuously summarizes questions, analyzes each submission, extracts underlying knowledge, updates mastery, and schedules review while you keep learning.</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-13%2B-292E33?logo=apple&logoColor=white" alt="macOS 13+">
@@ -25,6 +25,10 @@
 </p>
 
 ---
+
+| You focus on | AI handles automatically |
+| --- | --- |
+| Asking about gaps, writing and submitting code, and completing review assessments | Detecting learning topics, merging duplicates, diagnosing errors, extracting prerequisites, recording evidence, updating mastery, scheduling reviews, deriving topic templates, managing context, and summarizing progress |
 
 <a id="showcase"></a>
 
@@ -57,10 +61,50 @@ Every attempt keeps its own conclusion. Real judge feedback, source changes, and
   </tr>
 </table>
 
+### From One Attempt to Long-Term Ability
+
+Practice is the input; organization happens automatically afterward. AI turns real judge results into submission evidence, deposits exposed gaps into learning items, and derives reusable templates across related problems. No manual content transfer between screens is required.
+
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/practice-workspace.png" alt="LeetCode problem and coding workspace"></td>
+    <td width="50%" align="center"><img src="docs/screenshots/submission-evidence.png" alt="Submission result and AI analysis evidence"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Focus on solving</strong><br>The problem, editor, cases, and live judge stay in one workspace. You only need to think and submit.</td>
+    <td align="center"><strong>Automatic AI review</strong><br>Pass counts, performance, code, and constraints produce a distinct diagnosis and actionable improvement.</td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/screenshots/learning-item.png" alt="Mastery, diagnosis, and learning evidence detail"></td>
+    <td width="50%" align="center"><img src="docs/screenshots/solution-templates.png" alt="AI-derived topic solution templates"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>AI maintains the learning record</strong><br>Knowledge path, diagnosis, mastery, evidence confidence, and next review date stay current automatically.</td>
+    <td align="center"><strong>AI distills reusable methods</strong><br>Related problems become recognition cues, steps, concrete pitfalls, and reusable code skeletons.</td>
+  </tr>
+</table>
+
+### Automatic Conversation, Video, and Context Management
+
+You can keep asking about the same problem without manually rebuilding context. The application exposes context usage, remaining budget, message count, and distance to automatic compression. Near the window limit, rolling summaries preserve the active problem, constraints, and established conclusions. Video is also selective: it appears only when AI identifies a LeetCode problem or a topic that genuinely benefits from structured study.
+
+<p align="center">
+  <img src="docs/screenshots/context-video.png" width="100%" alt="AI explanation, selective video entry, and context budget">
+</p>
+
+### Observable AI Usage
+
+Input, output, cached tokens, and tool calls are reported for both the active conversation and complete history. Learning management can run automatically without hiding its resource use.
+
+<p align="center">
+  <img src="docs/screenshots/token-usage.png" width="100%" alt="AI token usage statistics">
+</p>
+
 <a id="core-capabilities"></a>
 
 ## Core Capabilities
 
+- **AI manages the complete learning loop**: you only need to ask naturally, solve problems, submit code, and take assessments. Capture, deduplication, diagnosis, classification, mastery updates, review prioritization, topic synthesis, and progress reporting connect automatically without a separate note-taking workflow.
 - **Automatic knowledge capture, not manual bookmarking**: only unseen user messages and new submissions are analyzed incrementally. Each item retains a normalized problem snapshot, source references, and time. A stable `canonicalKey` merges the same concept across conversations instead of creating duplicate cards.
 - **Extract the underlying concept from a specific problem**: AI maps the surface question to an algorithmic pattern, data structure, language mechanism, or common API, then records fine-grained labels and genuine prerequisites. A controlled taxonomy keeps the knowledge map stable instead of allowing the model to invent a new hierarchy on every pass.
 - **Measure mastery from evidence, not exposure**: explicit gaps, repeated struggle, independent application, correct explanations, submission outcomes, and diagnostic answers become confidence-weighted signals. Mastery score, evidence count, and current state evolve with new observations, so later performance can overturn an earlier assessment.
@@ -68,25 +112,26 @@ Every attempt keeps its own conclusion. Real judge feedback, source changes, and
 - **Review driven by both weakness and memory**: FSRS schedules intervals while mastery, confidence, overdue time, and weak-item priority determine the daily queue. The plan changes as new evidence arrives instead of behaving like a fixed reminder list.
 - **Every review produces new evidence**: the system generates a minimal lesson and a targeted multiple-choice, short-answer, completion, or coding exercise. Evaluation identifies demonstrated strengths, remaining gaps, and one actionable next step, then feeds the result back into mastery and scheduling.
 - **A knowledge map that matures into reusable methods**: items aggregate under stable topics to reveal coverage, mastery distribution, and related problems. Once a topic has enough evidence, the system derives recognition cues, steps, concrete pitfalls, and a compilable general code skeleton rather than storing one problem's answer.
+- **Context is maintained by the system, not handed back to the user**: context share, estimated input, remaining budget, and compression threshold remain visible. Rolling summaries preserve the active problem and key conclusions during long conversations, so users can continue asking without repeatedly pasting the prompt or compressing history themselves.
 - **Focused, replaceable supporting tools**: video appears only for LeetCode problems or clearly durable learning topics. AI routing supports DeepSeek, Alibaba Cloud, OpenCode Go, and compatible endpoints. Eclipse JDT LS is optional, while local Java assistance remains available without a server.
 
 <a id="how-it-works"></a>
 
 ## How It Works
 
-The application is organized around evidence, not chat count. Original questions and judge results establish what happened, AI structures and diagnoses it, and the scheduler decides what should be learned next.
+The user produces authentic learning activity; the application organizes everything that follows around that evidence instead of accumulating chat history. Original questions and judge results establish what happened, AI structures, diagnoses, and summarizes it, and the scheduler determines what comes next.
 
 ```mermaid
 flowchart TD
-  A[Questions / LeetCode submissions] --> B[Incremental evidence detection]
+  A[User: ask / solve / answer] --> B[AI: incremental evidence detection]
   B --> C[Problem snapshot and source anchors]
   B --> D[Core concept and prerequisites]
   C --> E[Cross-conversation item merge]
   D --> E
-  E --> F[Mastery / confidence / evidence history]
-  F --> G[FSRS and weakness-prioritized queue]
-  G --> H[Minimal lesson and targeted assessment]
-  H --> I[Score / diagnosis / next action]
+  E --> F[AI updates mastery / confidence / evidence history]
+  F --> G[AI combines FSRS and weakness to schedule review]
+  G --> H[AI creates a minimal lesson and targeted assessment]
+  H --> I[AI summarizes score / diagnosis / next action]
   I --> F
   E --> J[Knowledge map and topic templates]
 ```
