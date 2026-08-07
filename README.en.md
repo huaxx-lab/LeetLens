@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/macOS-13%2B-292E33?logo=apple&logoColor=white" alt="macOS 13+">
   <img src="https://img.shields.io/badge/Electron-43.2-47848F?logo=electron&logoColor=white" alt="Electron 43.2">
   <img src="https://img.shields.io/badge/Node.js-22%2B-3C873A?logo=nodedotjs&logoColor=white" alt="Node.js 22+">
-  <img src="https://img.shields.io/badge/version-v1.0.0-2563EB" alt="Version 1.0.0">
+  <img src="https://img.shields.io/badge/version-v1.0.1-2563EB" alt="Version 1.0.1">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F766E" alt="MIT License"></a>
 </p>
 
