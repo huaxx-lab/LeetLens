@@ -19,7 +19,7 @@
     "test": "node --test test/*.test.js",
     "rebuild:native": "node-gyp rebuild --target=43.2.0 --dist-url=https://electronjs.org/headers && codesign --force --sign - build/Release/liquid_glass.node",
     "postinstall": "npm run rebuild:native",
-    "package:mac": "node scripts/prepare-renderer-assets.js && electron-builder --mac dir --arm64 && node scripts/prepare-macos-bundle.js && node scripts/sign-macos-bundle.js \"dist.noindex/mac-arm64/LeetCode 助手.app\" --archive \"dist.noindex/LeetCode-助手-mac-arm64.zip\" && node scripts/create-macos-dmg.js \"dist.noindex/LeetCode-助手-mac-arm64.zip\" \"dist.noindex/LeetCode-助手-mac-arm64.dmg\" && node scripts/prepare-renderer-assets.js --clean",
+    "package:mac": "node scripts/prepare-renderer-assets.js && electron-builder --mac dir --arm64 && node scripts/prepare-macos-bundle.js && node scripts/sign-macos-bundle.js \"dist.noindex/mac-arm64/LeetCode 助手.app\" --archive \"dist.noindex/LeetCode-AI-Helper-mac-arm64.zip\" && node scripts/create-macos-dmg.js \"dist.noindex/LeetCode-AI-Helper-mac-arm64.zip\" \"dist.noindex/LeetCode-AI-Helper-mac-arm64.dmg\" && node scripts/prepare-renderer-assets.js --clean",
     "install:mac": "npm run package:mac && node scripts/replace-macos-app.js \"dist.noindex/mac-arm64/LeetCode 助手.app\" \"/Applications/LeetCode 助手.app\" && xattr -cr \"/Applications/LeetCode 助手.app\" && node scripts/sign-macos-bundle.js \"/Applications/LeetCode 助手.app\" && node scripts/cleanup-macos-package.js"
   },
   "devDependencies": {

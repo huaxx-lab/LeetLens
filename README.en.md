@@ -189,8 +189,8 @@ See [SECURITY.md](SECURITY.md) for reporting and credential-handling guidance.
 
 Download the Apple Silicon build from [GitHub Releases](https://github.com/huaxx-lab/leetcode-ai-helper/releases/latest):
 
-- `LeetCode-助手-mac-arm64.dmg`: open it and drag the application into Applications;
-- `LeetCode-助手-mac-arm64.zip`: extract it and move the application into Applications manually.
+- `LeetCode-AI-Helper-mac-arm64.dmg`: open it and drag the application into Applications;
+- `LeetCode-AI-Helper-mac-arm64.zip`: extract it and move the application into Applications manually.
 
 Public builds currently use an ad-hoc local signature and are not notarized with an Apple Developer ID. On first launch, right-click the application in Finder and choose Open. If macOS still reports that the application is damaged, verify that the package came from this repository and run:
 
@@ -261,8 +261,8 @@ Artifacts are written to:
 
 ```text
 dist.noindex/mac-arm64/LeetCode 助手.app
-dist.noindex/LeetCode-助手-mac-arm64.zip
-dist.noindex/LeetCode-助手-mac-arm64.dmg
+dist.noindex/LeetCode-AI-Helper-mac-arm64.zip
+dist.noindex/LeetCode-AI-Helper-mac-arm64.dmg
 ```
 
 Build and replace the application in `/Applications`:
