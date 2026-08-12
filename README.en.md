@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/app-icon.svg" width="104" height="104" alt="LeetCode AI Helper icon">
+  <img src="assets/app-icon.png" width="104" height="104" alt="LeetCode AI Helper icon">
 </p>
 
 <h1 align="center">LeetCode AI Helper 2.0</h1>
@@ -19,7 +19,7 @@
 <p align="center">
   <a href="#about">About</a> ·
   <a href="#why-this-one">Why This One</a> ·
-  <a href="#whats-new-in-20">What's New in 2.0</a> ·
+  <a href="#highlights">Highlights</a> ·
   <a href="#showcase">Showcase</a> ·
   <a href="#core-capabilities">Core Capabilities</a> ·
   <a href="#how-it-works">How It Works</a> ·
@@ -65,105 +65,172 @@ What it deliberately refuses to do matters just as much: it never writes the ful
 | Models | Locked to one provider | Any compatible provider, six task classes routed separately |
 | Cost | Opaque | Ledgered per provider, model, and task, exact and estimated apart |
 
-**Every core capability serves one goal: make the next practice worth doing.**
-
-- Submissions are attributed automatically — compile errors, failing cases, and source diffs are analyzed per attempt into "shore up / do next", never reusing an old conclusion;
-- Knowledge grows into a tree — controlled knowledge paths derived from real problems, with the same concept merged across conversations instead of duplicated;
-- Review queues itself — FSRS sets the interval, the forgetting curve says how much is left, and the more overdue and more forgotten items rise to the top;
-- Hints stay in bounds — three tiers read your current code while the prompt and a deterministic post-check keep the full solution out;
-- Context maintains itself — rolling summaries and token-budgeted packing, with live usage and distance-to-compaction on screen.
-
 **Local first, with optional backends of your own.** All data lives on your machine by default. When you want to share it across machines, plug in your own backends: Redis as a hot cache for analyses, submission details, and usage counters; PostgreSQL + pgvector as the vector store for cross-conversation retrieval; Eclipse JDT LS for Java completion. All three are side paths — if any goes down the app falls back to the local path and keeps working. Deployment scripts ship with the repository; see [Optional Backends](#optional-backends).
 
-<a id="whats-new-in-20"></a>
+<a id="highlights"></a>
 
-## What's New in 2.0
+## Highlights
 
-The centrepiece of 2.0 is the native macOS client under `native/` (SwiftUI, Swift 6 strict concurrency). The brains — learning engine, FSRS scheduling, LeetCode integration — carry over; the shell and the interaction model are new.
+<table>
+<tr>
+<td width="33%" valign="top">
 
-- **Native macOS client.** Every screen is SwiftUI. Windows, sidebar, and tool column are real native views; scrollbars, glass materials, and traffic-light alignment follow macOS rules instead of being simulated in a web page.
-- **Knowledge graph, rebuilt.** A hand-rolled mind-map canvas (DOM cards + SVG wires + its own tidy layout) with collapsing, sibling reordering by drag, and pinch zoom. The detail card is a note you can drag around: click any passage to edit it in place, click elsewhere to save and render Markdown, and hold Shift while dragging from one card to another to create a link.
-- **The forgetting curve, everywhere.** FSRS retrievability now lives on the native side, so mastery is discounted by *how much you still remember*. Today's review order, learning insights, graph nodes, and the AI study plan all read the same number — no more "this page says review it, that page says you're fine".
-- **Tiered coding hints.** Hints escalate in three steps (direction → sticking point → next move). Every step reads your current code, while the prompt and a deterministic post-check keep the full solution out of the answer.
-- **An auditable model pipeline.** Every real model call goes through task routing and a central ledger that tracks tokens and outcomes per provider, model, and task. A structured task is only recorded as successful once decoding, semantic validation, and local processing have all passed.
-- **Built-in browser with one unified tab strip.** Tool tabs and web tabs share a single strip; tabs shrink as they multiply, and dragging one moves it under your cursor while the rest step aside.
-- **Optional backends: Redis and pgvector.** Redis caches analyses, submission details, and usage counters; PostgreSQL + pgvector stores the 640-dimensional vectors used for cross-conversation retrieval, shared by every client you run. Both are deadline-bounded with a circuit breaker and fall back to local files.
-- **Java completion.** Optional Eclipse JDT LS integration provides type, method, and API completion inside the native editor.
+### 🖥 Genuinely native
 
-The 1.x Electron client remains in `src/` with its build and release scripts intact. Both share the same application-data directory.
+SwiftUI + Swift 6 across every screen, O(1) cold start, no dropped frames — and no resident Chromium just to study algorithms.
+
+</td>
+<td width="33%" valign="top">
+
+### 🧠 Mastery that fades
+
+FSRS retention runs through review, insights, the graph, and the plan — "learned once" and "still know it" are not the same number.
+
+</td>
+<td width="33%" valign="top">
+
+### 💡 Direction only
+
+Three hint tiers read your current code and point the way; a deterministic check strips anything resembling a full solution.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🗺 A graph that grows
+
+AI derives the knowledge tree from real problems; you only add notes and links. Click a passage to edit it, click away to save.
+
+</td>
+<td valign="top">
+
+### 🧾 Every token accounted for
+
+Ledgered per provider, model, and task, with exact and estimated usage apart — and six task classes routable to different models.
+
+</td>
+<td valign="top">
+
+### 🗄 Local first, backends optional
+
+Data stays on your machine; add Redis and pgvector for multi-machine use, and lose nothing when they go down.
+
+</td>
+</tr>
+</table>
 
 <a id="showcase"></a>
 
 ## Showcase
 
-### Knowledge graph: an AI-derived tree plus your own layer
+### Knowledge graph
+
+AI derives the knowledge tree from real problems; each node shows how many items sit under it and their average mastery (already discounted by the forgetting curve). The manual layer only adds what you wrote — notes, links, ordering, collapse state. Delete a concept and everything anchored to it is cleaned up, with no wires pointing at nothing.
 
 <p align="center">
   <img src="docs/screenshots/knowledge-graph.png" width="100%" alt="Knowledge graph canvas with concept branches, mastery, and note cards">
 </p>
 
-Knowledge paths are derived by AI from real problems; each node shows how many items sit under it and their average mastery (already discounted by the forgetting curve). The manual layer only adds what you wrote: notes, links, ordering, collapse state. Delete a concept and everything anchored to it is cleaned up — no wires pointing at nothing.
+### The practice loop
 
-### Practice: statement, submission trail, and AI review
+<table>
+<tr>
+<td width="50%" align="center"><img src="docs/screenshots/problem-and-submission.png" alt="Statement and submission trail"><br><sub><b>Statement + submission trail</b>: every attempt analyzed on its own <code>submissionId</code>, rolled up into "shore up / do next"</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/ai-hint.png" alt="Tiered AI hints"><br><sub><b>Tiered hints</b>: direction → sticking point → next move; reads your code without writing it</sub></td>
+</tr>
+<tr>
+<td width="50%" align="center"><img src="docs/screenshots/java-completion.png" alt="Java completion"><br><sub><b>Native editor</b>: syntax checking and formatting, with optional Eclipse JDT LS for type and API completion</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/study-plan.png" alt="Study plan"><br><sub><b>Study plan</b>: the model picks what, the local scheduler picks when from your quota and time budget</sub></td>
+</tr>
+</table>
 
-<p align="center">
-  <img src="docs/screenshots/problem-and-submission.png" width="100%" alt="LeetCode statement with submission trail analysis">
-</p>
+### Conversation, browser, and models
 
-Each submission is analyzed on its own, keyed by `submissionId`: compile errors, failing cases, passed counts, and source diffs feed that attempt's trail, which rolls up into "what to shore up" and "what to do next". A new attempt never reuses an old conclusion.
-
-### Coding hints: direction, not answers
-
-<p align="center">
-  <img src="docs/screenshots/ai-hint.png" width="100%" alt="Tiered AI hint card">
-</p>
-
-Three levels, unlocked one at a time: the idea and a self-check list first, then where you are stuck, and only then what to do next. Hints render Markdown and scale with the system text size.
-
-### Java completion in the editor
-
-<p align="center">
-  <img src="docs/screenshots/java-completion.png" width="100%" alt="Java completion in the code editor">
-</p>
-
-### Study plan: AI picks what, the app decides when
-
-<p align="center">
-  <img src="docs/screenshots/study-plan.png" width="100%" alt="Study plan calendar and daily schedule">
-</p>
-
-The model only returns an ordering and the reasoning behind it. The local scheduler decides the actual day and time from your daily quota, time budget, and occupied slots. Overdue items come first; among equally overdue ones, the one you have forgotten more wins.
-
-### Conversation and the built-in browser
-
-<p align="center">
-  <img src="docs/screenshots/chat-and-browser.png" width="100%" alt="Conversation next to the built-in browser">
-</p>
-
-Code blocks in conversations, editorials, statements, notes, and diagnostics all share one renderer (markdown-it + highlight.js + DOMPurify), and copying always goes through the native pasteboard. The tool column on the right is a real multi-tab browser where sources, evidence, preview, and web pages sit on the same strip.
-
-### Providers and task routing
-
-<p align="center">
-  <img src="docs/screenshots/provider-settings.png" width="100%" alt="Model provider settings">
-</p>
-
-DeepSeek, Alibaba Cloud, and OpenCode Go ship built in, and any compatible provider can be added. Each task class — main conversation, titles and summaries, study plan, submission analysis, cross-conversation memory, coding hints — can point at its own provider and model. API keys live in the system keychain; the UI only ever shows whether one is configured.
+<table>
+<tr>
+<td width="50%" align="center"><img src="docs/screenshots/chat-and-browser.png" alt="Conversation and built-in browser"><br><sub><b>One code renderer</b>: conversations, editorials, statements, and notes share highlighting and copying; the right column is a real multi-tab browser</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/provider-settings.png" alt="Model provider settings"><br><sub><b>Any provider</b>: six task classes routed separately, API keys in the system keychain, never echoed back</sub></td>
+</tr>
+</table>
 
 <a id="core-capabilities"></a>
 
 ## Core Capabilities
 
-- **The whole learning loop is automated.** You ask, solve, submit, and take review checks. Gap detection, deduplication, failure analysis, classification, mastery updates, review ordering, template distillation, and progress tracking happen behind the scenes.
-- **Questions are distilled, not "bookmarked".** Only unprocessed messages and new submissions are analyzed. Running into the same problem in another conversation merges into the original item through a stable `canonicalKey`, so evidence accumulates instead of duplicating.
-- **Concepts are extracted from problems.** A concrete problem is decomposed into algorithmic patterns, data structures, language mechanics, or common APIs, using a controlled knowledge path so the model cannot invent a new taxonomy on every run.
-- **Mastery is judged from evidence.** Gaps exposed by questions, repeated blocks, independent application, correct explanations, judge results, and review answers all become confidence-weighted signals — and later performance can overturn an earlier judgement.
-- **Review is driven by weakness and by memory.** FSRS sets the interval, the forgetting curve says how much is left today, and mastery, confidence, and overdue days settle today's ordering.
-- **Review must produce new evidence.** A short lesson plus a multiple-choice, short-answer, code-completion, or coding check targets the smallest current gap; the grade feeds straight back into mastery and the next due date.
-- **Knowledge settles into reusable methods.** Once a topic has enough problems, the app distills when it applies, the steps, the common mistakes, and a compilable skeleton — not one problem's answer.
-- **Context is managed for you.** Live usage, input estimate, remaining budget, and the compaction threshold are always visible; long conversations get a rolling summary that keeps the current problem and key conclusions.
-- **Model usage is transparent.** Input, output, cached, and reasoning tokens plus tool calls are tracked per conversation, task, provider, and model — with exact and estimated usage kept apart.
-- **Local first, backends optional.** Everything stays on your machine unless you add Redis and pgvector for multi-machine use — and even then availability never depends on the server.
+### The learning loop: evidence in, next step out
+
+| Capability | What it actually does |
+| --- | --- |
+| **Incremental evidence** | Only unprocessed messages and new submissions are analyzed — the same context is never burned twice |
+| **Cross-conversation merging** | The same concept merges under a stable `canonicalKey`, accumulating evidence instead of duplicate cards |
+| **Concept extraction** | A problem is decomposed into algorithmic patterns, data structures, language mechanics, or APIs from a controlled vocabulary |
+| **Mastery and confidence** | Every signal carries a confidence; later performance can overturn an earlier judgement |
+| **Forgetting-curve discount** | FSRS retention decides what is left today, and the whole app reads that one number |
+| **Today's review** | Queued by quota, overdue first and most-forgotten ahead of it, with manual grading written back |
+| **Review checks** | Multiple-choice, short answer, code completion, or a coding task aimed at the smallest gap; the grade updates mastery and the next due date |
+| **Algorithm templates** | Once a topic has enough problems, its applicability, steps, pitfalls, and a compilable skeleton are distilled |
+| **Learning insights** | Topic distribution, weak areas, due forecast, mastery trend |
+| **Trash** | Deleted learning items can be recovered — a misclick is not permanent |
+
+### LeetCode integration: statement to verdict, in-app
+
+| Capability | What it actually does |
+| --- | --- |
+| **Built-in sign-in** | LeetCode China runs in the app's isolated session; WeChat / QQ / GitHub popup sign-in all work |
+| **Lists and sync** | Import lists such as Hot 100, fetch submissions directly by `titleSlug`, and sync incrementally |
+| **Native statement** | Statement, examples, constraints, and hints render natively, sharing the app's code highlighting |
+| **Run and submit** | Run samples and submit to the judge; results are polled and parsed into compile errors, failing cases, passed counts, runtime and memory |
+| **Submission trail** | Each attempt is attributed on its own into "shore up / do next"; history is appended, never overwritten |
+| **Editorials online** | Official and community editorials are readable in-app, multi-image posts collapse into a carousel, editorial videos play in place |
+| **Problem action bar** | Upvote, discuss, favourite, share, official hints, and the live solver count |
+| **Prev / next problem** | Work through a list without going back to the index |
+| **Activity heatmap** | Submission heatmap, streaks, weekly rhythm, and difficulty breakdown |
+
+### Conversation and context
+
+| Capability | What it actually does |
+| --- | --- |
+| **Streaming answers** | Rendered as they arrive and interruptible; reasoning effort selectable from off to maximum |
+| **Context budget** | Live usage, input estimate, remaining budget, and how many tokens until compaction |
+| **Rolling summary** | Summaries pre-warm near the limit, keeping system instructions, the current problem, and key conclusions |
+| **Question navigation** | Jump between questions in long threads, long prompts collapse, one click back to the bottom |
+| **Cross-conversation memory** | Off / index / retrieve tiers, with fact extraction plus vector search |
+| **Image input** | HTTPS only, deduplicated and capped, attached only for models that actually support vision |
+
+### Built-in browser and tool column
+
+| Capability | What it actually does |
+| --- | --- |
+| **Real tabs** | Tool tabs and web tabs share one strip, shrink as they multiply, and follow the cursor when dragged |
+| **Session restore** | Reopen and your tabs are still there — switchable in settings |
+| **History and downloads** | Browsing history is inspectable and clearable; downloads can ask where to save |
+| **Popup bridge** | `window.open` and `target=_blank` work, so OAuth sign-in never blows away the page you were on |
+| **Media lifecycle** | Switching tabs pauses playback instead of letting background tabs hog resources |
+| **Link destination** | Links in conversations, editorials, and sources can open in-app or in the system browser |
+| **Bilibili video** | The video entry appears only when AI decides the topic is a LeetCode problem or worth studying properly |
+
+### Models and usage
+
+| Capability | What it actually does |
+| --- | --- |
+| **Any provider** | DeepSeek, Alibaba Cloud, and OpenCode Go built in, plus any compatible endpoint and custom model names |
+| **Ten task routes** | Conversation, titles, video matching, evidence analysis, study plan, lessons and checks, grading, submission analysis, memory, coding hints — each routable |
+| **Central ledger** | Input, output, cached, and reasoning tokens plus tool calls per conversation, task, provider, and model |
+| **Exact vs estimated** | Only provider-reported usage counts as exact; the rest is labelled estimated instead of blended together |
+| **Failures counted too** | A structured task is successful only after decoding, semantic validation, and local processing all pass |
+| **Key safety** | API keys live in the system keychain, the UI shows only "configured", and provider URLs pass an HTTPS policy check |
+
+### Interface and engineering
+
+| Capability | What it actually does |
+| --- | --- |
+| **Liquid glass** | Cards, capsules, and popovers share one glass material over a gradient backdrop that gives it something to refract |
+| **Hand-drawn overlay scrollbars** | One implementation everywhere: fades in on scroll, out at rest, and never steals layout width |
+| **Motion with a reason** | Selection, panel, and fade timings are separate; drags are tweened so wires and cards move in the same frame |
+| **Window behaviour** | Always-on-top, full screen, cross-display position memory, single-instance guard |
+| **Appearance** | System / light / dark, with text scaling with the system size |
+| **Regression tests** | 216 XCTest + 100 Swift Testing on the native side, 103 on the Electron side, green before release |
 
 <a id="how-it-works"></a>
 

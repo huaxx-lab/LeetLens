@@ -9,6 +9,7 @@ dist.noindex/
 
 # Swift Package Manager / Xcode
 native/.build/
+native/dist/
 .swiftpm/
 *.xcuserdatad/
 
