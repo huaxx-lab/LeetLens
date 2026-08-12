@@ -2,7 +2,7 @@
   <img src="assets/app-icon.png" width="104" height="104" alt="LeetCode AI 助手图标">
 </p>
 
-<h1 align="center">LeetCode AI 助手 2.0</h1>
+<h1 align="center">力扣 AI 助手 2.0</h1>
 
 <p align="center"><strong>你只管问、只管写，剩下的它替你记着。</strong></p>
 
