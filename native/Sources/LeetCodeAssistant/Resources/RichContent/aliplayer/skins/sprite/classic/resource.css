@@ -1,0 +1,40 @@
+.prism-player .prism-big-play-btn {
+  width: 90px;
+  height: 90px;
+  background: url("//gw.alicdn.com/tps/TB1YuE3KFXXXXaAXFXXXXXXXXXX-256-512.png") no-repeat -2px -2px;
+}
+.prism-player .prism-play-btn {
+  width: 27px;
+  height: 30px;
+  background: url("//gw.alicdn.com/tps/TB1YuE3KFXXXXaAXFXXXXXXXXXX-256-512.png") no-repeat -2px -250px;
+}
+.prism-player .prism-live-display {
+  width: 56px;
+  height: 19px;
+  background: url("//gw.alicdn.com/tps/TB1YuE3KFXXXXaAXFXXXXXXXXXX-256-512.png") no-repeat -186px -2px;
+}
+.prism-player .prism-play-btn.playing {
+  width: 27px;
+  height: 30px;
+  background: url("//gw.alicdn.com/tps/TB1YuE3KFXXXXaAXFXXXXXXXXXX-256-512.png") no-repeat -208px -269px;
+}
+.prism-player .prism-fullscreen-btn {
+  width: 30px;
+  height: 30px;
+  background: url("//gw.alicdn.com/tps/TB1YuE3KFXXXXaAXFXXXXXXXXXX-256-512.png") no-repeat -124px -190px;
+}
+.prism-player .prism-fullscreen-btn.fullscreen {
+  width: 30px;
+  height: 30px;
+  background: url("//gw.alicdn.com/tps/TB1YuE3KFXXXXaAXFXXXXXXXXXX-256-512.png") no-repeat -161px -183px;
+}
+.prism-player .prism-volume {
+  width: 33px;
+  height: 30px;
+  background: url("//gw.alicdn.com/tps/TB1YuE3KFXXXXaAXFXXXXXXXXXX-256-512.png") no-repeat -199px -119px;
+}
+.prism-player .prism-volume.mute {
+  width: 33px;
+  height: 30px;
+  background: url("//gw.alicdn.com/tps/TB1YuE3KFXXXXaAXFXXXXXXXXXX-256-512.png") no-repeat -164px -151px;
+}

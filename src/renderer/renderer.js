@@ -317,6 +317,7 @@
 
   const STREAM_RENDER_INTERVAL = 80;
   const MAX_CHAT_INPUT_CHARS = 100000;
+  const CONVERSATION_SAVE_DEBOUNCE_MS = 24;
   const QUICK_MODEL_OPEN_BUDGET_MS = 140;
   const MAX_AUTO_RESUME_ATTEMPTS = 1;
   const AUTO_RESUME_DELAY_MS = 650;
@@ -326,6 +327,7 @@
     'opencode-go': Object.freeze({ name: 'OpenCode Go', apiBase: 'https://opencode.ai/zen/go/v1', apiKey: '', model: 'deepseek-v4-flash', apiMode: 'auto', resolvedMode: 'chat', builtIn: true })
   });
   const saveQueues = new Map();
+  const conversationSaveStates = new Map();
   const summaryQueues = new Map();
   const contextCompressionQueues = new Map();
   const videoSearchStates = new Map();
@@ -1907,6 +1909,45 @@
     session.usageCommitted = true;
   }
 
+  function persistConversationSnapshot(id, snapshot, { throwOnError = false } = {}) {
+    let state = conversationSaveStates.get(id);
+    if (!state) {
+      state = { latest: null, waiters: [], running: true, resolveCompletion: null };
+      state.completion = new Promise(resolve => { state.resolveCompletion = resolve; });
+      conversationSaveStates.set(id, state);
+      saveQueues.set(id, state.completion);
+      (async () => {
+        await new Promise(resolve => setTimeout(resolve, CONVERSATION_SAVE_DEBOUNCE_MS));
+        while (state.latest) {
+          const pendingSnapshot = state.latest;
+          state.latest = null;
+          const waiters = state.waiters.splice(0);
+          let error = null;
+          try {
+            await window.api.saveConversation(id, pendingSnapshot);
+          } catch (caught) {
+            error = caught;
+            console.error('Failed to save conversation:', caught);
+            showAppError(caught?.message || '对话保存失败，请检查磁盘空间后重试');
+          }
+          for (const waiter of waiters) {
+            if (error && waiter.throwOnError) waiter.reject(error);
+            else waiter.resolve();
+          }
+        }
+      })().finally(() => {
+        state.running = false;
+        state.resolveCompletion();
+        if (conversationSaveStates.get(id) === state) conversationSaveStates.delete(id);
+        if (saveQueues.get(id) === state.completion) saveQueues.delete(id);
+      });
+    }
+    state.latest = snapshot;
+    return new Promise((resolve, reject) => {
+      state.waiters.push({ resolve, reject, throwOnError });
+    });
+  }
+
   function saveConv(id = currentConvId, messages = currentMessages, { touch = true, throwOnError = false } = {}) {
     if (!id || !conversations[id]) return Promise.resolve();
     const snapshot = Array.isArray(messages)
@@ -1933,20 +1974,7 @@
     Object.assign(previousData, data);
     conversations[id] = previousData;
 
-    const previous = saveQueues.get(id) || Promise.resolve();
-    const pending = previous
-      .catch(() => {})
-      .then(() => window.api.saveConversation(id, previousData))
-      .catch(error => {
-        console.error('Failed to save conversation:', error);
-        showAppError(error?.message || '对话保存失败，请检查磁盘空间后重试');
-        if (throwOnError) throw error;
-      })
-      .finally(() => {
-        if (saveQueues.get(id) === pending) saveQueues.delete(id);
-      });
-    saveQueues.set(id, pending);
-    return pending;
+    return persistConversationSnapshot(id, previousData, { throwOnError });
   }
 
   function userQuestionCount(messages) {
@@ -3290,10 +3318,23 @@
     return { message: displayUserContent(messages[index].content).slice(0, 8000) };
   }
 
+  function hasConfiguredVideoTaskModel() {
+    if (!quickModelSettings) return true;
+    const providerId = quickModelSettings.taskModels?.video?.providerId || quickModelSettings.activeProvider;
+    const profile = quickModelSettings.providers?.[providerId];
+    return Boolean(profile && String(profile.apiKey || '').trim());
+  }
+
   function queueQuestionEligibilityCheck(conversationId, questionId) {
     const conversation = conversations[conversationId];
     const state = questionVideoState(conversation, questionId, true);
     if (!conversation || !state || state.video || ['eligible', 'ineligible'].includes(state.eligibility)) return;
+    if (!hasConfiguredVideoTaskModel()) {
+      state.eligibility = 'unknown';
+      state.eligibilityReason = '未配置视频判定模型';
+      updateMessageVideoAction(questionId);
+      return;
+    }
     const key = `${conversationId}:${questionId}`;
     if (videoEligibilityChecks.has(key)) return;
     state.eligibility = 'checking';
@@ -3310,10 +3351,11 @@
           if (conversations[conversationId] !== latest
             || !latest.messages?.some(message => message.id === questionId && message.role === 'user')
             || questionVideoState(latest, questionId, false) !== latestState) return;
-          latestState.eligibility = result?.eligible === true ? 'eligible' : 'ineligible';
+          const providerUnavailable = result?.skipped === 'provider_unavailable';
+          latestState.eligibility = providerUnavailable ? 'unknown' : (result?.eligible === true ? 'eligible' : 'ineligible');
           latestState.eligibilityReason = String(result?.reason || '').slice(0, 120);
-          latestState.eligibilityCheckedAt = Date.now();
-          latestState.eligibilityVersion = VIDEO_ELIGIBILITY_VERSION;
+          latestState.eligibilityCheckedAt = providerUnavailable ? 0 : Date.now();
+          latestState.eligibilityVersion = providerUnavailable ? 0 : VIDEO_ELIGIBILITY_VERSION;
           if (latestState.eligibility === 'eligible') {
             latestState.identifiedTitle = String(result?.title || '').slice(0, 100);
             latestState.query = String(result?.query || '').trim().slice(0, 160);
@@ -3835,8 +3877,12 @@
     const requestedOrder = Array.isArray(source.providerOrder) ? source.providerOrder : [];
     const providerOrder = [...new Set(['deepseek', 'alibaba', 'opencode-go', ...requestedOrder, ...Object.keys(providers)])].filter(id => providers[id]);
     const activeProvider = providers[source.activeProvider] ? source.activeProvider : 'deepseek';
-    const taskModels = Object.fromEntries(['video', 'title', 'learning'].map(task => {
-      const route = source.taskModels?.[task] || {};
+    const taskIds = ['conversation', 'title', 'video', 'learning', 'studyPlan', 'studyContent', 'studyAssessment', 'leetCodeAnalysis'];
+    const learningFallbacks = new Set(['studyPlan', 'studyContent', 'studyAssessment', 'leetCodeAnalysis']);
+    const taskModels = Object.fromEntries(taskIds.map(task => {
+      const route = source.taskModels?.[task]
+        || (learningFallbacks.has(task) ? source.taskModels?.learning : null)
+        || {};
       return [task, { providerId: providers[route.providerId] ? route.providerId : '', model: String(route.model || '').trim() }];
     }));
     const storedContext = source.contextPolicy && typeof source.contextPolicy === 'object' ? source.contextPolicy : {};
@@ -4969,7 +5015,7 @@
     finishStream(session, { error: finalError });
   });
 
-  function updateInput() {
+  function updateInput({ refreshMessageActions = true } = {}) {
     const sendButton = $('#btn-send');
     const activeHere = Boolean(activeStream && !activeStream.finalized && activeStream.convId === currentConvId);
     const hasDraft = Boolean(chatInput.value.trim());
@@ -4985,8 +5031,10 @@
     chatInput.placeholder = activeHere
       ? '输入补充，发送后进入队列…'
       : (isStreaming ? '另一对话正在生成…' : (currentConvId ? '继续追问…' : '输入或粘贴题目…'));
-    updateVideoTrigger();
-    updateMessageDeleteActions();
+    if (refreshMessageActions) {
+      updateVideoTrigger();
+      updateMessageDeleteActions();
+    }
     renderQueuedMessage();
     renderReasoningControl();
     updateContextMeter();
@@ -5471,20 +5519,25 @@
     const reviewProgress = dashboard.plan.reviewTarget
       ? Math.min(100, dashboard.plan.reviewCompleted / dashboard.plan.reviewTarget * 100)
       : 100;
+    const remaining = Math.max(0, dashboard.plan.newTarget - dashboard.plan.newCompleted);
+    const reviewRemaining = Math.max(0, dashboard.plan.reviewTarget - dashboard.plan.reviewCompleted);
+    const statusLine = remaining === 0 && reviewRemaining === 0
+      ? '今日计划已全部完成'
+      : remaining > 0 ? `还差 ${remaining} 道新题完成今日目标` : `复习还剩 ${reviewRemaining} 项`;
     content.innerHTML = `<div class="learning-today">
       <section class="learning-day-band">
-        <div class="learning-day-copy"><span>${dashboard.plan.isWeeklyReviewDay ? '集中复习日' : '今日学习'}</span><strong>${dashboard.plan.newCompleted}<small> / ${dashboard.plan.newTarget} 新题</small></strong><p>${dashboard.plan.reviewCompleted} / ${dashboard.plan.reviewTarget} 复习完成</p></div>
+        <div class="learning-day-copy"><span>${dashboard.plan.isWeeklyReviewDay ? '集中复习日' : '今日学习'}</span><strong><b data-count-up="${dashboard.plan.newCompleted}">${dashboard.plan.newCompleted}</b><small> / ${dashboard.plan.newTarget} 新题</small></strong><p>${statusLine}</p></div>
         <div class="learning-rings" aria-label="今日计划进度">
-          <div style="--progress:${newProgress}"><span>新题</span><strong>${Math.round(newProgress)}%</strong></div>
-          <div style="--progress:${reviewProgress}"><span>复习</span><strong>${Math.round(reviewProgress)}%</strong></div>
+          <div style="--progress:0" data-progress="${newProgress}" title="新题完成 ${Math.round(newProgress)}%"><span>新题</span><strong>${Math.round(newProgress)}%</strong></div>
+          <div style="--progress:0" data-progress="${reviewProgress}" title="复习完成 ${Math.round(reviewProgress)}%"><span>复习</span><strong>${Math.round(reviewProgress)}%</strong></div>
         </div>
         <button class="learning-settings-button" type="button" data-learning-action="settings" title="调整学习计划" aria-label="调整学习计划"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.5 1a7 7 0 0 0-1.7-1L14.3 3h-4.6L9.3 6a7 7 0 0 0-1.7 1L5 6 3 9.4 5.1 11a7 7 0 0 0 0 2L3 14.6 5 18l2.6-1a7 7 0 0 0 1.7 1l.4 3h4.6l.4-3a7 7 0 0 0 1.7-1l2.6 1 2-3.4-2.1-1.6a7 7 0 0 0 .1-1Z" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </section>
       <section class="learning-stat-strip" aria-label="学习概览">
-        <div><strong>${dashboard.stats.total}</strong><span>学习项</span></div>
-        <div><strong>${dashboard.stats.mastered}</strong><span>已掌握</span></div>
-        <div><strong>${dashboard.stats.weak}</strong><span>待巩固</span></div>
-        <div><strong>${dashboard.stats.due}</strong><span>已到期</span></div>
+        <div><strong data-count-up="${dashboard.stats.total}">${dashboard.stats.total}</strong><span>学习项</span></div>
+        <div><strong data-count-up="${dashboard.stats.mastered}">${dashboard.stats.mastered}</strong><span>已掌握</span></div>
+        <div><strong data-count-up="${dashboard.stats.weak}">${dashboard.stats.weak}</strong><span>待巩固</span></div>
+        <div class="${dashboard.stats.due ? 'is-accent' : ''}"><strong data-count-up="${dashboard.stats.due}">${dashboard.stats.due}</strong><span>已到期</span></div>
       </section>
       <section class="learning-plan-section">
         <header><div><strong>${dashboard.plan.isWeeklyReviewDay ? '本周复习队列' : '零散复习'}</strong><span>${planItems.length ? `${planItems.length} 项` : '当前没有到期内容'}</span></div></header>
@@ -5493,6 +5546,24 @@
           : '<div class="learning-plan-empty"><span>✓</span><strong>复习队列已完成</strong></div>'}</div>
       </section>
     </div>`;
+    requestAnimationFrame(() => {
+      for (const ring of content.querySelectorAll('.learning-rings > div')) {
+        ring.style.setProperty('--progress', ring.dataset.progress || 0);
+      }
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      for (const el of content.querySelectorAll('[data-count-up]')) {
+        const target = Number(el.dataset.countUp) || 0;
+        if (!target) continue;
+        const duration = 700;
+        const start = performance.now();
+        const tick = now => {
+          const t = Math.min(1, (now - start) / duration);
+          el.textContent = String(Math.round(target * (1 - (1 - t) ** 3)));
+          if (t < 1) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }
+    });
   }
 
   function learningLibraryFilteredItems(dashboard) {
@@ -7985,8 +8056,11 @@
     if (shell) shell.dataset.learningSection = primarySection;
     if ($('#learning-title')) $('#learning-title').textContent = metadata.title;
     if ($('#learning-view-caption')) $('#learning-view-caption').textContent = metadata.caption;
-    const regionSelect = $('#learning-region-select');
-    if (regionSelect && regionSelect.value !== primarySection) regionSelect.value = primarySection;
+    for (const button of document.querySelectorAll('[data-learning-region]')) {
+      const active = button.dataset.learningRegion === primarySection;
+      button.classList.toggle('active', active);
+      button.toggleAttribute('aria-current', active);
+    }
     for (const button of document.querySelectorAll('[data-leetcode-overview-view]')) {
       const active = primarySection === 'leetcode' && button.dataset.leetcodeOverviewView === leetcodeOverviewView;
       button.classList.toggle('active', active);
@@ -9643,7 +9717,11 @@
     if (isStreaming) enqueueCurrentDraft();
     else sendFollowUp(chatInput.value, selectionDraftPending);
   });
-  chatInput.addEventListener('input', () => { chatInput.style.height = 'auto'; chatInput.style.height = Math.min(chatInput.scrollHeight, 100) + 'px'; updateInput(); });
+  chatInput.addEventListener('input', () => {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 100) + 'px';
+    updateInput({ refreshMessageActions: false });
+  });
 
   $('#btn-close').addEventListener('click', () => quitApplication());
   $('#btn-minimize').addEventListener('click', () => window.api.minimizeWindow());
@@ -9857,9 +9935,9 @@
       runLeetcodeAction('import');
     }
   });
-  $('#learning-region-select').addEventListener('change', event => {
-    switchLearningPrimaryRegion(event.target.value);
-  });
+  for (const button of document.querySelectorAll('[data-learning-region]')) {
+    button.addEventListener('click', () => switchLearningPrimaryRegion(button.dataset.learningRegion));
+  }
   $('#learning-content').addEventListener('change', event => {
     if (event.target.id === 'learning-hub-select') {
       learningTab = event.target.value || 'library';

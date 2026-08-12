@@ -211,16 +211,12 @@
     <div class="learning-shell" id="learning-shell">
       <section class="learning-workspace" id="learning-workspace" data-learning-view="today">
         <div class="overlay-header learning-header" id="learning-content-toolbar">
-          <label class="learning-region-picker">
-            <span>学习区域</span>
-            <select id="learning-region-select" aria-label="学习区域">
-              <option value="today">今日</option>
-              <option value="leetcode">力扣</option>
-              <option value="knowledge">知识库</option>
-              <option value="insights">洞察</option>
-            </select>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
-          </label>
+          <nav class="learning-region-nav" aria-label="学习区域">
+            <button type="button" data-learning-region="today" class="active">今日</button>
+            <button type="button" data-learning-region="leetcode">力扣</button>
+            <button type="button" data-learning-region="knowledge">知识库</button>
+            <button type="button" data-learning-region="insights">洞察</button>
+          </nav>
           <div class="learning-heading sr-only"><h3 id="learning-title">今日</h3><span id="learning-view-caption">复习计划</span></div>
           <div class="learning-context-nav">
             <nav class="learning-subnav" data-learning-section="knowledge" aria-label="知识库视图">
@@ -350,6 +346,7 @@
   <script src="../integrations/streaming-svg.js"></script>
   <script src="../core/context-manager.js"></script>
   <script src="../integrations/leetcode-navigation.js"></script>
+  <script src="floating-scrollbar.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

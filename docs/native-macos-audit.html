@@ -1,0 +1,557 @@
+<title>macOS 原生版深度审计</title>
+<style>
+  :root {
+    --bg: #f3f7fa;
+    --surface: #ffffff;
+    --surface-alt: #eaf1f6;
+    --surface-strong: #dce8f0;
+    --ink: #14222d;
+    --muted: #596b79;
+    --quiet: #7a8b98;
+    --line: #cbd7df;
+    --line-strong: #9eafbb;
+    --accent: #155f9d;
+    --accent-soft: #dcecf8;
+    --critical: #c72f40;
+    --critical-soft: #fbe8eb;
+    --warning: #a45d00;
+    --warning-soft: #fff0d7;
+    --info: #2b718c;
+    --info-soft: #e0f1f6;
+    --good: #147459;
+    --good-soft: #def3eb;
+    --shadow: rgba(28, 49, 65, 0.10);
+    --trace: #64a9d8;
+    --display: ui-rounded, "SF Pro Rounded", "Avenir Next", "PingFang SC", sans-serif;
+    --body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c151c;
+      --surface: #111e27;
+      --surface-alt: #192a35;
+      --surface-strong: #223746;
+      --ink: #e9f2f7;
+      --muted: #a0b2bf;
+      --quiet: #7f95a4;
+      --line: #2d4351;
+      --line-strong: #4d6675;
+      --accent: #79bdf0;
+      --accent-soft: #17374d;
+      --critical: #ff7e8d;
+      --critical-soft: #40212a;
+      --warning: #ffc36b;
+      --warning-soft: #402f18;
+      --info: #8ac9e0;
+      --info-soft: #193743;
+      --good: #69d2ad;
+      --good-soft: #17382f;
+      --shadow: rgba(0, 0, 0, 0.28);
+      --trace: #7cc4ef;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c151c;
+    --surface: #111e27;
+    --surface-alt: #192a35;
+    --surface-strong: #223746;
+    --ink: #e9f2f7;
+    --muted: #a0b2bf;
+    --quiet: #7f95a4;
+    --line: #2d4351;
+    --line-strong: #4d6675;
+    --accent: #79bdf0;
+    --accent-soft: #17374d;
+    --critical: #ff7e8d;
+    --critical-soft: #40212a;
+    --warning: #ffc36b;
+    --warning-soft: #402f18;
+    --info: #8ac9e0;
+    --info-soft: #193743;
+    --good: #69d2ad;
+    --good-soft: #17382f;
+    --shadow: rgba(0, 0, 0, 0.28);
+    --trace: #7cc4ef;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.7;
+    overflow-x: hidden;
+  }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 0.18em; }
+  a:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    overflow-wrap: anywhere;
+    color: var(--ink);
+  }
+  .report { max-width: 1360px; margin: 0 auto; padding: 28px 28px 72px; }
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-top: 5px solid var(--critical);
+    background: var(--surface);
+    box-shadow: 0 18px 50px var(--shadow);
+    padding: clamp(26px, 5vw, 64px);
+  }
+  .hero::after {
+    content: "";
+    position: absolute;
+    inset: auto -12% -52% 46%;
+    height: 320px;
+    background: repeating-linear-gradient(90deg, transparent 0 34px, var(--surface-strong) 34px 35px), repeating-linear-gradient(0deg, transparent 0 34px, var(--surface-strong) 34px 35px);
+    transform: perspective(500px) rotateX(61deg) rotateZ(-8deg);
+    opacity: 0.58;
+    pointer-events: none;
+  }
+  .eyebrow { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; color: var(--muted); font: 700 12px/1.3 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+  .eyebrow .flag { color: var(--critical); }
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; }
+  h1 { position: relative; z-index: 1; max-width: 890px; margin: 18px 0 12px; font-size: clamp(36px, 6vw, 72px); line-height: 0.98; letter-spacing: -0.045em; }
+  .lede { position: relative; z-index: 1; max-width: 760px; margin: 0; color: var(--muted); font-size: clamp(17px, 2vw, 21px); line-height: 1.55; }
+  .metrics { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-top: 36px; border: 1px solid var(--line); background: var(--line); }
+  .metric { min-height: 128px; padding: 18px 20px; background: var(--surface); }
+  .metric strong { display: block; font: 750 clamp(28px, 4vw, 46px)/1 var(--display); letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+  .metric span { display: block; margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+  .metric.critical strong { color: var(--critical); }
+  .trace { position: relative; z-index: 1; display: grid; grid-template-columns: auto 1fr auto 1fr auto; align-items: center; gap: 10px; margin-top: 28px; color: var(--muted); font: 650 12px/1.3 var(--mono); }
+  .trace-line { position: relative; height: 3px; background: var(--surface-strong); overflow: visible; }
+  .trace-line.hot::before { content: ""; position: absolute; inset: 0; width: 88%; background: var(--critical); }
+  .trace-line::after { content: ""; position: absolute; right: -1px; top: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--trace); }
+  .shell { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 34px; align-items: start; margin-top: 34px; }
+  .toc { position: sticky; top: 18px; border-top: 2px solid var(--ink); padding-top: 15px; }
+  .toc strong { display: block; margin-bottom: 10px; font: 750 13px/1.3 var(--mono); letter-spacing: 0.04em; }
+  .toc a { display: block; padding: 7px 0; border-bottom: 1px solid var(--line); color: var(--muted); text-decoration: none; font-size: 13px; }
+  .toc a:hover { color: var(--ink); }
+  main { min-width: 0; }
+  section { scroll-margin-top: 22px; padding: 38px 0 48px; border-top: 1px solid var(--line); }
+  section:first-child { border-top: 0; padding-top: 4px; }
+  .section-head { display: grid; grid-template-columns: minmax(0, 0.38fr) minmax(0, 0.62fr); gap: 28px; align-items: end; margin-bottom: 24px; }
+  .section-head .kicker { color: var(--accent); font: 750 12px/1.3 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; }
+  h2 { margin: 6px 0 0; font-size: clamp(28px, 4vw, 46px); line-height: 1.05; letter-spacing: -0.035em; }
+  .section-head p { max-width: 650px; margin: 0; color: var(--muted); }
+  h3 { margin: 0; font-size: 20px; line-height: 1.25; letter-spacing: -0.015em; }
+  p { max-width: 76ch; }
+  .callout { display: grid; grid-template-columns: 7px minmax(0, 1fr); border: 1px solid var(--line); background: var(--surface); }
+  .callout::before { content: ""; background: var(--accent); }
+  .callout.critical::before { background: var(--critical); }
+  .callout.good::before { background: var(--good); }
+  .callout-body { padding: 22px 24px; }
+  .callout-body p { margin: 8px 0 0; color: var(--muted); }
+  .verdict-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 16px; }
+  .status-list { display: grid; gap: 1px; border: 1px solid var(--line); background: var(--line); }
+  .status-row { display: grid; grid-template-columns: 95px 1fr; gap: 14px; padding: 13px 15px; background: var(--surface); }
+  .status-row strong { font: 750 12px/1.5 var(--mono); color: var(--muted); }
+  .status-row span { line-height: 1.5; }
+  .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 42px; padding: 3px 7px; border-radius: 3px; font: 800 11px/1.35 var(--mono); letter-spacing: 0.04em; }
+  .badge.p0 { color: var(--critical); background: var(--critical-soft); }
+  .badge.p1 { color: var(--warning); background: var(--warning-soft); }
+  .badge.p2 { color: var(--info); background: var(--info-soft); }
+  .badge.ok { color: var(--good); background: var(--good-soft); }
+  .measure-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .measure { border-top: 4px solid var(--line-strong); background: var(--surface); padding: 20px; box-shadow: 0 8px 24px var(--shadow); }
+  .measure.hot { border-color: var(--critical); }
+  .measure .number { display: block; font: 760 clamp(30px, 4vw, 48px)/1 var(--display); letter-spacing: -0.045em; font-variant-numeric: tabular-nums; }
+  .measure .label { display: block; margin-top: 8px; color: var(--muted); }
+  .pipeline { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 0; margin: 28px 0; overflow-x: auto; padding-bottom: 6px; }
+  .step { position: relative; min-height: 112px; padding: 16px 18px; border: 1px solid var(--line); border-right: 0; background: var(--surface); }
+  .step:last-child { border-right: 1px solid var(--line); }
+  .step:not(:last-child)::after { content: ""; position: absolute; right: -6px; top: 48px; z-index: 2; width: 10px; height: 10px; border-top: 2px solid var(--accent); border-right: 2px solid var(--accent); transform: rotate(45deg); background: var(--surface); }
+  .step .step-id { color: var(--quiet); font: 700 11px/1.2 var(--mono); }
+  .step strong { display: block; margin-top: 8px; font-size: 14px; line-height: 1.35; }
+  .step small { display: block; margin-top: 7px; color: var(--muted); line-height: 1.4; }
+  .step.blocked { background: var(--critical-soft); }
+  .table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; min-width: 790px; }
+  th, td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--surface-alt); color: var(--muted); font: 750 11px/1.35 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+  tr:last-child td { border-bottom: 0; }
+  td { font-size: 13px; line-height: 1.55; }
+  td:first-child { width: 60px; }
+  .finding-stack { display: grid; gap: 12px; }
+  details.finding { border: 1px solid var(--line); background: var(--surface); }
+  details.finding[open] { box-shadow: 0 9px 28px var(--shadow); }
+  details.finding summary { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 14px; align-items: center; cursor: pointer; padding: 15px 17px; list-style: none; }
+  details.finding summary::-webkit-details-marker { display: none; }
+  details.finding summary::after { content: "+"; color: var(--quiet); font: 700 20px/1 var(--mono); }
+  details.finding[open] summary::after { content: "−"; }
+  .finding-title { font-weight: 740; line-height: 1.4; }
+  .finding-body { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; border-top: 1px solid var(--line); padding: 18px 20px 22px 84px; }
+  .finding-body p { margin: 0; color: var(--muted); font-size: 13px; }
+  .finding-body strong { color: var(--ink); }
+  .refs { margin-top: 10px; font: 600 12px/1.55 var(--mono); color: var(--quiet); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .panel { border: 1px solid var(--line); background: var(--surface); padding: 22px; }
+  .panel p { margin-bottom: 0; color: var(--muted); }
+  .panel ul, .panel ol { margin: 14px 0 0; padding-left: 20px; }
+  .panel li + li { margin-top: 8px; }
+  .good-panel { border-top: 4px solid var(--good); }
+  .warning-panel { border-top: 4px solid var(--warning); }
+  .code-map { overflow-x: auto; margin: 18px 0 0; padding: 18px 20px; border-left: 4px solid var(--accent); background: var(--surface-alt); color: var(--ink); font: 600 12px/1.8 var(--mono); white-space: pre; }
+  .invariant-grid { display: grid; gap: 1px; border: 1px solid var(--line); background: var(--line); }
+  .invariant { display: grid; grid-template-columns: 1.1fr 120px 1.5fr; gap: 15px; align-items: start; padding: 15px; background: var(--surface); }
+  .invariant .result { font: 750 12px/1.5 var(--mono); }
+  .result.pass { color: var(--good); }
+  .result.fail { color: var(--critical); }
+  .result.partial { color: var(--warning); }
+  .roadmap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); background: var(--line); }
+  .phase { min-height: 360px; padding: 22px; background: var(--surface); }
+  .phase .phase-label { color: var(--accent); font: 750 11px/1.3 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; }
+  .phase h3 { margin-top: 9px; }
+  .phase ul { padding-left: 18px; }
+  .phase li + li { margin-top: 8px; }
+  .gate { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .checklist { columns: 2; column-gap: 36px; padding-left: 20px; }
+  .checklist li { break-inside: avoid; margin-bottom: 9px; }
+  .note { color: var(--muted); font-size: 13px; }
+  .footer { display: flex; justify-content: space-between; gap: 20px; padding-top: 24px; border-top: 2px solid var(--ink); color: var(--muted); font-size: 12px; }
+  @media (max-width: 1020px) {
+    .metrics { grid-template-columns: 1fr 1fr; }
+    .shell { grid-template-columns: 1fr; }
+    .toc { position: static; display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 14px; }
+    .toc strong { grid-column: 1 / -1; }
+    .verdict-grid, .section-head { grid-template-columns: 1fr; }
+    .roadmap { grid-template-columns: 1fr; }
+    .phase { min-height: 0; }
+  }
+  @media (max-width: 700px) {
+    .report { padding: 12px 12px 48px; }
+    .hero { padding: 24px 19px; }
+    .metrics, .measure-grid, .two-col { grid-template-columns: 1fr; }
+    .trace { grid-template-columns: 1fr; }
+    .trace-line { width: 3px; height: 26px; margin-left: 8px; }
+    .trace-line.hot::before { width: 3px; height: 88%; }
+    .toc { grid-template-columns: 1fr 1fr; }
+    .finding-body { grid-template-columns: 1fr; padding-left: 20px; }
+    .invariant { grid-template-columns: 1fr; }
+    .checklist { columns: 1; }
+    .footer { flex-direction: column; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+</style>
+
+<div class="report">
+  <header class="hero">
+    <div class="eyebrow"><span class="flag">Native audit / 2026-08-11</span><span>macOS · SwiftUI · WKWebView · AI pipeline</span></div>
+    <h1>先让窗口出现，<br>再让系统变聪明。</h1>
+    <p class="lede">原生版当前最慢的不是网络，也不是 SwiftUI 本身，而是首窗之前同步解析会话并重建本地 RAG 向量。与此同时，富文本流式渲染、AI 请求语义和跨客户端数据格式还有一组必须在规模化使用前修复的问题。</p>
+    <div class="metrics" aria-label="审计关键指标">
+      <div class="metric critical"><strong>15.535s</strong><span>Release、禁网隔离完整数据，AX 检测首窗；n=3 样本中位数</span></div>
+      <div class="metric"><strong>0.779s</strong><span>同一 Release、禁网空数据；n=3 样本中位数</span></div>
+      <div class="metric"><strong>4.12MB</strong><span>富文本模板首屏阻塞脚本；其中 Mermaid 约 3.57MB</span></div>
+      <div class="metric"><strong>78 / 79</strong><span>完整 Xcode 工具链下通过的 XCTest；1 项异步时序断言失败</span></div>
+    </div>
+    <div class="trace" aria-label="启动关键路径">
+      <span>PROCESS</span><span class="trace-line"></span><span>JSON HYDRATE</span><span class="trace-line hot"></span><span>RAG EMBEDDING → WINDOW</span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="toc" aria-label="报告目录">
+      <strong>REPORT MAP</strong>
+      <a href="#verdict">结论与边界</a>
+      <a href="#startup">启动专项</a>
+      <a href="#findings">分级问题</a>
+      <a href="#rendering">渲染与动画</a>
+      <a href="#ai">AI 上下文与时机</a>
+      <a href="#deletion">删除不变量</a>
+      <a href="#parity">旧版对照</a>
+      <a href="#roadmap">实施路线</a>
+      <a href="#validation">验收指标</a>
+      <a href="#method">方法与限制</a>
+    </nav>
+
+    <main>
+      <section id="verdict">
+        <div class="section-head">
+          <div><div class="kicker">Executive verdict</div><h2>有明确优化空间，且先修正确性，再修“丝滑”。</h2></div>
+          <p>当前版本适合继续开发和小数据验证，但不建议在修复 P0 与关键 P1 之前面向历史数据较多的用户发布。性能根因是“同步全量”，AI 根因是“缓存与删除缺少可验证版本语义”。</p>
+        </div>
+        <div class="verdict-grid">
+          <div class="callout critical"><div class="callout-body"><h3>发布判断：暂缓大规模分发</h3><p>当前数据只含约 5 个会话、143 条消息、约 9.87 万字符，就能把首窗推迟到约 15.5 秒。数据继续增长后，启动、发送、重载和索引成本都会进一步放大。</p></div></div>
+          <div class="status-list">
+            <div class="status-row"><strong>已确认</strong><span>启动阻塞、全量流式 DOM 替换、Messages 上下文丢失、取消竞态、删除入口缺失等。</span></div>
+            <div class="status-row"><strong>已实测</strong><span>隔离启动、立即取消挂死、忽略 TERM 的子进程残留、完整 XCTest。</span></div>
+            <div class="status-row"><strong>待量化</strong><span>Instruments 下的主线程占比、峰值 RSS、120Hz 丢帧率与能耗。</span></div>
+          </div>
+        </div>
+        <div class="two-col" style="margin-top:18px">
+          <div class="panel good-panel"><h3>已经做得好的部分</h3><ul><li>普通聊天并非每次携带全部错题、提交与知识点；当前会话已有预算与摘要策略。</li><li>流式 UI 已做约 50ms 合并与取消检查，Judge 轮询具备退避。</li><li>删除会话后会同步移除会话 RAG 文档，同时不触碰独立的学习数据。</li><li>学习 tombstone 在永久清空回收站后仍保留，可阻止知识点被自动“复活”。</li><li>部分缓存、账本和远程隧道已用 Actor 串行化，侧栏使用 LazyVStack。</li></ul></div>
+          <div class="panel warning-panel"><h3>审计边界</h3><ul><li>范围是当前完整的 <code>native/</code> 工作树快照，不是某次提交的差异。</li><li>没有修改项目源码；构建产物放在临时 scratch 目录。</li><li>启动样本量较小，只报告范围/中位数，不把它包装成 p95。</li><li>没有完成 Instruments、Energy Log、长期内存与真实高刷新率显示器测试。</li></ul></div>
+        </div>
+      </section>
+
+      <section id="startup">
+        <div class="section-head">
+          <div><div class="kicker">P0 · cold start</div><h2>17 秒几乎全部来自会话索引。</h2></div>
+          <p>单独复制 <code>conversations.json</code> 就能复现完整数据的启动延迟；排除会话后的其他 JSON 基本维持在空数据水平。这是一条非常清晰、可优先切断的关键路径。</p>
+        </div>
+
+        <div class="measure-grid">
+          <div class="measure"><span class="number">0.779s</span><span class="label">Release / 禁网空数据，n=3 中位数；范围 0.756–0.805s</span></div>
+          <div class="measure hot"><span class="number">15.535s</span><span class="label">Release / 禁网当前完整数据，n=3 中位数；范围 15.394–15.864s</span></div>
+          <div class="measure hot"><span class="number">16.37–16.65s</span><span class="label">Release / 仅 conversations，早期 n=2；后续复测环境敏感但仍由该文件主导</span></div>
+        </div>
+
+        <div class="pipeline" aria-label="当前启动同步调用链">
+          <div class="step"><span class="step-id">01</span><strong>SwiftUI 根视图创建</strong><small><code>RootWorkspaceView</code> 的 <code>@State</code> 立即创建 Store</small></div>
+          <div class="step"><span class="step-id">02</span><strong>@MainActor init</strong><small><code>LegacyDataStore.init</code> 直接调用 <code>reload()</code></small></div>
+          <div class="step"><span class="step-id">03</span><strong>同步读取 JSON</strong><small>9 次同步读取；8 次 JSONSerialization、1 次 JSONDecoder</small></div>
+          <div class="step blocked"><span class="step-id">04</span><strong>全量构建 RAG 文档</strong><small>扫描、分块、tokenize；约 69 个文档/向量</small></div>
+          <div class="step blocked"><span class="step-id">05</span><strong>queue.sync embedding</strong><small>主线程等待后台串行队列后，窗口才可见</small></div>
+        </div>
+
+        <div class="callout critical"><div class="callout-body"><h3>代码证据</h3><p><code>native/Sources/LeetCodeAssistant/Views/RootWorkspaceView.swift:5-6</code> → <code>Models/LegacyDataStore.swift:410-413,1514-1524,1683-1730</code> → <code>Models/ConversationMemory.swift:49-51,58-76,202-261,345-355</code>。全链位于 <code>@MainActor</code> 的根状态初始化；没有取消检查。</p></div></div>
+
+        <div class="two-col" style="margin-top:18px">
+          <div class="panel"><h3>先做：首窗与数据解耦</h3><ol><li>根视图只创建轻量 <code>StartupState</code>，立即展示可交互壳层。</li><li>用独立 <code>DataActor</code> 在后台读取/解码各域，完成后一次性发布不可变 Snapshot。</li><li>只加载当前选中会话；其余会话按需或后台分批 hydrate。</li><li>Provider 目录刷新和 safe-storage 解密延后到首帧空闲后。</li></ol></div>
+          <div class="panel"><h3>再做：持久化增量索引</h3><ol><li>为每个 RAG 文档保存 <code>textHash + chunkVersion + embeddingModelVersion</code>。</li><li>启动时复用匹配向量，只处理新增、修改和删除文档。</li><li>定义 <code>cold/loading/ready/failed(revision)</code> 状态；AI 请求绝不静默使用陈旧索引。</li><li>若用户在索引未就绪时发送消息，只等待“当前任务所需”的定向索引，而不是全库。</li></ol></div>
+        </div>
+
+        <div class="code-map">Window shell ──visible──▶ StartupCoordinator
+                              ├─ DataActor.loadSnapshots() ─▶ @MainActor publish
+                              └─ RAGIndexActor.sync(changedHashes)
+                                     └─ ready(revision) ─▶ AI context gate</div>
+      </section>
+
+      <section id="findings">
+        <div class="section-head">
+          <div><div class="kicker">Prioritized findings</div><h2>先处理会挂死、丢上下文、破坏数据语义的问题。</h2></div>
+          <p><span class="badge p0">P0</span> 发布阻断；<span class="badge p1">P1</span> 下一版本必须完成；<span class="badge p2">P2</span> 可排入随后性能迭代。点击条目展开证据与最小修复。</p>
+        </div>
+
+        <div class="finding-stack">
+          <details class="finding" open><summary><span class="badge p0">P0</span><span class="finding-title">首窗之前同步重建全量会话 embedding，当前数据阻塞约 16–18 秒</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>历史会话增长后，用户启动应用长时间看不到任何窗口；与网络无关。</p><div class="refs">RootWorkspaceView.swift:5-6<br>LegacyDataStore.swift:410-413,1514-1524,1683-1730<br>ConversationMemory.swift:49-76,202-261,345-355</div></div><p><strong>最小修复：</strong>先出壳；JSON 解码移出 MainActor；RAG 持久化并按 hash 增量同步。准确性通过 request-time revision gate 保证，而不是通过阻塞首窗保证。</p></div></details>
+
+          <details class="finding" open><summary><span class="badge p1">P1</span><span class="finding-title">SubprocessRunner 立即取消可永久挂起；取消后子进程也可能残留</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>continuation 安装前取消，状态先被标记完成，随后 continuation 永远不恢复；确定性探针 <code>/bin/true</code> + 立即 cancel，3 秒外部 alarm 才退出。另一个探针中忽略 TERM 的子进程 3/3 仍存活。</p><div class="refs">Services/SubprocessRunner.swift:36-42,76-95,138-165<br>Services/LearningEngineBridge.swift:124-130<br>Services/ChatService.swift:470-474</div></div><p><strong>最小修复：</strong>用锁/Actor 状态机原子注册 continuation、process 与 cancellation；预取消不得启动；取消与超时共用 TERM → 250ms → KILL、进程组清理。增加 pre-cancel、immediate-cancel、TERM-ignore 测试。</p></div></details>
+
+          <details class="finding" open><summary><span class="badge p1">P1</span><span class="finding-title">Anthropic-compatible Messages 请求丢失后续 system 上下文</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>请求只取第一个 system 放入 <code>body.system</code>，随后过滤所有 system；跨会话记忆、连续性提示与压缩摘要若位于后续 system 消息，会完全消失。Chat/Responses 格式不受同样影响。</p><div class="refs">Views/ConversationWorkspaceView.swift:290-315<br>Models/ConversationBehavior.swift:431-475<br>Services/ChatService.swift:519-522</div></div><p><strong>最小修复：</strong>在传输层之前先生成一个结构化、确定顺序的 SystemEnvelope，将 policy、memory、continuity、summary 合并；为 Messages / Chat / Responses 做 golden request 等价测试。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">原生 Keychain marker 与 Electron safeStorage 共用设置时互相破坏凭据</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>原生写入 <code>keychain:v1:id</code>；Electron 只认识 <code>safe-storage:v1:</code>，会把 marker 当明文再次加密。原生随后解出的是 marker 而非真实密钥，两个客户端都可能持续鉴权失败。</p><div class="refs">Services/ProviderKeychain.swift:4-60<br>Models/LegacyDataStore.swift:1176-1208<br>Services/ChatService.swift:402-455<br>src/main/main.js:146,384-451</div></div><p><strong>最小修复：</strong>确立唯一凭据所有者和跨客户端 schema；迁移必须先解析两种 marker、读取真实 secret、再一次性写新格式，并保留回滚。禁止任一端把未知 marker 当 API key。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">Provider 保存绕过旧版 URL 规范化，可通过远程 HTTP 发送密钥</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>原生只 trim base URL，允许远程 <code>http://</code>、userinfo、query/hash 或粘贴的 generation endpoint；Authorization / x-api-key 可能经明文网络发送。</p><div class="refs">Models/LegacyDataStore.swift:1176-1208<br>Services/ChatService.swift:493-511,576-589<br>src/integrations/provider-settings.js:74-142,176-203,415-435</div></div><p><strong>最小修复：</strong>共享旧版 canonical validator；仅 loopback 可用 HTTP，远程强制 HTTPS，拒绝 URL credentials/query/hash，并将 endpoint containment 作为保存和请求前双重校验。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">离开 LeetCode 页面会把 CancellationError 记成分析失败，6 次后可丢任务</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>worker 挂在视图 <code>.task</code>；导航离开会取消，但通用 catch 仍增加 attempts 与每个 submission 的失败次数。达到预算后 submission 被过滤，队列可变空并删除。</p><div class="refs">Views/LeetCodeWorkspaceView.swift:109-113<br>Models/LegacyDataStore.swift:562-568,607-620,900-927</div></div><p><strong>最小修复：</strong>先捕获并原样处理 <code>CancellationError</code>，绝不写失败状态；把 worker 移到 app-scoped Actor。测试断言取消前后 attempts、failed map、IDs、queue 字节级不变。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">流式回答每批重做全文 Markdown/高亮/清洗并替换 innerHTML</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>长回答每约 50ms 对不断增长的全文重新 parse、sanitize、highlight 并重建所有 DOM 后代，总工作接近二次方；滚动锚点、选择和代码块也会反复失效。</p><div class="refs">Views/ConversationWorkspaceView.swift:141-165<br>Views/RichConversationWebView.swift:140-204,220-235<br>Resources/RichContent/conversation.html:203-245</div></div><p><strong>最小修复：</strong>冻结 stable prefix，仅更新最后一个不稳定块；桥接层只允许一个 in-flight commit，后续 token 合并；按长度采用自适应节奏，并在最终帧一次完整校验。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">SSE 无事件级 framing、无背压与细粒度上限</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>合法的多行 <code>data:</code> 被逐行当 JSON 解码并静默丢弃；event name 未在空行后重置。默认 AsyncThrowingStream 无界，错误体/成功流/首字节/idle 也缺少边界。</p><div class="refs">Services/ChatService.swift:70-79,89-127</div></div><p><strong>最小修复：</strong>复用或对齐现有 SSEParser：按空行 dispatch、拼接 data、重置 event；设置 line/event/body 上限和 first-byte/idle watchdog。使用可暂停生产者的有界 channel，不能靠丢 token 伪造背压。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">原生没有“删除活动知识点”入口，无法满足动态删除需求</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>Bridge 仅暴露 restore/purge/emptyTrash；UI 只能操作已经在回收站的条目。活动学习项无法从原生端移入回收站，也就没有即时 UI、prompt、索引失效链。</p><div class="refs">Services/LearningEngineBridge.swift:25-109<br>Views/LearningCenterViews.swift:603-654<br>Resources/LearningBridge/learning-engine-bridge.cjs:124-135</div></div><p><strong>最小修复：</strong>直接暴露 canonical engine 的 delete/restore/purge；delete 原子写 deleted snapshot + tombstone + revision/changeLog，随后发布 active-set revision 并取消/废弃旧 revision 的派生结果。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">图片附件在 AI 请求中退化为文件名</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>UI 能保存和显示截图，但 ChatRequestMessage 只有 role/content；图片只把标题拼到文本。模型收到“截图.png”而不是图像内容，分析只能猜测。</p><div class="refs">Models/ConversationBehavior.swift:477-494<br>Services/ChatService.swift:3-6,513-533<br>src/integrations/context-manager.js:398,437-476</div></div><p><strong>最小修复：</strong>建立统一 ContentPart（text/image/tool）；按 provider 映射 <code>input_image</code>/<code>image_url</code>，加入尺寸、MIME、token 与隐私上限；不支持多模态时明确提示而非静默降级。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">@MainActor 上全量 reload 与整文件 conversations 重写会把启动卡顿带入日常操作</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>发送时 append、回答完成/取消/失败时 upsert，都会读/解析/序列化/原子重写整个会话文件，并对变更会话同步重建 RAG 文档与 embedding；某些单域变更还触发全局 reload。它不是“每 token 写盘”，但会在点击发送之前与生成收尾处产生 O(全库字节 + 变更会话分块/向量) 的 UI 线程停顿；带最多 4×12MiB 的内联 base64 图片时成本明显放大。</p><div class="refs">Views/ConversationWorkspaceView.swift:81-102,167,333,914-929<br>Models/LegacyDataStore.swift:1051-1087,1514-1524,1582-1645<br>Models/ConversationMemory.swift:58-76,202-261,353-355</div></div><p><strong>最小修复：</strong>按域定向 reload；StorageActor 上做 I/O 和编码，RAGIndexActor 按内容 hash 更新受影响 chunks，MainActor 只发布 diff。附件改为内容寻址文件；中期迁移 SQLite/WAL 或 per-chat append log。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">会话/浏览器/分析异步提交缺少 generation identity，可显示错内容或丢新任务</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>两个会话若碰巧具有相同“更新时间毫秒 + 消息数”，切换后可跳过 render，侧栏已是 B 而 transcript 仍是 A；JS 调用失败前就推进 checkpoint，之后同输入不重试；滚动请求可在目标 DOM 创建前被消费。浏览器 New Tab 的异步 reset 能在快速导航后把新页清空。分析成功持久化又会用 await 前的旧 submissionIDs 覆盖期间新入队的 ID。</p><div class="refs">Views/RichConversationWebView.swift:127,155-162<br>Views/ToolWorkspaceView.swift:334,423<br>Models/LegacyDataStore.swift:877-885</div></div><p><strong>最小修复：</strong>所有异步提交携带 <code>resourceID + generation/revision</code>；只在 JS 成功后推进 checkpoint，失败可重试；scroll 在 render ack 后消费；队列持久化基于当前集合做 set subtraction/CAS，不能覆盖 await 期间的新 ID。</p></div></details>
+
+          <details class="finding"><summary><span class="badge p1">P1</span><span class="finding-title">原生缺少旧版单实例锁，共享 JSON 可能被双进程最后写入覆盖</span></summary><div class="finding-body"><div><p><strong>失败场景：</strong>两个原生实例或原生与旧版同时运行，各自执行 read-modify-write；后写者可静默覆盖另一个进程的会话或设置。</p><div class="refs">App/LeetCodeAssistantApp.swift:4-12</div></div><p><strong>最小修复：</strong>恢复单实例协调和 activate-existing-window 行为；若必须允许双客户端并存，则所有共享写入都需文件锁、revision compare-and-swap 与冲突合并。</p></div></details>
+        </div>
+
+        <h3 style="margin-top:30px">P2 与次要正确性清单</h3>
+        <div class="table-wrap" style="margin-top:12px">
+          <table>
+            <thead><tr><th>级别</th><th>问题</th><th>证据</th><th>建议</th></tr></thead>
+            <tbody>
+              <tr><td><span class="badge p2">P2</span></td><td>历史会话一次性富渲染全部消息并立即挂载 SVG/Mermaid</td><td><code>conversation.html:249-275</code></td><td>最近 12 条优先；旧消息占位 + idle/IntersectionObserver 升级；可视区外暂停动画。</td></tr>
+              <tr><td><span class="badge p2">P2</span></td><td>滚动每帧扫描全部用户消息、重复读几何并跨 WebKit bridge</td><td><code>conversation.html:308-318</code></td><td>IntersectionObserver + 缓存位置；一帧最多一次 IPC，只在 active ID 变化时发送。</td></tr>
+              <tr><td><span class="badge p2">P2</span></td><td>Inspector spring 动画逐帧改变 trailing padding，持续 resize WKWebView</td><td><code>RootWorkspaceView.swift:724-773</code></td><td>改成 overlay/transform 动画，结束时一次提交布局尺寸。</td></tr>
+              <tr><td><span class="badge p2">P2</span></td><td>难度筛选固定总宽 150，四项等分，“全部难度”显示为“全…”</td><td><code>LeetCodeWorkspaceView.swift:204-211,1336-1340</code><br><code>LearningWorkspaces.swift:2136-2164</code></td><td>固有宽度/加权宽度；窄宽用 ViewThatFits 降级 Menu；短视觉标签配完整 AX label。</td></tr>
+              <tr><td><span class="badge p2">P2</span></td><td>知识图谱手势期间每帧对全量记录计算 fingerprint，且缺少 viewport culling</td><td><code>LearningWorkspaces.swift:2094-2132</code></td><td>数据 mutation 时生成 revision；手势只读 O(1) revision，空间索引裁剪节点/边。</td></tr>
+              <tr><td><span class="badge p2">P2</span></td><td>代码编辑器补全、诊断与 SwiftUI 高亮反复扫描整份源码</td><td><code>Resources/CodeEditor/editor.html:99-106,148-203</code><br><code>SyntaxHighlightedCodeView.swift:48-73,115-146</code></td><td>增量 token/diagnostic 范围、worker 化、按 code hash 缓存 attributed output。</td></tr>
+              <tr><td><span class="badge p2">P2</span></td><td>题面 WKWebView 首次加载同一 HTML 两次</td><td><code>LeetCodeWorkspaceView.swift:1381-1393</code></td><td>makeNSView 同步写入缓存标识；update 只在 content hash 改变时 reload。</td></tr>
+              <tr><td><span class="badge p2">P2</span></td><td>每次学习变更启动一个 Electron-as-Node 子进程并全量重写 learning.json</td><td><code>LearningEngineBridge.swift:112-130</code></td><td>长驻受控 helper 或将 canonical engine 提取为共享库；批量 mutation 一次提交。</td></tr>
+              <tr><td><span class="badge p2">P2</span></td><td>账本每个请求重写全部聚合；SSH 隧道无 idle stop；API JSON 解析在 MainActor</td><td><code>AIUsageLedger.swift:110-176</code><br><code>RemoteCodeCompletionService.swift:56-254</code><br><code>LeetCodeAPIClient.swift:84-329</code></td><td>批量提交/SQLite；恢复 idle teardown；DTO 解析移出主 Actor。</td></tr>
+              <tr><td><span class="badge p1">P1</span></td><td>切题后旧 Judge 结果可写入新题；学习深链可能打开上一条；自定义滚动条只被弱引用</td><td><code>LeetCodeWorkspaceView.swift:1274</code><br><code>LearningWorkspaces.swift:435</code><br><code>LearningCenterViews.swift:27</code><br><code>OverlayScrollViewConfiguration.swift:66-67,122</code></td><td>所有异步结果提交前验证 generation/slug；统一选中路由；把 scrollbar 插入视图层级并强持有。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="rendering">
+        <div class="section-head">
+          <div><div class="kicker">Streaming · resize · visible work</div><h2>“丝滑”不是加动画，而是减少每帧必须完成的工作。</h2></div>
+          <p>当前流式链有三份增长数据：传输无界队列、Service 累积全文、UI/DOM 累积全文。50ms batching 只能减少桥接次数，无法对前端建立背压，也无法抵消全文重解析。</p>
+        </div>
+        <div class="two-col">
+          <div class="panel"><h3>SSE 到屏幕的目标链路</h3><div class="code-map">URLSession bytes
+  → framed SSE parser + byte/idle limits
+  → bounded, suspending delta channel
+  → adaptive coalescer
+  → one in-flight WebKit commit
+  → stable DOM prefix + mutable tail</div><p>要求最终文本逐字节一致。缓冲区满时暂停读取或显式失败；绝不能通过 <code>bufferingNewest</code> 丢弃 token。</p></div>
+          <div class="panel"><h3>历史与可视区</h3><ol><li>空会话不创建 opacity-zero WKWebView。</li><li>Mermaid/KaTeX 不进入首屏 parser-blocking bundle；按真实内容动态加载。</li><li>消息先用 <code>content-visibility:auto</code> 降低 layout/paint。</li><li>旧消息使用保高占位，靠 IntersectionObserver 在前后约两屏内富化。</li><li>离屏 SVG/CSS/Web Animations 暂停；回屏再恢复。</li></ol></div>
+        </div>
+        <div class="two-col" style="margin-top:18px">
+          <div class="panel"><h3>页面收缩与侧栏动画</h3><p>不要用 spring 连续改变 WKWebView 的可用宽度。侧栏应放在独立 overlay layer 上，用 transform/opacity 动画；WebView 只在动画结束时接收一次最终 bounds。初始 compact 状态必须在构造 Inspector/WKWebView 前决定，避免“先创建、再关闭”的首帧抖动。</p></div>
+          <div class="panel"><h3>字体变化</h3><p>审计没有发现需要“连续插值字体大小”的合理场景；真实 font-size 动画会触发整段文本重排。建议一次切换根级 typography token，以 100–150ms 交叉淡化旧/新层掩盖跳变，保持固定 line-height，并在 <code>Reduce Motion</code> 下直接切换。流式 token 本身不应改变字体度量。</p></div>
+        </div>
+        <div class="callout" style="margin-top:18px"><div class="callout-body"><h3>截图中的“全…”</h3><p>原因已定位：控件总宽固定为 150pt，扣除内边距后每项约 36pt，而真实首项是 6 个汉字“全部难度”；四个 segment 又用 <code>maxWidth: .infinity</code> 等分，没有最小宽度或降级规则。短期可显示“全部”，同时提供 <code>.help("全部难度")</code> 和完整 accessibility label；正式方案按固有宽度加权并将总宽提高到至少约 220pt，空间不足时用 ViewThatFits 切换 Menu，而不是继续截断。测试简中、繁中、英/日/德，12/14/16pt、系统显示缩放、820/1000/1700 宽度、选中 semibold、Light/Dark/High Contrast、Reduce Motion、键盘 Focus 与 VoiceOver；断言不截断且点击目标 ≥28pt。</p></div></div>
+      </section>
+
+      <section id="ai">
+        <div class="section-head">
+          <div><div class="kicker">AI timing & context</div><h2>现在不是“每次全量分析”，但增量依据还不够可靠。</h2></div>
+          <p>普通聊天已经有预算：小会话携带当前会话，超过阈值后只保留首问、context summary 和最近消息，并加入跨会话 RAG。它不会自动把全部 learning.json、错题库和提交记录塞进每次请求。</p>
+        </div>
+
+        <div class="callout good"><div class="callout-body"><h3>直接回答：不会每次全量</h3><p><code>ConversationWorkspaceView.swift:290-315</code> 组装系统提示、会话 RAG、连续性提示和预算后的当前会话；<code>ConversationBehavior.swift:431-475</code> 在长会话中采用“首问 + 摘要 + 最近消息”。但普通聊天 RAG 只来自 conversations，不含 learning/LeetCode；而 Messages 传输格式目前又会丢后续 system，这是准确性缺口。</p></div></div>
+
+        <h3 style="margin-top:28px">推荐的五层请求信封</h3>
+        <div class="pipeline" aria-label="AI 上下文分层">
+          <div class="step"><span class="step-id">CACHEABLE</span><strong>稳定系统策略</strong><small>provider 能力、行为规则、输出 schema</small></div>
+          <div class="step"><span class="step-id">TASK</span><strong>当前任务事实</strong><small>题面 revision、当前代码、终态提交详情</small></div>
+          <div class="step"><span class="step-id">DELTA</span><strong>本次变化</strong><small>与上次提交的代码/结果差异，而非全量历史</small></div>
+          <div class="step"><span class="step-id">EVIDENCE</span><strong>Top-K 证据</strong><small>相关错题/知识点/历史会话，带来源与分数</small></div>
+          <div class="step"><span class="step-id">RECENCY</span><strong>摘要与最近轮次</strong><small>按模型窗口动态预算，预留输出与工具空间</small></div>
+        </div>
+
+        <div class="two-col">
+          <div class="panel"><h3>提交分析：从 ID 跳过去，升级为内容指纹</h3><p>当前持久化主要依赖 <code>analyzedSubmissionIds</code> 和 version=1；队列 fingerprint 虽含 id/status/lang/time/runtime/memory，却不含 code/detail hash。详情修正、代码变化或 prompt 升级可能无法失效。</p><div class="code-map">itemFingerprint = hash(
+  submissionID + status + language
+  + normalizedCodeHash + detailHash
+  + problemRevision
+)
+analysisFingerprint = hash(
+  sorted(itemFingerprints)
+  + analyzerVersion + promptVersion
+  + modelProfile + evidenceSetHash
+)</div><p class="refs">LegacyDataStore.swift:5-33,624-715,818-875<br>src/integrations/leetcode-analysis.js:49-61<br>src/main/main.js:3234-3273</p></div>
+          <div class="panel"><h3>AI 介入时机：脱离页面生命周期</h3><ol><li>提交进入终态且详情稳定后，按题目 debounce 并合并轨迹。</li><li>先本地确定性分类；只有出现新失败模式、代码实质变化或用户手动要求时调用 AI。</li><li>持久化队列由 app-scoped Actor 驱动，离开页面只取消 UI 观察，不取消任务所有权。</li><li>详情获取限并发 3–4；一个 batch 完成后一次持久化。</li><li>结果提交前比较 generation、submission fingerprint 和 learning revision；旧结果丢弃而非覆盖新状态。</li></ol></div>
+        </div>
+
+        <div class="invariant-grid" style="margin-top:18px">
+          <div class="invariant"><strong>未变化的同步</strong><span class="result partial">当前：部分</span><span>已分析 ID 会跳过，但缺少 detail/code/prompt 级失效。目标：0 次 AI 请求、0 次 embedding 重算、0 次失败计数变化。</span></div>
+          <div class="invariant"><strong>动态及时分析</strong><span class="result fail">当前：不稳</span><span>worker 随 LeetCode 视图取消，且取消会被记失败。目标：队列独立于视图；活跃题优先，后台可暂停但不丢任务。</span></div>
+          <div class="invariant"><strong>Messages 上下文等价</strong><span class="result fail">当前：失败</span><span>后续 system 被过滤。目标：三种 API 格式对同一逻辑 envelope 生成语义等价请求。</span></div>
+          <div class="invariant"><strong>图片理解</strong><span class="result fail">当前：失败</span><span>只传附件标题。目标：支持的模型收到真实 image part；不支持时明确阻止或提示。</span></div>
+        </div>
+      </section>
+
+      <section id="deletion">
+        <div class="section-head">
+          <div><div class="kicker">Knowledge & conversation invariants</div><h2>知识点和对话必须拥有不同生命周期。</h2></div>
+          <p>抽取后的知识点是独立学习资产，对话只是来源之一。因此删除对话不能级联删知识；删除知识则必须立即从 active 集合和未来 prompt 消失，同时 tombstone 防止自动重识别。</p>
+        </div>
+
+        <div class="invariant-grid">
+          <div class="invariant"><strong>删除活动知识点</strong><span class="result fail">当前：无入口</span><span>原生 Bridge/UI 没有 active delete。必须补 canonical delete，并以 revision event 同步 UI、学习 prior context、图谱、计划和缓存。</span></div>
+          <div class="invariant"><strong>外部已删除知识点</strong><span class="result pass">当前：基本正确</span><span>Electron 移入回收站后，native reload 会从 active records 排除；专用 learning prior prompt 只取 active。</span></div>
+          <div class="invariant"><strong>永久清空回收站</strong><span class="result pass">当前：保留 tombstone</span><span>purge/empty 只删 deleted snapshot，不删 suppressedItems；后续自动识别仍被拦截。另设显式“允许重新学习”才可清 tombstone。</span></div>
+          <div class="invariant"><strong>恢复知识点</strong><span class="result partial">当前：有漂移风险</span><span>手写 bridge restore 没有完整执行 canonical normalize/revision/changeLog/suppression 语义。应直接调用共享 engine API。</span></div>
+          <div class="invariant"><strong>删除对话</strong><span class="result pass">当前：核心语义正确</span><span><code>LegacyDataStore.swift:1148-1155</code> 只删 conversations，随后移除会话 RAG；不修改 learning.json，已识别知识点保留。</span></div>
+          <div class="invariant"><strong>删除对话时仍在抽取</strong><span class="result partial">当前：测试不足</span><span>需定义事务边界：先提交已确认知识，再删聊天；或取消未提交抽取。无论哪种，都不得按 conversationID 级联删除既有学习项。</span></div>
+        </div>
+
+        <div class="code-map">deleteKnowledge(id)
+  → canonical engine: deleted snapshot + tombstone + revision
+  → publish ActiveLearningSet(revision)
+  → remove from prompt / graph / plan / caches
+  → reject in-flight results built on older revision
+
+deleteConversation(id)
+  → flush-or-cancel pending extraction
+  → delete conversation + conversation-RAG docs
+  → learning records remain byte-for-byte unchanged</div>
+      </section>
+
+      <section id="parity">
+        <div class="section-head">
+          <div><div class="kicker">Electron parity</div><h2>旧版有些机制应该复用，而不是重新实现一遍。</h2></div>
+          <p>原生化不等于放弃成熟的边界条件。最危险的差异集中在凭据格式、Provider 校验、SSE、增量分析指纹、富文本懒渲染与单实例。</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>能力</th><th>Electron 旧版</th><th>原生现状</th><th>处理</th></tr></thead>
+            <tbody>
+              <tr><td>流式 DOM</td><td>stable-prefix + 80/140/220ms 自适应节奏</td><td>约 50ms 全文 parse/replace</td><td>移植语义，不必照搬 UI</td></tr>
+              <tr><td>历史富内容</td><td>旧消息纯文本占位，idle 升级；最近约 12 条优先</td><td>全部立即 Markdown + SVG/Mermaid</td><td>恢复分层与可视区策略</td></tr>
+              <tr><td>SSE 边界</td><td>请求/错误/流大小与首字节/idle guards；已有 parser</td><td>逐行 JSON，无 event framing 和细限额</td><td>共享测试向量与 parser 语义</td></tr>
+              <tr><td>图片上下文</td><td>保留 images，映射到 Responses/Chat 多模态</td><td>只传文件名</td><td>共享 ContentPart 中间模型</td></tr>
+              <tr><td>Provider URL</td><td>拒绝远程 HTTP、credentials、query/hash</td><td>只 trim</td><td>唯一 canonical validator</td></tr>
+              <tr><td>凭据</td><td><code>safe-storage:v1:</code></td><td><code>keychain:v1:</code> 写入同一 settings</td><td>统一 schema + 双向迁移</td></tr>
+              <tr><td>提交缓存</td><td>detailHash + analysisFingerprint + version</td><td>ID 集合为主</td><td>内容寻址缓存</td></tr>
+              <tr><td>代码草稿</td><td>按题目/语言的有界 draft map</td><td>重开题目恢复 starter code</td><td>恢复 draft 所有权与上限</td></tr>
+              <tr><td>单实例</td><td>有 single-instance lock</td><td>未建立</td><td>原生入口恢复协调</td></tr>
+              <tr><td>提交保留</td><td>上限约 2400</td><td>持续增长并全量排序/写入</td><td>共享 retention policy</td></tr>
+              <tr><td>学习引擎</td><td>canonical <code>src/core/learning-engine.js</code></td><td>内置约 1508 行 fork + 手写 bridge 操作</td><td>抽成单一共享 owner，删掉语义分叉</td></tr>
+              <tr><td>SSH 隧道</td><td>有 idle teardown</td><td>成功后常驻到错误或 app 退出</td><td>恢复 idle/background stop</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="roadmap">
+        <div class="section-head">
+          <div><div class="kicker">Implementation sequence</div><h2>三个 Gate，避免一次性大重构。</h2></div>
+          <p>先把窗口、数据和 AI 的所有权边界修正，再做 WebKit 优化；最后处理规模化存储和共享核心。每一 Gate 都有可自动化的退出标准。</p>
+        </div>
+        <div class="roadmap">
+          <article class="phase"><div class="phase-label">Gate A · correctness & first window</div><h3>先解除阻断</h3><ul><li>首窗前移除 reload/RAG sync；增加启动 signpost。</li><li>修复 SubprocessRunner 原子取消与进程组清理。</li><li>修复 Messages system envelope 与分析取消语义。</li><li>统一 Provider URL 校验和凭据迁移。</li><li>建立单实例锁。</li><li>补 active knowledge delete 与 revision event。</li></ul><div class="gate"><strong>退出：</strong>当前数据首窗 ≤ 1.2s；取消测试稳定；三种 API golden request 通过；跨客户端密钥迁移可回滚。</div></article>
+          <article class="phase"><div class="phase-label">Gate B · streaming & interaction</div><h3>再消除每帧全量工作</h3><ul><li>正确 SSE framing、上限、watchdog、有界背压。</li><li>stable-prefix DOM 与单 in-flight WebKit commit。</li><li>历史消息分层、SVG/Mermaid 可视区懒加载。</li><li>Inspector 用 overlay transform；筛选器自适应。</li><li>修复题面双载、图谱 fingerprint、编辑器全量扫描。</li><li>恢复图片多模态内容。</li></ul><div class="gate"><strong>退出：</strong>10k 字流式回答文本完全一致；滚动/收缩 missed-frame &lt; 1%；1000 消息首屏可交互 &lt; 500ms。</div></article>
+          <article class="phase"><div class="phase-label">Gate C · scale & shared core</div><h3>最后解决长期增长</h3><ul><li>StorageActor + targeted reload；附件内容寻址。</li><li>SQLite/WAL 或 per-chat append log。</li><li>持久化增量向量索引和内容指纹分析缓存。</li><li>app-scoped 分析队列、限并发详情获取、批量提交。</li><li>共享 learning/SSE/provider/usage canonical 模块。</li><li>账本批处理、SSH idle stop、数据 retention。</li></ul><div class="gate"><strong>退出：</strong>10× 数据量不显著影响首窗；未变化同步 0 AI 调用；单条消息写入成本不随全库线性增长。</div></article>
+        </div>
+      </section>
+
+      <section id="validation">
+        <div class="section-head">
+          <div><div class="kicker">Acceptance metrics</div><h2>用指标定义“快”和“准确”。</h2></div>
+          <p>以下门槛应进入 CI fixture、性能基线与开发版 signpost。正式 p95 至少取 30 次冷启动，并分空数据、当前数据、10× 数据三档。</p>
+        </div>
+        <ul class="checklist">
+          <li><strong>首窗：</strong>p50 ≤ 0.8s，p95 ≤ 1.2s；首帧前无 &gt;50ms 主线程任务。</li>
+          <li><strong>可交互：</strong>p95 ≤ 1.5s；RAG ready 单独记录，不与 WindowVisible 混为一项。</li>
+          <li><strong>增量索引：</strong>未变化启动 embedding 数 = 0；改单会话只更新其变更 chunks。</li>
+          <li><strong>SSE：</strong>首 token→可见 p95 &lt; 200ms；多行/分片 golden corpus 逐字节一致。</li>
+          <li><strong>背压：</strong>pending bytes 有硬上限；100k chunk 压测不出现无界 RSS 增长。</li>
+          <li><strong>流式帧率：</strong>10k/50k 字回答期间 missed-frame &lt; 1%，WebKit long task &gt;50ms 为 0。</li>
+          <li><strong>历史会话：</strong>1000 消息 + 50 Mermaid，最新消息可交互 &lt; 500ms；DOM 节点数有界。</li>
+          <li><strong>窗口收缩：</strong>1700→820 宽度无连续 WebView resize；Reduce Motion 下无过渡。</li>
+          <li><strong>AI 缓存：</strong>相同 fingerprint 0 请求；改一份代码只触发一个受影响 analysis。</li>
+          <li><strong>取消：</strong>所有 queue/attempt/failed 字段完全不变；500ms 后无 helper 子进程。</li>
+          <li><strong>知识删除：</strong>提交后 &lt;200ms 从 active UI 消失；旧 ID 不进入任何新 prompt/index。</li>
+          <li><strong>对话删除：</strong>learning store byte-for-byte 不变；会话 RAG 文档为 0。</li>
+          <li><strong>API 等价：</strong>Messages/Chat/Responses 的 system、text、image、tool 语义 golden test 全通过。</li>
+          <li><strong>本地化：</strong>简/繁/英/日/德 + 12/14/16pt + 820/1000/1700，无提前截断。</li>
+        </ul>
+      </section>
+
+      <section id="method">
+        <div class="section-head">
+          <div><div class="kicker">Evidence & limitations</div><h2>证据分级，不把推测写成实测。</h2></div>
+          <p>结论来自完整原生树与旧版对应实现的静态调用链、隔离启动对照、进程取消探针和 XCTest。报告没有把未运行的 Instruments 指标写成事实。</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>证据</th><th>结果</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>Release 禁网隔离启动</td><td>空数据 n=3：0.756–0.805s，中位 0.779s；完整数据（12 文件、1,116,589B）n=3：15.394–15.864s，中位 15.535s</td><td><code>sandbox-exec (deny network*)</code>；每轮全新 /tmp HOME/CFFIXED_USER_HOME/TMPDIR，只读复制源数据后仅操作副本。AX 按 PID 轮询 <code>count windows &gt; 0</code>，因此是首窗检测上界，不是像素首帧或可交互时间；不报告 p95。</td></tr>
+              <tr><td>文件隔离旁证</td><td>早期 Release conversations-only n=2：16.371/16.648s；后续连续 NLEmbedding 复测波动更大</td><td>结合交错 full/empty 对照，确认 conversations 足以主导耗时；单文件绝对时间受 NLEmbedding 资源状态影响，不作为稳定基准。</td></tr>
+              <tr><td>Debug 隔离旁证</td><td>空数据 n=3，中位 1.123s；完整数据 n=3，中位 17.552s</td><td>Release 复现数量级差异，排除仅由 Debug 优化等级造成。</td></tr>
+              <tr><td>取消确定性探针</td><td><code>/bin/true</code>、timeout 0.2s、立即 cancel；3s 无 completion，外部 alarm rc=142</td><td>确认 continuation/cancellation 注册竞态。</td></tr>
+              <tr><td>TERM 探针</td><td>忽略 TERM 的直接子进程，取消后 1s 仍存活 3/3</td><td>确认取消路径没有 timeout 路径同等的 KILL escalation。</td></tr>
+              <tr><td>XCTest</td><td>79 项中 78 通过</td><td><code>DEVELOPER_DIR=&lt;Xcode-beta&gt;/Contents/Developer xcrun swift test --package-path native --scratch-path /tmp/...</code>；Xcode 27 beta / Swift 6.4。</td></tr>
+              <tr><td>唯一测试失败</td><td><code>WorkspaceStateTests.swift:245</code> expected false / actual true</td><td>生产代码把 sidebar compaction dispatch 到下一 runloop，而测试立即断言；需明确同步语义或异步等待。</td></tr>
+              <tr><td>环境差异</td><td>默认 CommandLineTools 缺 <code>libSwiftUIMacros</code>；显式完整 Xcode 可构建</td><td>这是验证环境差异，不是产品缺陷。</td></tr>
+              <tr><td>未执行</td><td>Instruments Time Profiler、Allocations、Energy Log、长期 soak</td><td>峰值内存、实际 120Hz frame pacing、能耗仍需修复前后对照。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">注：当前 <code>native/</code> 基本是未跟踪的新工作树；本报告审计的是该完整快照。所有行号以 2026-08-11 审计时的工作树为准。</p>
+      </section>
+
+      <footer class="footer"><span>macOS Native Performance & AI Logic Audit</span><span>只读审计 · 未修改项目源码 · 2026-08-11</span></footer>
+    </main>
+  </div>
+</div>

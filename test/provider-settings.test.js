@@ -57,3 +57,30 @@ test('task routing uses the routed OpenCode Go model protocol', () => {
   assert.equal(route.model, 'qwen3.7-plus');
   assert.equal(route.resolvedMode, 'messages');
 });
+
+test('all real AI task routes are retained and specialized learning routes migrate safely', () => {
+  const settings = sanitizeProviderSettings({
+    activeProvider: 'deepseek',
+    providers: {
+      deepseek: {
+        apiBase: 'https://api.deepseek.com',
+        apiKey: 'default-key',
+        model: 'deepseek-chat'
+      },
+      alibaba: {
+        apiBase: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        apiKey: 'learning-key',
+        model: 'qwen-plus'
+      }
+    },
+    taskModels: { learning: { providerId: 'alibaba', model: 'qwen-plus' } }
+  });
+
+  assert.deepEqual(Object.keys(settings.taskModels), [
+    'conversation', 'title', 'video', 'learning',
+    'studyPlan', 'studyContent', 'studyAssessment', 'leetCodeAnalysis'
+  ]);
+  assert.equal(resolveTaskModel(settings, 'studyContent').providerId, 'alibaba');
+  assert.equal(resolveTaskModel(settings, 'leetCodeAnalysis').model, 'qwen-plus');
+  assert.equal(resolveTaskModel(settings, 'conversation').providerId, 'deepseek');
+});

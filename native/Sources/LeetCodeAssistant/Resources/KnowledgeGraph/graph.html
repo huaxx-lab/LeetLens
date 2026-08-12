@@ -1,0 +1,2100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- 卡片正文是 Markdown，用项目里已经在用的那套渲染（聊天、题解同款），
+       所以代码块的高亮、列表、表格处处一致，不用再养第二套。 -->
+  <link rel="stylesheet" href="github.min.css">
+  <link rel="stylesheet" href="code-block.css">
+  <style>
+    /* 思维导图渲染器。
+       没有用通用图库：参考的导图节点是「实色标题栏 + 浅色正文区 + 若干张笔记卡片」，
+       通用图库一个节点只有一个 label 和一个背景色，做不出来。
+       这里节点是 DOM 卡片、连线是一层 SVG，布局自己算（tidy tree）。
+       平移缩放只改外层一个 transform，不重排 DOM。 */
+    :root {
+      --paper: #E9E5DA;
+      --card-body: #FDFBF3;
+      --ink: #2b2b2b;
+      --ink-soft: #5b5b57;
+      --shadow: rgba(0,0,0,.10);
+      --blue: #0A84FF;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #23231f;
+        --card-body: #2e2e29;
+        --ink: #e8e6e0;
+        --ink-soft: #a8a69f;
+        --shadow: rgba(0,0,0,.45);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%; overflow: hidden;
+      background: var(--paper);
+      font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+      -webkit-user-select: none; user-select: none;
+    }
+    /* 光标始终是箭头：这是一张图，不是网页，抓手指针只会让人以为点不动。 */
+    #viewport { position: absolute; inset: 0; overflow: hidden; cursor: default; }
+    #viewport.linking { cursor: crosshair; }
+    #stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+    #wires { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+    /* 人工链接单独一层，render 结束时挪到最后 → 永远压在卡片上面。
+       和派生层的实线不同：那条线是父子关系，藏在卡片后面反而干净；
+       链接是跨分支的，被卡片盖住就等于没画。 */
+    #linkwires { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+    /* 按住 Shift 从卡片拖出来的那条橡皮筋。单独一层，drawWires 清空链接层时不会连它一起抹掉。 */
+    #rubberwires { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; z-index: 4; }
+
+    .node {
+      position: absolute;
+      border-radius: 7px;
+      border: 2px solid var(--tint);
+      background: var(--card-body);
+      overflow: hidden;
+      box-shadow: 0 1px 3px var(--shadow);
+      cursor: default;
+    }
+    /* 深层卡片是「浅色标题栏 + 暖白正文」，标题用深字——
+       参考图里正文密的卡片都是这个样子，纯饱和色配白字读不动。 */
+    .node .head {
+      background: color-mix(in srgb, var(--tint) 32%, var(--card-body));
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.4;
+      padding: 6px 20px 6px 9px;
+      position: relative;
+      word-break: break-word;
+    }
+    .node .head::after {
+      content: '›';
+      position: absolute;
+      right: 7px; top: 50%;
+      transform: translateY(-50%);
+      font-size: 13px;
+      opacity: .45;
+    }
+    /* 标题和右侧箭头是明确的详情入口；仍保留普通箭头光标，不伪装成网页链接。 */
+    .node .head:hover::after { opacity: .9; color: var(--blue); }
+    .node .head:active { filter: brightness(.97); }
+    /* 一级分支是实色标签，白字，作为整条分支的色标。 */
+    .node.branch { background: var(--tint); }
+    .node.branch .head { background: var(--tint); color: #fff; }
+    .node .body {
+      color: var(--ink);
+      font-size: 10.5px;
+      line-height: 1.6;
+      padding: 7px 9px;
+      word-break: break-word;
+      border-top: 1px solid color-mix(in srgb, var(--tint) 22%, transparent);
+    }
+    /* 根节点是一枚深色小胶囊，不带正文。 */
+    .node.root { border-radius: 999px; border-color: #3a3a3c; background: #3a3a3c; }
+    .node.root .head {
+      background: transparent;
+      /* 深色胶囊上必须用白字，且不能换行——否则"知识图谱"会被挤成竖排。 */
+      color: #fff;
+      font-size: 13px;
+      padding: 7px 16px;
+      white-space: nowrap;
+      word-break: normal;
+    }
+    .node.root .head::after {
+      content: '›'; right: 9px; opacity: .65; color: #fff;
+    }
+    .node.root .head { padding-right: 27px; }
+    .node.selected { outline: 2px dashed var(--blue); outline-offset: 2px; }
+    /* 被链接指向的一端用实线蓝框，和选中的虚线框区分开。 */
+    .node.linked { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .node.pending { box-shadow: 0 0 0 2.5px #AF52DE; }
+    .node.dim { opacity: .2; }
+
+    /* AI 讲解。数据来自学习记录里的学习包，和今日复习、学习题库是同一份，
+       所以这里只负责显示与「补生成」，不存副本。默认收起，点标题展开。 */
+    .node .lesson { border-top: 1px solid color-mix(in srgb, var(--tint) 22%, transparent); }
+    .node .lesson-head {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 9px; cursor: pointer;
+    }
+    .node .lesson-head:hover { background: color-mix(in srgb, var(--tint) 10%, transparent); }
+    .node .lesson-tag {
+      font-size: 9px; font-weight: 700; letter-spacing: .3px;
+      padding: 1px 5px; border-radius: 4px;
+      background: color-mix(in srgb, var(--tint) 26%, transparent);
+      color: var(--ink);
+    }
+    .node .lesson-state { font-size: 9.5px; color: var(--ink-soft); flex: 1; }
+    .node .lesson-body { padding: 0 9px 8px; }
+
+    /* 笔记卡片：一个节点可以摞好几张。 */
+    .node .note {
+      position: relative;
+      margin: 6px 7px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--tint) 9%, var(--paper));
+      border-left: 2.5px solid var(--tint);
+    }
+    /* 链接跳转行：链接建立之后，在卡片最底部多出一行「目标标题 →」，
+       本质上就是一张特殊的笔记卡片。有几条链接就有几行，删链接这行跟着消失。 */
+    .node .jump {
+      display: flex; align-items: center; gap: 8px;
+      margin: 5px 7px; padding: 4px 4px 4px 8px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--blue) 8%, transparent);
+    }
+    .node .jump-title {
+      flex: 1; min-width: 0;
+      font-size: 10.5px; color: var(--ink);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .node .jump-go {
+      width: 20px; height: 20px; border-radius: 50%; border: none; flex: none;
+      background: var(--blue); color: #fff; font-size: 11px; line-height: 20px;
+      text-align: center; padding: 0; cursor: pointer;
+    }
+    .node .jump-go:hover { background: #0071e3; }
+
+    /* 卡片里的 Markdown。字号压到导图能看的尺度，其余交给 github.min.css。 */
+    .md { font-size: 10.5px; line-height: 1.6; color: var(--ink); word-break: break-word; }
+    .md > *:first-child { margin-top: 0; }
+    .md > *:last-child { margin-bottom: 0; }
+    .md p { margin: 4px 0; }
+    .md ul, .md ol { margin: 4px 0; padding-left: 16px; }
+    .md li { margin: 2px 0; }
+    .md h1, .md h2, .md h3, .md h4 { margin: 6px 0 3px; font-size: 11.5px; }
+    .md blockquote {
+      margin: 4px 0; padding: 2px 0 2px 8px;
+      border-left: 2px solid color-mix(in srgb, var(--ink) 20%, transparent);
+      color: var(--ink-soft);
+    }
+    /* 行内代码跟随卡片字号；围栏代码由共享 code-block.css 完整接管。 */
+    .md :not(pre) > code { font-size: 9.5px; }
+    .md table { border-collapse: collapse; margin: 5px 0; font-size: 9.5px; }
+    .md th, .md td { border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent); padding: 2px 5px; }
+    .md img { max-width: 100%; }
+
+    /* 折叠开关挂在卡片右缘外侧，和参考图一致。 */
+    .toggle {
+      position: absolute;
+      width: 17px; height: 17px;
+      border-radius: 50%;
+      border: 1.5px solid var(--tint);
+      background: var(--card-body);
+      color: var(--tint);
+      font-size: 11px; font-weight: 700;
+      line-height: 13px; text-align: center;
+      cursor: pointer;
+      z-index: 3;
+      box-shadow: 0 1px 2px var(--shadow);
+    }
+    .toggle:hover { background: var(--tint); color: #fff; }
+    .count {
+      position: absolute;
+      font-size: 9px; color: var(--ink-soft);
+      pointer-events: none; z-index: 2;
+    }
+
+    #hint {
+      position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+      font-size: 12px; padding: 6px 12px; border-radius: 999px;
+      background: rgba(0,0,0,.72); color: #fff; opacity: 0;
+      transition: opacity .18s; pointer-events: none; white-space: nowrap;
+    }
+    #hint.show { opacity: 1; }
+    #empty {
+      position: absolute; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      color: var(--ink-soft); font-size: 13px;
+    }
+
+    /* 详情卡：一张能拖走的备忘录。
+       查看和编辑不分页——点哪一段就改哪一段，点到别处就存好并渲染成 Markdown。
+       所以卡片上不需要一排「新建 / 编辑 / 保存 / 取消」按钮，
+       底部只留一条图标工具条放那些真正跳出这张卡片的动作。 */
+    #detail {
+      position: absolute;
+      width: min(430px, calc(100% - 24px));
+      max-height: min(640px, calc(100% - 24px));
+      display: none;
+      flex-direction: column;
+      background: var(--card-body);
+      border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+      border-radius: 14px;
+      box-shadow: 0 14px 40px rgba(0,0,0,.26);
+      overflow: hidden;
+      z-index: 20;
+      -webkit-user-select: text; user-select: text;
+    }
+    #detail.show { display: flex; }
+    #detail.folded { max-height: none; }
+    #detail.folded .dt-scroll, #detail.folded .dt-tools { display: none; }
+
+    /* 顶栏整条都是拖动把手，中间那道横杠只是告诉你"这里能拖"。 */
+    #detail .dt-bar {
+      position: relative; flex: none;
+      display: flex; align-items: center; gap: 6px;
+      height: 30px; padding: 0 6px 0 12px;
+      cursor: grab;
+      background: color-mix(in srgb, var(--ink) 4%, var(--card-body));
+    }
+    #detail.dragging .dt-bar { cursor: grabbing; }
+    #detail .dt-kind {
+      font-size: 10.5px; font-weight: 600; letter-spacing: .2px;
+      color: var(--ink-soft); white-space: nowrap;
+    }
+    #detail .dt-grip {
+      position: absolute; left: 50%; top: 13px; transform: translateX(-50%);
+      width: 78px; height: 4px; border-radius: 2px;
+      background: color-mix(in srgb, var(--ink) 24%, transparent);
+      pointer-events: none;
+    }
+    #detail .dt-bar .spacer { flex: 1; }
+    #detail .bar-btn {
+      width: 20px; height: 20px; flex: none; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: none; border-radius: 50%; cursor: pointer;
+      background: transparent; color: var(--ink-soft);
+      font: inherit; font-size: 11px; line-height: 1;
+    }
+    #detail .bar-btn:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
+    #detail .bar-btn svg { width: 13px; height: 13px; }
+    #detail .bar-btn.flip svg { transform: rotate(180deg); }
+
+    /* 内容区自己滚，但不出现滚动条——这是一张卡片，不是网页。 */
+    #detail .dt-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px 16px 14px; }
+    #detail .dt-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
+    #detail .dt-title { font-size: 16.5px; font-weight: 650; color: var(--ink); line-height: 1.3; margin: 8px 0 5px; }
+    #detail .dt-sub { font-size: 11px; color: var(--ink-soft); line-height: 1.5; }
+    #detail .dt-rule { height: 1px; background: color-mix(in srgb, var(--ink) 11%, transparent); margin: 11px 0 3px; }
+    #detail .dt-body { font-size: 12.5px; line-height: 1.62; color: var(--ink); margin: 8px 0 2px; }
+    #detail .md { font-size: 12.5px; line-height: 1.62; }
+    #detail .md h1, #detail .md h2, #detail .md h3, #detail .md h4 { font-size: 13.5px; margin: 8px 0 4px; }
+    #detail .md :not(pre) > code { font-size: 11.5px; }
+    #detail .dt-tag {
+      font-size: 10px; font-weight: 700; letter-spacing: .3px;
+      color: var(--ink-soft); margin: 12px 0 4px;
+    }
+    /* 没有讲解时就一行可点的字，不再摆一颗满宽蓝按钮。 */
+    #detail .dt-inline-action {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin: 10px 0 2px; padding: 5px 9px 5px 7px; border-radius: 8px;
+      font-size: 12px; color: var(--blue); cursor: pointer;
+      background: color-mix(in srgb, var(--blue) 9%, transparent);
+    }
+    #detail .dt-inline-action:hover { background: color-mix(in srgb, var(--blue) 16%, transparent); }
+    #detail .dt-inline-action svg { width: 14px; height: 14px; }
+    #detail .dt-inline-action.busy { color: var(--ink-soft); background: color-mix(in srgb, var(--ink) 7%, transparent); cursor: default; }
+
+    /* 笔记：点一下就地编辑，点到别处就存。没有保存按钮，也没有取消按钮。 */
+    #detail .note-card {
+      position: relative; margin: 8px 0; padding: 8px 10px;
+      border-radius: 9px; cursor: text;
+      background: color-mix(in srgb, var(--ink) 4%, transparent);
+    }
+    #detail .note-card:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+    #detail .note-card.editing {
+      background: color-mix(in srgb, var(--blue) 7%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 34%, transparent);
+    }
+    #detail .note-time { font-size: 9.5px; color: var(--ink-soft); margin-top: 6px; }
+    #detail .note-del {
+      position: absolute; top: 4px; right: 4px;
+      width: 20px; height: 20px; padding: 0; border: none; border-radius: 6px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: transparent; color: var(--ink-soft); cursor: pointer; opacity: 0;
+      transition: opacity .12s;
+    }
+    #detail .note-card:hover .note-del { opacity: 1; }
+    #detail .note-del:hover { background: color-mix(in srgb, #FF453A 16%, transparent); color: #FF453A; }
+    #detail .note-del svg { width: 13px; height: 13px; }
+    /* 编辑器就是同一块地方换成纯输入框：不加边框、不换字号，
+       所以"写的时候"和"看的时候"位置不跳。 */
+    #detail .note-input {
+      display: block; width: 100%; box-sizing: border-box;
+      font: inherit; font-size: 12.5px; line-height: 1.62;
+      color: var(--ink); background: transparent;
+      border: none; outline: none; resize: none; overflow: hidden;
+      padding: 0; margin: 0;
+    }
+    #detail .note-add {
+      margin: 8px 0 0; padding: 8px 10px; border-radius: 9px;
+      font-size: 12.5px; color: var(--ink-soft); cursor: text;
+    }
+    #detail .note-add:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+
+    #detail .link-row {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 12px; color: var(--ink); padding: 4px 0;
+    }
+    #detail .link-row .dir { color: var(--ink-soft); font-size: 11px; flex: none; }
+    #detail .link-row .name { flex: 1; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+    #detail .link-row .del { border: none; background: transparent; color: var(--ink-soft); cursor: pointer; padding: 0 2px; }
+    #detail .link-row .del:hover { color: #FF453A; }
+
+    /* 底部工具条：只放会离开这张卡片的动作，全部是图标。 */
+    #detail .dt-tools {
+      flex: none; display: flex; align-items: center; gap: 2px;
+      padding: 5px 8px;
+      border-top: 1px solid color-mix(in srgb, var(--ink) 9%, transparent);
+      background: color-mix(in srgb, var(--ink) 3%, var(--card-body));
+    }
+    #detail .tool {
+      width: 30px; height: 26px; flex: none; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: none; border-radius: 7px; cursor: pointer;
+      background: transparent; color: var(--ink-soft);
+    }
+    #detail .tool:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
+    #detail .tool:disabled { opacity: .4; cursor: default; background: transparent; }
+    #detail .tool svg { width: 15px; height: 15px; }
+    #detail .dt-tip {
+      flex: 1; text-align: right; padding-right: 4px;
+      font-size: 10px; color: var(--ink-soft);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    /* 点虚线弹出的小卡片：跳过去，或者把这条链接删掉。 */
+    #linkcard {
+      position: absolute;
+      display: none;
+      align-items: center; gap: 10px;
+      padding: 10px 12px 10px 14px;
+      background: var(--card-body);
+      border-radius: 12px;
+      box-shadow: 0 6px 22px rgba(0,0,0,.22);
+      z-index: 22;
+      max-width: 340px;
+    }
+    #linkcard.show { display: flex; }
+    #linkcard .lc-text { flex: 1; min-width: 0; }
+    #linkcard .lc-title {
+      font-size: 13.5px; color: var(--ink); font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #linkcard .lc-sub { font-size: 10.5px; color: var(--ink-soft); margin-top: 2px; }
+    #linkcard .lc-del {
+      font: inherit; font-size: 11.5px; font-weight: 500; flex: none;
+      padding: 5px 10px; border-radius: 7px; cursor: pointer;
+      border: 1px solid color-mix(in srgb, #FF453A 40%, transparent);
+      background: transparent; color: #FF453A;
+    }
+    #linkcard .lc-del:hover { background: #FF453A; color: #fff; }
+    #linkcard .lc-go {
+      width: 30px; height: 30px; border-radius: 50%; border: none; flex: none;
+      background: var(--blue); color: #fff; font-size: 14px; cursor: pointer;
+      line-height: 30px; text-align: center; padding: 0;
+    }
+    #linkcard .lc-go:hover { background: #0071e3; }
+  </style>
+</head>
+<body>
+  <div id="viewport">
+    <div id="stage">
+      <svg id="wires"></svg>
+      <svg id="linkwires"></svg>
+      <svg id="rubberwires"></svg>
+    </div>
+    <div id="empty">还没有学习记录，脑图会在有学习项之后自动生成</div>
+    <div id="detail"></div>
+    <div id="linkcard"></div>
+  </div>
+  <div id="hint"></div>
+  <script src="purify.min.js"></script>
+  <script src="markdown-it.min.js"></script>
+  <script src="highlight.min.js"></script>
+  <script src="code-block.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    const post = (name, payload) => {
+      const handler = window.webkit?.messageHandlers?.[name];
+      if (handler) handler.postMessage(payload || {});
+    };
+
+    const viewport = document.getElementById('viewport');
+    const stage = document.getElementById('stage');
+    const wires = document.getElementById('wires');
+    const linkWires = document.getElementById('linkwires');
+    const rubberWires = document.getElementById('rubberwires');
+    const emptyEl = document.getElementById('empty');
+    const hintEl = document.getElementById('hint');
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+
+    let hintTimer = 0;
+    const hint = (text) => {
+      clearTimeout(hintTimer);
+      hintEl.textContent = text;
+      hintEl.classList.add('show');
+      hintTimer = setTimeout(() => hintEl.classList.remove('show'), 1800);
+    };
+
+    // ---- Markdown ------------------------------------------------------
+    //
+    // 和聊天、题解共用 markdown-it + highlight.js + DOMPurify，配置也照抄，
+    // 这样同一段讲解在哪个界面看都是一个样子。
+
+    const escapeHtml = window.CodeBlock?.escapeHtml || ((value) => String(value ?? '')
+      .replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char])));
+    const markdown = window.markdownit ? window.markdownit({
+      html: false, breaks: true, linkify: true, typographer: true,
+      highlight(code, info) {
+        return window.CodeBlock
+          ? window.CodeBlock.highlight(code, window.CodeBlock.requestedLanguage(info))
+          : escapeHtml(code);
+      }
+    }) : null;
+
+    // render() 会整体重建卡片，同一段文本会反复渲染。按原文缓存，
+    // 不然每次选中一个节点都要把整张图的 Markdown 重跑一遍。
+    const mdCache = new Map();
+    const renderMarkdown = (text) => {
+      const source = String(text || '');
+      if (!source) return '';
+      const hit = mdCache.get(source);
+      if (hit !== undefined) return hit;
+      let html;
+      try {
+        html = markdown ? markdown.render(source) : '<p>' + escapeHtml(source) + '</p>';
+        if (window.DOMPurify) {
+          html = DOMPurify.sanitize(html, {
+            USE_PROFILES: { html: true, mathMl: true },
+            ADD_ATTR: ['target', 'rel', 'aria-label']
+          });
+        }
+      } catch (_) {
+        html = '<p>' + escapeHtml(source) + '</p>';
+      }
+      if (mdCache.size > 400) mdCache.clear();
+      mdCache.set(source, html);
+      return html;
+    };
+
+    const codeFence = (tokens, index) => {
+      const token = tokens[index];
+      return window.CodeBlock
+        ? window.CodeBlock.fence(token.content, token.info)
+        : `<pre><code>${escapeHtml(token.content)}</code></pre>`;
+    };
+    if (markdown) markdown.renderer.rules.fence = codeFence;
+
+    const mdBlock = (text, className) => {
+      const el = document.createElement('div');
+      el.className = className ? 'md ' + className : 'md';
+      el.innerHTML = renderMarkdown(text);
+      return el;
+    };
+
+    // 分支配色：一级分支各占一色，子孙继承，和参考图一样靠颜色区分归属。
+    const BRANCH_COLORS = [
+      '#C0392B', '#E08A3C', '#D4AF37', '#7A9E4F', '#3E7CB1',
+      '#7D5BA6', '#C2569B', '#3E9E93', '#B3603C', '#5B7BB5'
+    ];
+
+    const WIDTH_BY_DEPTH = [0, 176, 200, 200, 200];
+    // 有笔记或者展开了讲解的卡片要宽一点，代码块窄了就全是横向滚动。
+    const RICH_WIDTH = 300;
+    const H_GAP = 72;
+    const V_GAP = 16;
+
+    let model = { nodes: [], edges: [], links: [] };
+    let collapsed = new Set();
+    // 父节点 → 子节点顺序。拖卡片改的是这个，不是自由坐标：
+    // 钉死坐标的话，树一重排就到处是空洞，卡片之间还会重叠。
+    let childOrder = {};
+    let selectedID = '';
+    let mode = 'select';
+    let pendingSource = null;
+    let linkDirected = false;
+    let searchQuery = '';
+    let noteCards = [];
+    let lessonOpen = new Set();
+    let busy = new Set();
+
+    const nodeByID = (id) => model.nodes.find((n) => n.id === id);
+    const notesFor = (id) => noteCards.filter((note) => note.anchorID === id);
+    /// 卡片底部要显示哪些跳转行：双向链接两端都显示，单向只显示在起点。
+    const jumpsFor = (id) => model.links
+      .filter((link) => link.source === id || (!link.directed && link.target === id))
+      .map((link) => ({ link, target: link.source === id ? link.target : link.source }));
+
+    let scale = 1, panX = 0, panY = 0;
+    const applyTransform = () => {
+      stage.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+      // 浮层在屏幕坐标系里，视口一动就得跟着重新定位。
+      positionPopups();
+    };
+
+    // ---- 布局 ---------------------------------------------------------
+
+    const layout = (roots, childrenOf, sizeOf) => {
+      const pos = {};
+      const depthWidth = [];
+      const measure = (id, depth) => {
+        depthWidth[depth] = Math.max(depthWidth[depth] || 0, sizeOf(id).w);
+        if (collapsed.has(id)) return;
+        (childrenOf(id) || []).forEach((child) => measure(child, depth + 1));
+      };
+      roots.forEach((id) => measure(id, 0));
+
+      const depthX = [];
+      let cursor = 0;
+      for (let d = 0; d < depthWidth.length; d += 1) {
+        depthX[d] = cursor;
+        cursor += (depthWidth[d] || 0) + H_GAP;
+      }
+
+      let nextY = 0;
+
+      // 整棵子树一起平移。父节点比子节点整体还高时要用到：
+      // 光把父节点摆在子节点中点，它的上半截会顶进上一棵子树里去。
+      const shift = (id, dy) => {
+        const p = pos[id];
+        if (!p) return;
+        p.y += dy;
+        p.cy += dy;
+        if (collapsed.has(id)) return;
+        (childrenOf(id) || []).forEach((child) => shift(child, dy));
+      };
+
+      const place = (id, depth) => {
+        const size = sizeOf(id);
+        const children = collapsed.has(id) ? [] : (childrenOf(id) || []);
+        if (!children.length) {
+          const centerY = nextY + size.h / 2;
+          nextY += size.h + V_GAP;
+          pos[id] = { x: depthX[depth], y: centerY - size.h / 2, cy: centerY, w: size.w, h: size.h };
+          return centerY;
+        }
+        const top = nextY;
+        const ys = children.map((child) => place(child, depth + 1));
+        let centerY = (ys[0] + ys[ys.length - 1]) / 2;
+        // 父卡片顶不能高过这棵子树的起始位置，否则会压到上面那棵。
+        const overshoot = top - (centerY - size.h / 2);
+        if (overshoot > 0) {
+          children.forEach((child) => shift(child, overshoot));
+          centerY += overshoot;
+          nextY += overshoot;
+        }
+        pos[id] = { x: depthX[depth], y: centerY - size.h / 2, cy: centerY, w: size.w, h: size.h };
+        nextY = Math.max(nextY, centerY + size.h / 2 + V_GAP);
+        return centerY;
+      };
+      roots.forEach((id) => { place(id, 0); nextY += V_GAP * 2; });
+      return pos;
+    };
+
+    /// 圆角折线：从父节点右缘拐一次，竖直下来，再水平进入子节点左缘。
+    const elbow = (x1, y1, x2, y2) => {
+      const midX = x1 + Math.max(16, (x2 - x1) / 2);
+      if (Math.abs(y2 - y1) < 0.8) return `M${x1},${y1} H${x2}`;
+      const dir = y2 > y1 ? 1 : -1;
+      const r = Math.min(10, Math.abs(y2 - y1) / 2, Math.max(1, midX - x1), Math.max(1, x2 - midX));
+      return `M${x1},${y1} H${midX - r}`
+        + ` Q${midX},${y1} ${midX},${y1 + dir * r}`
+        + ` V${y2 - dir * r}`
+        + ` Q${midX},${y2} ${midX + r},${y2}`
+        + ` H${x2}`;
+    };
+
+    // ---- 渲染 ---------------------------------------------------------
+
+    let cards = {};       // id -> DOM
+    let positions = {};
+    let wireContext = null;
+    let treeIndex = { children: {}, parentOf: {}, hidden: new Set() };
+
+    /// 卡片旁边挂着的小东西（折叠圈、计数）跟着卡片走。
+    /// 拖动和归位动画每帧都要调，所以单独抽出来。
+    const syncDecorations = (id) => {
+      const p = positions[id];
+      if (!p) return;
+      const toggle = cards['toggle:' + id];
+      if (toggle) {
+        toggle.style.left = (p.x + p.w + 7) + 'px';
+        toggle.style.top = (p.cy - 8.5) + 'px';
+      }
+      const badge = cards['count:' + id];
+      if (badge) {
+        badge.style.left = (p.x + p.w + 29) + 'px';
+        badge.style.top = (p.cy - 6) + 'px';
+      }
+    };
+
+    const capturePositions = () => {
+      const snapshot = {};
+      Object.keys(positions).forEach((id) => {
+        snapshot[id] = { x: positions[id].x, y: positions[id].y };
+      });
+      return snapshot;
+    };
+
+    /// 从旧位置滑到新位置。
+    ///
+    /// 用 JS 补间而不是 CSS transition：连线得和卡片同一帧更新，
+    /// 交给 CSS 的话线会甩在后面，看着就是"抖"。
+    let settleFrame = 0;
+    const settleFrom = (previous) => {
+      const starts = {};
+      const targets = {};
+      let moved = false;
+      Object.keys(positions).forEach((id) => {
+        const from = previous[id];
+        const to = positions[id];
+        if (!from || !to) return;
+        if (Math.abs(from.x - to.x) < 0.5 && Math.abs(from.y - to.y) < 0.5) return;
+        starts[id] = from;
+        targets[id] = { x: to.x, y: to.y };
+        moved = true;
+      });
+      if (!moved) return;
+      if (settleFrame) cancelAnimationFrame(settleFrame);
+      const t0 = performance.now();
+      const DURATION = 220;
+      const step = (now) => {
+        const t = Math.min(1, (now - t0) / DURATION);
+        const eased = 1 - Math.pow(1 - t, 3);
+        Object.keys(starts).forEach((id) => {
+          const p = positions[id];
+          const el = cards[id];
+          if (!p) return;
+          p.x = starts[id].x + (targets[id].x - starts[id].x) * eased;
+          p.y = starts[id].y + (targets[id].y - starts[id].y) * eased;
+          p.cy = p.y + p.h / 2;
+          if (el) { el.style.left = p.x + 'px'; el.style.top = p.y + 'px'; }
+          syncDecorations(id);
+        });
+        drawWires();
+        settleFrame = t < 1 ? requestAnimationFrame(step) : 0;
+      };
+      settleFrame = requestAnimationFrame(step);
+    };
+
+    // 人工关系默认是克制的灰色；只有正在查看的那条才用蓝色强调。
+    // 这样它和知识树的彩色实线有明确层级，也不会把画布染成一张蓝色蛛网。
+    const LINK_COLOR = '#8E8E93';
+    const LINK_ACTIVE_COLOR = '#0A84FF';
+
+    const ensureMarkers = () => {
+      const defs = document.createElementNS(SVG_NS, 'defs');
+      [
+        ['arrow-end', 'auto', LINK_COLOR],
+        ['arrow-start', 'auto-start-reverse', LINK_COLOR],
+        ['arrow-end-active', 'auto', LINK_ACTIVE_COLOR],
+        ['arrow-start-active', 'auto-start-reverse', LINK_ACTIVE_COLOR]
+      ].forEach(([id, orient, color]) => {
+        const marker = document.createElementNS(SVG_NS, 'marker');
+        marker.setAttribute('id', id);
+        marker.setAttribute('viewBox', '0 0 8 8');
+        marker.setAttribute('refX', '7');
+        marker.setAttribute('refY', '4');
+        // 箭头别做大：参考图里它只是个方向提示，不该盖住卡片边框。
+        marker.setAttribute('markerWidth', '4.5');
+        marker.setAttribute('markerHeight', '4.5');
+        marker.setAttribute('orient', orient);
+        const tip = document.createElementNS(SVG_NS, 'path');
+        tip.setAttribute('d', 'M0,0 L8,4 L0,8 z');
+        tip.setAttribute('fill', color);
+        marker.appendChild(tip);
+        defs.appendChild(marker);
+      });
+      linkWires.appendChild(defs);
+    };
+
+    // ---- 链接走线 ------------------------------------------------------
+    //
+    // 以前不管两张卡片在哪，都固定"从右边出、从左边进"。目标在左边或者正上方时，
+    // 这条线要绕一个大 S 弯回去，从别的卡片身上压过去，看着就是一团乱麻。
+    // 现在按相对位置挑一对最近的边（上下 / 左右），再沿各自的法线拉控制点，
+    // 出来是一条短而顺的曲线。
+
+    const PORT_GAP = 9;
+
+    const portOf = (box, side) => {
+      switch (side) {
+      case 'right': return { x: box.x + box.w, y: box.cy, nx: 1, ny: 0 };
+      case 'left': return { x: box.x, y: box.cy, nx: -1, ny: 0 };
+      case 'top': return { x: box.x + box.w / 2, y: box.y, nx: 0, ny: -1 };
+      default: return { x: box.x + box.w / 2, y: box.y + box.h, nx: 0, ny: 1 };
+      }
+    };
+
+    /// 选一对出入边：横向差距更大就左右接，否则上下接。
+    const linkPath = (a, b) => {
+      const dx = (b.x + b.w / 2) - (a.x + a.w / 2);
+      const dy = b.cy - a.cy;
+      // 两张卡片在纵向上有重叠时，横向连更自然（同一行的两张卡片）。
+      const overlapsVertically = a.y < b.y + b.h && b.y < a.y + a.h;
+      let sides;
+      if (overlapsVertically || Math.abs(dx) > Math.abs(dy) * 1.2) {
+        sides = dx >= 0 ? ['right', 'left'] : ['left', 'right'];
+      } else {
+        sides = dy >= 0 ? ['bottom', 'top'] : ['top', 'bottom'];
+      }
+      const from = portOf(a, sides[0]);
+      const to = portOf(b, sides[1]);
+      // 端点往外推一点，箭头就不会压在卡片边框上。
+      const sx = from.x + from.nx * PORT_GAP;
+      const sy = from.y + from.ny * PORT_GAP;
+      const tx = to.x + to.nx * PORT_GAP;
+      const ty = to.y + to.ny * PORT_GAP;
+      const reach = Math.max(34, Math.hypot(tx - sx, ty - sy) * 0.36);
+      return `M${sx},${sy}`
+        + ` C${sx + from.nx * reach},${sy + from.ny * reach}`
+        + ` ${tx + to.nx * reach},${ty + to.ny * reach}`
+        + ` ${tx},${ty}`;
+    };
+
+    /// 只重画连线，不动卡片 DOM。拖动节点时每帧调它——
+    /// 之前拖动只挪了卡片，线还留在旧位置，看起来就是断的。
+    const drawWires = () => {
+      if (!wireContext) return;
+      const { hidden, branchOf, depthOf, extent } = wireContext;
+      wires.setAttribute('width', extent.w);
+      wires.setAttribute('height', extent.h);
+      while (wires.firstChild) wires.removeChild(wires.firstChild);
+      ensureMarkers();
+
+      model.edges.forEach((edge) => {
+        if (hidden.has(edge.source) || hidden.has(edge.target)) return;
+        const a = positions[edge.source], b = positions[edge.target];
+        if (!a || !b) return;
+        const path = document.createElementNS(SVG_NS, 'path');
+        const tint = BRANCH_COLORS[(branchOf[edge.target] ?? 0) % BRANCH_COLORS.length];
+        path.setAttribute('d', elbow(a.x + a.w + 16, a.cy, b.x, b.cy));
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', tint);
+        // 线要够粗才看得见，参考图的主干比正文还显眼。
+        path.setAttribute('stroke-width', (depthOf[edge.target] || 1) <= 1 ? 3 : 2.2);
+        path.setAttribute('stroke-linecap', 'round');
+        wires.appendChild(path);
+      });
+
+      while (linkWires.firstChild) linkWires.removeChild(linkWires.firstChild);
+      linkWires.setAttribute('width', extent.w);
+      linkWires.setAttribute('height', extent.h);
+      ensureMarkers();
+
+      model.links.forEach((link) => {
+        if (hidden.has(link.source) || hidden.has(link.target)) return;
+        const a = positions[link.source], b = positions[link.target];
+        if (!a || !b) return;
+        const d = linkPath(a, b);
+        const active = link.id === linkCardID;
+
+        // 先垫一条透明的粗线做点击热区：虚线本身太细，
+        // 而且带 dasharray 时空隙也不算命中，照着线点十次点不中一次。
+        const hit = document.createElementNS(SVG_NS, 'path');
+        hit.setAttribute('d', d);
+        hit.setAttribute('fill', 'none');
+        hit.setAttribute('stroke', 'transparent');
+        hit.setAttribute('stroke-width', 14);
+        hit.dataset.link = link.id;
+        hit.style.pointerEvents = 'stroke';
+        hit.style.cursor = 'pointer';
+        linkWires.appendChild(hit);
+
+        // 纸色描边垫底：线要压在卡片上面，没有这层就是蓝线糊在正文上。
+        const halo = document.createElementNS(SVG_NS, 'path');
+        halo.setAttribute('d', d);
+        halo.setAttribute('fill', 'none');
+        // 走 style 而不是 presentation attribute：后者里的 var() 在 WebKit 上不保证生效，
+        // 一不生效这条 halo 就是黑的。
+        halo.style.stroke = 'var(--paper)';
+        halo.setAttribute('stroke-width', active ? 7 : 6);
+        halo.setAttribute('stroke-linecap', 'round');
+        halo.setAttribute('opacity', '0.92');
+        linkWires.appendChild(halo);
+
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.setAttribute('d', d);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', active ? LINK_ACTIVE_COLOR : LINK_COLOR);
+        path.setAttribute('stroke-width', active ? 2.6 : 1.9);
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('stroke-dasharray', '6 4');
+        path.setAttribute('opacity', active ? '1' : '0.9');
+        // 单向一个箭头，双向两个；两种都用虚线，和派生出来的实线层级区分开。
+        path.setAttribute('marker-end', active ? 'url(#arrow-end-active)' : 'url(#arrow-end)');
+        if (!link.directed) {
+          path.setAttribute('marker-start', active ? 'url(#arrow-start-active)' : 'url(#arrow-start)');
+        }
+        path.style.pointerEvents = 'none';
+        linkWires.appendChild(path);
+      });
+    };
+
+    /// 屏幕坐标 → 画布坐标。橡皮筋画在 stage 里，得跟着缩放走。
+    const stagePoint = (event) => {
+      const rect = viewport.getBoundingClientRect();
+      return {
+        x: (event.clientX - rect.left - panX) / scale,
+        y: (event.clientY - rect.top - panY) / scale
+      };
+    };
+
+    const clearRubber = () => {
+      while (rubberWires.firstChild) rubberWires.removeChild(rubberWires.firstChild);
+    };
+
+    /// Shift 拖拽时从源卡片拉出来的那条线。只是个方向提示，不必挑最优边。
+    const drawRubber = (sourceID, point) => {
+      clearRubber();
+      const a = positions[sourceID];
+      if (!a) return;
+      const left = point.x < a.x;
+      const x = left ? a.x : a.x + a.w;
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', `M${x},${a.cy} L${point.x},${point.y}`);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', LINK_ACTIVE_COLOR);
+      path.setAttribute('stroke-width', 2.2);
+      path.setAttribute('stroke-linecap', 'round');
+      path.setAttribute('stroke-dasharray', '6 4');
+      rubberWires.appendChild(path);
+      const dot = document.createElementNS(SVG_NS, 'circle');
+      dot.setAttribute('cx', point.x);
+      dot.setAttribute('cy', point.y);
+      dot.setAttribute('r', 3.5);
+      dot.setAttribute('fill', LINK_ACTIVE_COLOR);
+      rubberWires.appendChild(dot);
+    };
+
+    const buildCard = (node, depth, tint) => {
+      const el = document.createElement('div');
+      const notes = notesFor(node.id);
+      const jumps = jumpsFor(node.id);
+      const showLesson = node.kind === 'record';
+      const openLesson = lessonOpen.has(node.id) && node.lesson;
+      el.className = 'node' + (depth === 0 ? ' root' : depth === 1 ? ' branch' : '');
+      el.style.setProperty('--tint', tint);
+      const width = (notes.length || openLesson) && depth > 0
+        ? RICH_WIDTH
+        : WIDTH_BY_DEPTH[Math.min(depth, WIDTH_BY_DEPTH.length - 1)];
+      if (width) el.style.width = width + 'px';
+
+      const head = document.createElement('div');
+      head.className = 'head';
+      head.dataset.detailOpen = node.id;
+      head.title = '查看详情';
+      head.textContent = node.title;
+      el.appendChild(head);
+
+      if (depth > 1 && node.detail) {
+        const body = document.createElement('div');
+        body.className = 'body';
+        body.textContent = node.detail;
+        el.appendChild(body);
+      }
+
+      // AI 讲解：有就能展开，没有就给一个「生成」入口——
+      // 生成走的是和今日复习同一条链路，结果存回学习记录，两边共用。
+      if (showLesson) {
+        const lesson = document.createElement('div');
+        lesson.className = 'lesson';
+        const lessonHead = document.createElement('div');
+        lessonHead.className = 'lesson-head';
+        lessonHead.dataset.lesson = node.id;
+        const tag = document.createElement('span');
+        tag.className = 'lesson-tag';
+        tag.textContent = 'AI 讲解';
+        const state = document.createElement('span');
+        state.className = 'lesson-state';
+        if (busy.has(node.id)) state.textContent = '生成中…';
+        else if (!node.lesson) state.textContent = '点这里生成';
+        else state.textContent = openLesson ? '收起 ▴' : '展开 ▾';
+        lessonHead.append(tag, state);
+        lesson.appendChild(lessonHead);
+        if (openLesson) lesson.appendChild(mdBlock(node.lesson, 'lesson-body'));
+        el.appendChild(lesson);
+      }
+
+      // 笔记卡片：一个节点可以摞好几张，正文按 Markdown 渲染。
+      notes.forEach((note) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'note';
+        wrap.dataset.note = note.id;
+        wrap.appendChild(mdBlock(note.text));
+        el.appendChild(wrap);
+      });
+
+      // 链接跳转行——本质是一张特殊的笔记卡片，永远排在最底部。
+      jumps.forEach(({ link, target }) => {
+        const row = document.createElement('div');
+        row.className = 'jump';
+        row.dataset.link = link.id;
+        const title = document.createElement('span');
+        title.className = 'jump-title';
+        title.textContent = (nodeByID(target) || {}).title || target;
+        const go = document.createElement('button');
+        go.className = 'jump-go';
+        go.dataset.jump = target;
+        go.textContent = '→';
+        go.title = '跳到这张卡片';
+        row.append(title, go);
+        el.appendChild(row);
+      });
+
+      el.dataset.id = node.id;
+      return el;
+    };
+
+    const render = () => {
+      const nodes = model.nodes;
+      emptyEl.style.display = nodes.length <= 1 ? 'flex' : 'none';
+
+      const children = {};
+      const parentOf = {};
+      model.edges.forEach((e) => {
+        (children[e.source] = children[e.source] || []).push(e.target);
+        parentOf[e.target] = e.source;
+      });
+      // 人工排过序的分支按人工顺序，没排过的保持派生顺序。
+      Object.keys(children).forEach((parent) => {
+        const desired = childOrder[parent];
+        if (!desired || !desired.length) return;
+        const rank = new Map(desired.map((id, index) => [id, index]));
+        children[parent] = children[parent]
+          .map((id, index) => ({ id, index }))
+          .sort((a, b) => {
+            const ra = rank.has(a.id) ? rank.get(a.id) : desired.length + a.index;
+            const rb = rank.has(b.id) ? rank.get(b.id) : desired.length + b.index;
+            return ra - rb;
+          })
+          .map((item) => item.id);
+      });
+      const roots = nodes.map((n) => n.id).filter((id) => !parentOf[id]);
+
+      const depthOf = {}, branchOf = {}, hidden = new Set();
+      const walk = (id, depth, branch, isHidden) => {
+        depthOf[id] = depth;
+        branchOf[id] = branch;
+        if (isHidden) hidden.add(id);
+        const nextHidden = isHidden || collapsed.has(id);
+        (children[id] || []).forEach((child, index) => {
+          walk(child, depth + 1, depth === 0 ? index : branch, nextHidden);
+        });
+      };
+      roots.forEach((id, index) => walk(id, 0, index, false));
+
+      // 重建卡片。节点数量在百级，整体重建比做 diff 简单也够快；
+      // 平移缩放不走这条路径，只改外层 transform。
+      Object.values(cards).forEach((el) => el.remove());
+      cards = {};
+      const visible = nodes.filter((n) => !hidden.has(n.id));
+      // 与当前选中项有链接的另一端，画实线蓝框，一眼看出关联到了谁。
+      const linkedToSelected = new Set();
+      if (selectedID) {
+        model.links.forEach((link) => {
+          if (link.source === selectedID) linkedToSelected.add(link.target);
+          if (link.target === selectedID) linkedToSelected.add(link.source);
+        });
+      }
+
+      visible.forEach((node) => {
+        const depth = depthOf[node.id] || 0;
+        const tint = BRANCH_COLORS[(branchOf[node.id] || 0) % BRANCH_COLORS.length];
+        const el = buildCard(node, depth, tint);
+        if (node.id === selectedID) el.classList.add('selected');
+        if (linkedToSelected.has(node.id)) el.classList.add('linked');
+        if (pendingSource === node.id) el.classList.add('pending');
+        if (searchQuery) {
+          const haystack = (node.haystack || node.title).toLowerCase();
+          if (!haystack.includes(searchQuery)) el.classList.add('dim');
+        }
+        stage.appendChild(el);
+        cards[node.id] = el;
+      });
+
+      // 量高度必须在插入 DOM 之后：高度取决于换行结果。
+      const sizeOf = (id) => {
+        const el = cards[id];
+        if (!el) return { w: 0, h: 0 };
+        return { w: el.offsetWidth, h: el.offsetHeight };
+      };
+      const visibleChildren = (id) => (children[id] || []).filter((c) => !hidden.has(c));
+      positions = layout(roots, visibleChildren, sizeOf);
+
+      let maxX = 0, maxY = 0;
+      visible.forEach((node) => {
+        const p = positions[node.id];
+        const el = cards[node.id];
+        if (!p || !el) return;
+        el.style.left = p.x + 'px';
+        el.style.top = p.y + 'px';
+        maxX = Math.max(maxX, p.x + p.w + 40);
+        maxY = Math.max(maxY, p.y + p.h + 40);
+      });
+
+      // 折叠开关 + 子节点计数
+      visible.forEach((node) => {
+        const kids = children[node.id] || [];
+        if (!kids.length) return;
+        const p = positions[node.id];
+        const toggle = document.createElement('div');
+        toggle.className = 'toggle';
+        toggle.textContent = collapsed.has(node.id) ? '+' : '−';
+        toggle.style.left = (p.x + p.w + 7) + 'px';
+        toggle.style.top = (p.cy - 8.5) + 'px';
+        toggle.dataset.toggle = node.id;
+        toggle.title = collapsed.has(node.id) ? `展开 ${kids.length} 项` : '收起';
+        stage.appendChild(toggle);
+        cards['toggle:' + node.id] = toggle;
+
+        if (collapsed.has(node.id)) {
+          const badge = document.createElement('div');
+          badge.className = 'count';
+          badge.textContent = kids.length;
+          badge.style.left = (p.x + p.w + 29) + 'px';
+          badge.style.top = (p.cy - 6) + 'px';
+          stage.appendChild(badge);
+          cards['count:' + node.id] = badge;
+        }
+      });
+
+      treeIndex = { children, parentOf, hidden };
+      wireContext = { hidden, branchOf, depthOf, extent: { w: maxX, h: maxY } };
+      // 卡片是这一轮新插进去的，链接层得重新挪到最后才能压在它们上面。
+      stage.appendChild(linkWires);
+      stage.appendChild(rubberWires);
+      drawWires();
+      if (detailNodeID) refreshDetail();
+      post('graphReady', { nodes: visible.length, edges: model.edges.length });
+    };
+
+    /// 重排会让坐标全变。点开一张卡片上的东西时把这张卡片钉在原地，
+    /// 否则你点的那一个会瞬间跑到别处，很容易看丢；其余卡片滑过去，不是瞬移。
+    const keepAnchored = (id, change) => {
+      const previous = capturePositions();
+      const before = positions[id] ? screenPoint(positions[id]) : null;
+      const panBefore = { x: panX, y: panY };
+      change();
+      const after = positions[id] ? screenPoint(positions[id]) : null;
+      if (before && after) {
+        panX += before.x - after.x;
+        panY += before.y - after.y;
+        applyTransform();
+      }
+      // 视口挪了多少，起点就要反向挪多少，动画才是从"眼睛看到的那个位置"开始。
+      const dx = (panX - panBefore.x) / scale;
+      const dy = (panY - panBefore.y) / scale;
+      Object.keys(previous).forEach((key) => {
+        previous[key].x -= dx;
+        previous[key].y -= dy;
+      });
+      settleFrom(previous);
+    };
+
+    /// 拖动落点 → 新的同级顺序。只改上下位置，不换父节点：
+    /// 思维导图的层级是 AI 派生的，用户手动改父子关系会和下一次派生打架。
+    const reorderAfterDrag = (id) => {
+      const parent = treeIndex.parentOf[id];
+      const siblings = parent ? (treeIndex.children[parent] || []) : [];
+      if (siblings.length < 2) return;
+      const dropY = positions[id] ? positions[id].cy : 0;
+      const others = siblings.filter((sibling) => sibling !== id);
+      let index = others.length;
+      for (let i = 0; i < others.length; i += 1) {
+        const p = positions[others[i]];
+        if (p && dropY < p.cy) { index = i; break; }
+      }
+      const next = others.slice(0, index).concat([id], others.slice(index));
+      if (next.join('\u001F') === siblings.join('\u001F')) return;
+      childOrder[parent] = next;
+      post('nodeReordered', { parent, order: next });
+    };
+
+    // ---- 弹窗：编辑 / 链接 ---------------------------------------------
+
+    const detailEl = document.getElementById('detail');
+    const linkCardEl = document.getElementById('linkcard');
+    let detailNodeID = '';
+    let linkCardID = '';
+    let detailFolded = false;
+    /// 用户把卡片拖走之后记下的屏幕位置。在此之前它跟着节点走；
+    /// 拖过一次就钉在原地，否则一平移画布，刚摆好的卡片又自己跑了。
+    let detailOffset = null;
+    // 就地编辑：'' 没在编辑 / 'new' 正在写新笔记 / <noteID> 正在改某一张。
+    let editingNoteID = '';
+    let draftText = '';
+    let draftCaret = null;
+
+    const titleOf = (id) => (nodeByID(id) || {}).title || id;
+
+    /// 画布坐标 → 屏幕坐标。浮层放在屏幕坐标系里，缩放时字不会跟着变大变小。
+    const screenPoint = (p) => ({
+      x: p.x * scale + panX,
+      y: p.cy * scale + panY,
+      right: (p.x + p.w) * scale + panX,
+      bottom: (p.y + p.h) * scale + panY
+    });
+
+    const clampToViewport = (el, left, top) => {
+      const w = el.offsetWidth, h = el.offsetHeight;
+      el.style.left = Math.max(8, Math.min(viewport.clientWidth - w - 8, left)) + 'px';
+      el.style.top = Math.max(8, Math.min(viewport.clientHeight - h - 8, top)) + 'px';
+    };
+
+    function positionPopups() {
+      if (detailNodeID) {
+        if (detailOffset) {
+          clampToViewport(detailEl, detailOffset.left, detailOffset.top);
+        } else if (positions[detailNodeID]) {
+          const s = screenPoint(positions[detailNodeID]);
+          clampToViewport(detailEl, s.right + 14, s.y - 90);
+        }
+      }
+      if (linkCardID) {
+        const link = model.links.find((l) => l.id === linkCardID);
+        const p = link && positions[link.target];
+        if (p) {
+          const s = screenPoint(p);
+          clampToViewport(linkCardEl, s.x - 40, s.bottom + 12);
+        }
+      }
+    }
+
+    const closeDetail = () => {
+      // 关掉之前先把正在写的那一段存了：备忘录不会因为你合上它就丢字。
+      commitEdit();
+      detailNodeID = '';
+      editingNoteID = '';
+      draftText = '';
+      draftCaret = null;
+      detailFolded = false;
+      detailOffset = null;
+      detailEl.classList.remove('show', 'folded', 'dragging');
+    };
+    const closeLinkCard = () => {
+      if (!linkCardID) return;
+      linkCardID = '';
+      linkCardEl.classList.remove('show');
+      drawWires();
+    };
+
+    // 图标：卡片上不再写"打开题目""开始练习"这些字，一排 15px 的线条图标就够，
+    // 具体是什么鼠标停上去有 tooltip。
+    const ICON_PATHS = {
+      link: 'M9.6 14.4a3.4 3.4 0 0 0 4.8 0l2.4-2.4a3.4 3.4 0 0 0-4.8-4.8l-1 1M14.4 9.6a3.4 3.4 0 0 0-4.8 0l-2.4 2.4a3.4 3.4 0 0 0 4.8 4.8l1-1',
+      open: 'M14 4h6v6M20 4l-8.4 8.4M17 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 4 18.5v-10A1.5 1.5 0 0 1 5.5 7H10',
+      practice: 'M7 4.8v14.4l12-7.2z',
+      spark: 'M12 3.4l1.9 4.7 4.7 1.9-4.7 1.9-1.9 4.7-1.9-4.7L5.4 10l4.7-1.9zM18.5 16.5l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z',
+      plus: 'M12 5.5v13M5.5 12h13',
+      trash: 'M4.5 7h15M10 7V4.6h4V7M6.6 7l.9 12.2h9L17.4 7',
+      chevron: 'M6 9.5l6 5.2 6-5.2'
+    };
+
+    const icon = (name, filled) => {
+      const svg = document.createElementNS(SVG_NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', ICON_PATHS[name]);
+      if (filled) {
+        path.setAttribute('fill', 'currentColor');
+      } else {
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', 'currentColor');
+        path.setAttribute('stroke-width', '1.7');
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('stroke-linejoin', 'round');
+      }
+      svg.appendChild(path);
+      return svg;
+    };
+
+    const toolButton = (name, title, onClick, options) => {
+      const config = options || {};
+      const button = document.createElement('button');
+      button.className = config.className || 'tool';
+      button.title = title;
+      button.setAttribute('aria-label', title);
+      button.appendChild(icon(name, config.filled));
+      if (config.disabled) button.disabled = true; else button.onclick = onClick;
+      return button;
+    };
+
+    const beginLinkFromDetail = (id) => {
+      pendingSource = id;
+      mode = 'link';
+      viewport.classList.add('linking');
+      closeDetail();
+      render();
+      hint(linkDirected ? '再点终点（单向）' : '再点一个节点建立双向链接');
+    };
+
+    const formatTime = (value) => {
+      const date = new Date(Number(value) || value || Date.now());
+      if (Number.isNaN(date.getTime())) return '';
+      try {
+        return new Intl.DateTimeFormat('zh-CN', {
+          month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+        }).format(date);
+      } catch (_) {
+        return '';
+      }
+    };
+
+    /// 输入框跟着内容长高。卡片里不该出现第二个滚动条——
+    /// 写到第十行还要在一个三行高的框里上下找，那是表单，不是笔记。
+    const autoGrow = (area) => {
+      area.style.height = 'auto';
+      area.style.height = (area.scrollHeight + 2) + 'px';
+    };
+
+    /// 把正在写的那一段存下来。不刷新界面，刷新由调用方决定，
+    /// 免得"提交→刷新→又触发一次提交"绕回来。
+    function commitEdit() {
+      if (!editingNoteID) return false;
+      const target = editingNoteID;
+      const text = draftText.trim();
+      const anchor = detailNodeID;
+      editingNoteID = '';
+      draftText = '';
+      draftCaret = null;
+      if (target === 'new') {
+        if (!text) return false;
+        post('noteAdded', { anchorID: anchor, text });
+        return true;
+      }
+      const note = noteCards.find((item) => item.id === target);
+      if (!note || text === note.text.trim()) return false;
+      // 清空 = 删掉这张笔记。备忘录也是这个规矩：字删光了它就不该继续占地方。
+      post('noteUpdated', { id: target, text });
+      return true;
+    }
+
+    /// 点哪张笔记就编辑哪张。先把上一张存了，再换过去。
+    const beginEdit = (target, text) => {
+      if (editingNoteID === target) return;
+      commitEdit();
+      editingNoteID = target;
+      draftText = text || '';
+      draftCaret = null;
+      refreshDetail();
+    };
+
+    const cancelEdit = () => {
+      if (!editingNoteID) return false;
+      editingNoteID = '';
+      draftText = '';
+      draftCaret = null;
+      refreshDetail();
+      return true;
+    };
+
+    /// 一张笔记。只读时是渲染好的 Markdown，点一下就地换成原文输入框，
+    /// 鼠标点到别处（失焦）即保存并重新渲染——不再有保存/取消两颗按钮。
+    const noteCardElement = (note) => {
+      const card = document.createElement('div');
+      card.className = 'note-card';
+      card.dataset.note = note.id;
+      if (editingNoteID === note.id) {
+        card.classList.add('editing');
+        card.appendChild(noteEditor(draftText, '写点什么。支持 Markdown'));
+        return card;
+      }
+      card.appendChild(mdBlock(note.text));
+      if (note.createdAt) {
+        const time = document.createElement('div');
+        time.className = 'note-time';
+        time.textContent = formatTime(note.createdAt);
+        card.appendChild(time);
+      }
+      const del = toolButton('trash', '删除这张笔记', null, { className: 'note-del' });
+      // 用 mousedown 而不是 click：正在编辑别的笔记时，click 之前会先失焦重建 DOM，
+      // 这颗按钮就被换掉了，那一下点击会落空。
+      del.onmousedown = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        editingNoteID = '';
+        draftText = '';
+        post('noteRemoved', { id: note.id });
+      };
+      card.appendChild(del);
+      return card;
+    };
+
+    const noteEditor = (value, placeholder) => {
+      const area = document.createElement('textarea');
+      area.className = 'note-input';
+      area.value = value;
+      area.placeholder = placeholder;
+      area.rows = 1;
+      area.oninput = () => {
+        draftText = area.value;
+        draftCaret = area.selectionStart;
+        autoGrow(area);
+      };
+      area.onkeydown = (event) => {
+        if (event.key === 'Escape') { event.stopPropagation(); cancelEdit(); return; }
+        // ⌘↩ 是"写完了"的通用手势；普通回车留给换行，因为正文是 Markdown。
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          draftText = area.value;
+          commitEdit();
+          refreshDetail();
+        }
+      };
+      area.onblur = () => {
+        // 重建卡片时旧输入框已经被摘掉，它这一次 blur 不是"用户点到别处了"。
+        if (!area.isConnected) return;
+        draftText = area.value;
+        commitEdit();
+        refreshDetail();
+      };
+      return area;
+    };
+
+    /// 详情卡。查看与编辑在同一张纸上：点标题下面任意一段笔记就能改，
+    /// 点到别处即保存。按钮只剩底部一条图标工具条，放真正会离开这张卡片的动作。
+    const refreshDetail = () => {
+      const node = nodeByID(detailNodeID);
+      if (!node) { closeDetail(); return; }
+      const id = node.id;
+      detailEl.innerHTML = '';
+      detailEl.classList.toggle('folded', detailFolded);
+
+      // 顶栏：左边一句类型，中间是拖动把手，右边只有收起和关闭。
+      const bar = document.createElement('div');
+      bar.className = 'dt-bar';
+      const kind = document.createElement('span');
+      kind.className = 'dt-kind';
+      kind.textContent = node.kind === 'root' ? '总览' : node.kind === 'concept' ? '知识点' : '学习项';
+      const grip = document.createElement('span');
+      grip.className = 'dt-grip';
+      const spacer = document.createElement('span');
+      spacer.className = 'spacer';
+      const fold = toolButton('chevron', detailFolded ? '展开卡片' : '收起卡片', () => {
+        detailFolded = !detailFolded;
+        refreshDetail();
+      }, { className: 'bar-btn' + (detailFolded ? ' flip' : '') });
+      const close = document.createElement('button');
+      close.className = 'bar-btn';
+      close.textContent = '✕';
+      close.title = '关闭';
+      close.onclick = closeDetail;
+      bar.append(kind, grip, spacer, fold, close);
+      detailEl.appendChild(bar);
+
+      const scroll = document.createElement('div');
+      scroll.className = 'dt-scroll';
+
+      const title = document.createElement('div');
+      title.className = 'dt-title';
+      title.textContent = node.title;
+      scroll.appendChild(title);
+
+      const facts = [];
+      if (typeof node.score === 'number') facts.push('掌握 ' + Math.round(node.score) + '%');
+      const related = model.links.filter((l) => l.source === id || l.target === id);
+      if (related.length) facts.push(related.length + ' 条链接');
+      const notes = notesFor(id);
+      if (notes.length) facts.push(notes.length + ' 张笔记');
+      if (facts.length) {
+        const sub = document.createElement('div');
+        sub.className = 'dt-sub';
+        sub.textContent = facts.join(' · ');
+        scroll.appendChild(sub);
+      }
+
+      const rule = document.createElement('div');
+      rule.className = 'dt-rule';
+      scroll.appendChild(rule);
+
+      if (node.detail) {
+        const body = document.createElement('div');
+        body.className = 'dt-body';
+        body.textContent = node.detail;
+        scroll.appendChild(body);
+      }
+
+      // AI 讲解：读的是学习记录里那一份，缺了才补生成，不在脑图这边另存副本。
+      if (node.kind === 'record') {
+        const generating = busy.has(id);
+        if (node.lesson) {
+          const tag = document.createElement('div');
+          tag.className = 'dt-tag';
+          tag.textContent = generating ? 'AI 讲解 · 重新生成中…' : 'AI 讲解 · 与今日复习同一份';
+          scroll.append(tag, mdBlock(node.lesson));
+        } else {
+          const action = document.createElement('div');
+          action.className = 'dt-inline-action' + (generating ? ' busy' : '');
+          action.append(
+            icon('spark'),
+            document.createTextNode(generating ? '正在生成 AI 讲解…' : '生成 AI 讲解')
+          );
+          if (!generating) action.onclick = () => post('lessonRequested', { id, force: false });
+          scroll.appendChild(action);
+        }
+      }
+
+      // 笔记。一个节点可以摞好几张，评论也是笔记——不再分成两套东西。
+      notes.forEach((note) => scroll.appendChild(noteCardElement(note)));
+      if (editingNoteID === 'new') {
+        const draft = document.createElement('div');
+        draft.className = 'note-card editing';
+        draft.dataset.note = 'new';
+        draft.appendChild(noteEditor(draftText, '写点什么。支持 Markdown：**加粗**、- 列表、```代码块```'));
+        scroll.appendChild(draft);
+      } else {
+        const add = document.createElement('div');
+        add.className = 'note-add';
+        add.dataset.noteAdd = '1';
+        add.textContent = '添加笔记';
+        scroll.appendChild(add);
+      }
+
+      if (related.length) {
+        const tag = document.createElement('div');
+        tag.className = 'dt-tag';
+        tag.textContent = '链接';
+        scroll.appendChild(tag);
+        related.forEach((link) => {
+          const other = link.source === id ? link.target : link.source;
+          const row = document.createElement('div');
+          row.className = 'link-row';
+          const dir = document.createElement('span');
+          dir.className = 'dir';
+          dir.textContent = link.directed ? (link.source === id ? '→' : '←') : '↔';
+          const name = document.createElement('span');
+          name.className = 'name';
+          name.textContent = titleOf(other);
+          name.onclick = () => { closeDetail(); window.graphBridge.focus(other); };
+          const del = document.createElement('button');
+          del.className = 'del';
+          del.textContent = '✕';
+          del.title = '删除这条链接';
+          del.onclick = () => post('linkRemoved', { id: link.id });
+          row.append(dir, name, del);
+          scroll.appendChild(row);
+        });
+      }
+
+      detailEl.appendChild(scroll);
+
+      // 底部工具条：会离开这张卡片的动作放这儿，全是图标。
+      const tools = document.createElement('div');
+      tools.className = 'dt-tools';
+      tools.appendChild(toolButton('plus', '添加笔记', () => beginEdit('new', '')));
+      tools.appendChild(toolButton(
+        'link',
+        '建立链接（也可以按住 Shift 从一张卡片拖到另一张）',
+        () => beginLinkFromDetail(id)
+      ));
+      if (node.kind === 'record') {
+        tools.appendChild(toolButton('open', '在学习题库打开这道题', () => post('nodeActivated', { id })));
+        tools.appendChild(toolButton('practice', '开始练习', () => post('nodeAction', { id, action: 'practice' }), { filled: true }));
+        if (node.lesson) {
+          tools.appendChild(toolButton(
+            'spark',
+            busy.has(id) ? '正在生成…' : '重新生成 AI 讲解',
+            () => post('lessonRequested', { id, force: true }),
+            { disabled: busy.has(id) }
+          ));
+        }
+      }
+      const tip = document.createElement('span');
+      tip.className = 'dt-tip';
+      tip.textContent = editingNoteID ? '点到别处即保存 · ⌘↩ 完成' : '点笔记就能改';
+      tools.appendChild(tip);
+      detailEl.appendChild(tools);
+
+      detailEl.classList.add('show');
+      positionPopups();
+      // 编辑中的输入框重建后要把焦点和光标放回去，否则外部推一次数据就打断输入。
+      const editor = detailEl.querySelector('.note-input');
+      if (editor) {
+        autoGrow(editor);
+        editor.focus();
+        const caret = draftCaret === null ? editor.value.length : draftCaret;
+        try { editor.setSelectionRange(caret, caret); } catch (_) {}
+        if (editor.scrollIntoView) editor.scrollIntoView({ block: 'nearest' });
+      }
+    };
+
+    const openDetail = (id) => {
+      if (!nodeByID(id)) return;
+      if (detailNodeID !== id) {
+        commitEdit();
+        detailOffset = null;
+        detailFolded = false;
+      }
+      detailNodeID = id;
+      editingNoteID = '';
+      draftText = '';
+      draftCaret = null;
+      refreshDetail();
+    };
+
+    // 详情卡自己的鼠标处理。卡片每次刷新都会重建内部 DOM，
+    // 所以监听挂在永不替换的容器上，靠事件委托找目标。
+    let panelDrag = null;
+    detailEl.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+
+      const bar = event.target.closest('.dt-bar');
+      if (bar && !event.target.closest('button')) {
+        const rect = detailEl.getBoundingClientRect();
+        const host = viewport.getBoundingClientRect();
+        panelDrag = {
+          dx: event.clientX - rect.left,
+          dy: event.clientY - rect.top,
+          hostX: host.left,
+          hostY: host.top
+        };
+        detailEl.classList.add('dragging');
+        event.preventDefault();
+        return;
+      }
+
+      // 代码块的复制按钮不能被当成"点了笔记要编辑"。
+      if (event.target.closest('.copy, button, a')) return;
+
+      const add = event.target.closest('[data-note-add]');
+      if (add) {
+        event.preventDefault();
+        beginEdit('new', '');
+        return;
+      }
+      const card = event.target.closest('[data-note]');
+      if (!card) return;
+      const noteID = card.dataset.note;
+      if (noteID === 'new' || editingNoteID === noteID) return;
+      const note = noteCards.find((item) => item.id === noteID);
+      if (!note) return;
+      event.preventDefault();
+      beginEdit(noteID, note.text);
+    });
+
+    window.addEventListener('mousemove', (event) => {
+      if (!panelDrag) return;
+      detailOffset = {
+        left: event.clientX - panelDrag.hostX - panelDrag.dx,
+        top: event.clientY - panelDrag.hostY - panelDrag.dy
+      };
+      clampToViewport(detailEl, detailOffset.left, detailOffset.top);
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (!panelDrag) return;
+      panelDrag = null;
+      detailEl.classList.remove('dragging');
+      // 贴回夹紧后的真实位置，下次平移画布才不会又把它拽走。
+      detailOffset = { left: detailEl.offsetLeft, top: detailEl.offsetTop };
+    });
+
+    /// 点虚线弹出来的小卡片：跳过去，或者把这条链接删掉。
+    const openLinkCard = (linkID) => {
+      const link = model.links.find((l) => l.id === linkID);
+      if (!link) return;
+      linkCardID = linkID;
+      linkCardEl.innerHTML = '';
+
+      const text = document.createElement('div');
+      text.className = 'lc-text';
+      const title = document.createElement('div');
+      title.className = 'lc-title';
+      title.textContent = titleOf(link.source) + (link.directed ? ' → ' : ' ↔ ') + titleOf(link.target);
+      const sub = document.createElement('div');
+      sub.className = 'lc-sub';
+      sub.textContent = link.directed ? '单向链接' : '双向链接';
+      text.append(title, sub);
+
+      const del = document.createElement('button');
+      del.className = 'lc-del';
+      del.textContent = '删除链接';
+      del.onclick = () => { post('linkRemoved', { id: link.id }); closeLinkCard(); };
+
+      const go = document.createElement('button');
+      go.className = 'lc-go';
+      go.textContent = '→';
+      go.title = '跳到这张卡片';
+      go.onclick = () => { const target = link.target; closeLinkCard(); window.graphBridge.focus(target); };
+
+      linkCardEl.append(text, del, go);
+      linkCardEl.classList.add('show');
+      positionPopups();
+      drawWires();
+    };
+
+    // ---- 交互 ---------------------------------------------------------
+
+    const nodeAt = (target) => {
+      const el = target.closest ? target.closest('.node') : null;
+      return el ? el.dataset.id : null;
+    };
+    const inPopup = (target) => !!(target.closest && (target.closest('#detail') || target.closest('#linkcard')));
+
+    // 拖完画布的那一下 mouseup 也会派发 click。不吞掉的话，
+    // 每次拖动结束都会顺手把选中取消掉。
+    // 用时间窗而不是一个布尔：万一那一下 click 没派发（比如在窗口外松手），
+    // 布尔会一直挂着，把之后某一次真正的点击白白吃掉。
+    let suppressClickUntil = 0;
+
+    viewport.addEventListener('click', (event) => {
+      if (performance.now() < suppressClickUntil) { suppressClickUntil = 0; return; }
+
+      // 详情弹窗也承载 Markdown 代码块。复制必须先于 popup 的事件隔离处理，
+      // 否则卡片里的复制可用、详情里的同一个按钮却会被提前吞掉。
+      const copy = event.target.closest('.copy');
+      if (copy) {
+        const code = window.CodeBlock?.codeFromButton(copy) || '';
+        if (code) post('copyCode', { code });
+        window.CodeBlock?.showCopied(copy);
+        return;
+      }
+
+      if (inPopup(event.target)) return;
+
+      // 连线中：点卡片就是选终点，卡片里的讲解、笔记、跳转按钮一律让路，
+      // 否则点在讲解那一行只会把讲解展开，链接永远连不上。
+      if (mode === 'link') {
+        const target = nodeAt(event.target);
+        // 点空白 = 彻底退出连线。以前只清掉起点、mode 还留在 link，
+        // 之后每一次点空白都被这一支拦下，选中就再也取消不掉了。
+        if (!target) { exitLinkMode('已退出连线'); return; }
+        if (!pendingSource) { pendingSource = target; render(); hint('再点一个节点建立双向链接'); return; }
+        if (pendingSource === target) { pendingSource = null; render(); hint('已取消'); return; }
+        const source = pendingSource;
+        pendingSource = null;
+        // 建好一条就完整退出连线，保持和工具栏状态一致；还要继续连时再明确进入。
+        mode = 'select';
+        viewport.classList.remove('linking');
+        render();
+        post('linkCreated', { source, target, directed: linkDirected });
+        post('linkModeExited', {});
+        return;
+      }
+
+      // 标题（含右侧展开箭头）是单击详情入口；卡片其余区域仍只负责选择。
+      const detailOpen = event.target.closest('[data-detail-open]');
+      if (detailOpen) {
+        const id = detailOpen.dataset.detailOpen;
+        selectedID = id;
+        closeLinkCard();
+        render();
+        post('nodeSelected', { id });
+        openDetail(id);
+        return;
+      }
+
+      // 卡片底部的跳转行
+      const jump = event.target.closest('[data-jump]');
+      if (jump) {
+        window.graphBridge.focus(jump.dataset.jump);
+        return;
+      }
+
+      // AI 讲解：有就展开/收起，没有就请求生成。
+      const lessonHead = event.target.closest('[data-lesson]');
+      if (lessonHead) {
+        const id = lessonHead.dataset.lesson;
+        const node = nodeByID(id);
+        if (!node) return;
+        if (!node.lesson) {
+          if (!busy.has(id)) post('lessonRequested', { id, force: false });
+          return;
+        }
+        keepAnchored(id, () => {
+          if (lessonOpen.has(id)) lessonOpen.delete(id); else lessonOpen.add(id);
+          render();
+        });
+        return;
+      }
+
+      // 点虚线 → 跳转 / 删除
+      const wire = event.target.closest('path[data-link]');
+      if (wire) {
+        closeDetail();
+        openLinkCard(wire.dataset.link);
+        return;
+      }
+
+      const toggle = event.target.closest('.toggle');
+      if (toggle) {
+        const id = toggle.dataset.toggle;
+        keepAnchored(id, () => {
+          if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+          render();
+        });
+        post('collapseChanged', { collapsed: Array.from(collapsed) });
+        return;
+      }
+
+      const id = nodeAt(event.target);
+      // 点空白：取消选中，顺手把弹层都收起来。
+      if (!id) { closeDetail(); closeLinkCard(); }
+      selectedID = id || '';
+      render();
+      post('nodeSelected', { id: selectedID });
+    });
+
+    viewport.addEventListener('dblclick', (event) => {
+      if (inPopup(event.target)) return;
+      const id = nodeAt(event.target);
+      if (!id) { recenter(); return; }
+      openDetail(id);
+    });
+
+    // 拖背景 = 平移；拖卡片 = 移动那个节点；Shift + 拖卡片 = 直接连线。
+    let drag = null;
+    viewport.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      if (inPopup(event.target)) return;
+      // Shift 从卡片拖到另一张就是一条链接。这是最快的建链方式：
+      // 不用先进模式、不用打开详情，松手即成。
+      const shiftSource = event.shiftKey ? nodeAt(event.target) : null;
+      if (shiftSource) {
+        drag = { kind: 'link', id: shiftSource, hover: '', moved: false };
+        viewport.classList.add('linking');
+        hint('松手连到另一张卡片');
+        event.preventDefault();
+        return;
+      }
+      // 卡片里的按钮不能触发拖动，否则点一下就把节点挪走了。
+      if (event.target.closest('.toggle, button, [data-detail-open], [data-lesson]')) return;
+      const id = nodeAt(event.target);
+      if (id && mode !== 'link') {
+        const p = positions[id];
+        drag = { kind: 'node', id, startX: event.clientX, startY: event.clientY, originX: p.x, originY: p.y, moved: false };
+      } else {
+        drag = { kind: 'pan', startX: event.clientX, startY: event.clientY, originX: panX, originY: panY, moved: false };
+      }
+      event.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (event) => {
+      if (!drag) return;
+      if (drag.kind === 'link') {
+        drag.moved = true;
+        drawRubber(drag.id, stagePoint(event));
+        const under = document.elementFromPoint(event.clientX, event.clientY);
+        const overID = under && under.closest ? nodeAt(under) : null;
+        const next = overID && overID !== drag.id ? overID : '';
+        if (next !== drag.hover) {
+          if (cards[drag.hover]) cards[drag.hover].classList.remove('pending');
+          if (cards[next]) cards[next].classList.add('pending');
+          drag.hover = next;
+        }
+        return;
+      }
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) drag.moved = true;
+      if (drag.kind === 'pan') {
+        panX = drag.originX + dx;
+        panY = drag.originY + dy;
+        applyTransform();
+        return;
+      }
+      const x = drag.originX + dx / scale;
+      const y = drag.originY + dy / scale;
+      const el = cards[drag.id];
+      if (el) { el.style.left = x + 'px'; el.style.top = y + 'px'; }
+      // 位置要同步回 positions，连线才跟得上；否则线还挂在旧坐标上，看着是断的。
+      const p = positions[drag.id];
+      if (p) { p.x = x; p.y = y; p.cy = y + p.h / 2; }
+      syncDecorations(drag.id);
+      if (!drag.frame) {
+        drag.frame = requestAnimationFrame(() => { drag.frame = 0; drawWires(); positionPopups(); });
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (!drag) return;
+      if (drag.kind === 'link') {
+        const source = drag.id;
+        const target = drag.hover;
+        if (cards[target]) cards[target].classList.remove('pending');
+        clearRubber();
+        viewport.classList.toggle('linking', mode === 'link');
+        if (drag.moved) suppressClickUntil = performance.now() + 350;
+        drag = null;
+        if (target && target !== source) {
+          post('linkCreated', { source, target, directed: linkDirected });
+          hint('已连上「' + titleOf(target) + '」');
+        }
+        return;
+      }
+      if (drag.frame) cancelAnimationFrame(drag.frame);
+      if (drag.moved) suppressClickUntil = performance.now() + 350;
+      // 松手 = 归位。拖的过程随便放，落下来只决定它在同级里排第几，
+      // 然后整棵树按 tidy 规则重排，卡片滑回自己的槽位。
+      if (drag.kind === 'node' && drag.moved) {
+        const previous = capturePositions();
+        reorderAfterDrag(drag.id);
+        render();
+        settleFrom(previous);
+      }
+      drag = null;
+    });
+
+    // ---- 手势 ---------------------------------------------------------
+    //
+    // macOS 触控板到 WebKit 的映射：
+    //   双指滑动 → wheel，ctrlKey=false        → 平移
+    //   双指捏合 → wheel，ctrlKey=true（系统合成）→ 缩放
+    //              WebKit 另外还发非标准的 gesturestart/change，带 event.scale，更跟手
+    //   三指滑动 → 默认被系统截走（调度中心 / 在整页间轻扫），到不了这里
+    // 之前把双指滑动也当成缩放，所以一滑就乱缩。
+
+    const zoomAround = (nextScale, px, py) => {
+      const next = Math.min(2.4, Math.max(0.18, nextScale));
+      if (next === scale) return;
+      panX = px - (px - panX) * (next / scale);
+      panY = py - (py - panY) * (next / scale);
+      scale = next;
+      applyTransform();
+    };
+
+    const localPoint = (event) => {
+      const rect = viewport.getBoundingClientRect();
+      return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    };
+
+    // WebKit 发了 gesture 事件就以它为准，避免和系统合成的 ctrl+wheel 叠加成双倍缩放。
+    let gestureActive = false;
+    let gestureBaseScale = 1;
+    let gestureAnchor = { x: 0, y: 0 };
+
+    viewport.addEventListener('gesturestart', (event) => {
+      event.preventDefault();
+      gestureActive = true;
+      gestureBaseScale = scale;
+      gestureAnchor = localPoint(event);
+    }, { passive: false });
+
+    viewport.addEventListener('gesturechange', (event) => {
+      event.preventDefault();
+      zoomAround(gestureBaseScale * event.scale, gestureAnchor.x, gestureAnchor.y);
+    }, { passive: false });
+
+    viewport.addEventListener('gestureend', (event) => {
+      event.preventDefault();
+      // 留一拍再放行 wheel：捏合结束时系统还会补几个 ctrl+wheel。
+      setTimeout(() => { gestureActive = false; }, 120);
+    }, { passive: false });
+
+    viewport.addEventListener('wheel', (event) => {
+      // 弹窗和卡片里的代码块自己会滚，别把滚轮抢走。
+      if (inPopup(event.target) || (event.target.closest && event.target.closest('.md pre'))) return;
+      event.preventDefault();
+      // deltaMode 1 是"行"，鼠标滚轮常见；换算成像素才和触控板同一量级。
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientHeight : 1;
+      const dx = event.deltaX * unit;
+      const dy = event.deltaY * unit;
+      if (event.ctrlKey || event.metaKey) {
+        if (gestureActive) return;
+        const point = localPoint(event);
+        zoomAround(scale * Math.exp(-dy * 0.01), point.x, point.y);
+        return;
+      }
+      // 双指滑动 = 平移。Shift 按住时把纵向滚动转成横向，和系统一致。
+      if (event.shiftKey && Math.abs(dx) < 0.5) {
+        panX -= dy;
+      } else {
+        panX -= dx;
+        panY -= dy;
+      }
+      applyTransform();
+    }, { passive: false });
+
+    /// 退出连线并回到普通选择状态。Swift 那边的工具栏也要跟着灭掉，
+    /// 不然按钮还亮着"连线中"，实际已经不在连线了。
+    function exitLinkMode(message) {
+      pendingSource = null;
+      mode = 'select';
+      linkDirected = false;
+      viewport.classList.remove('linking');
+      selectedID = '';
+      closeDetail();
+      closeLinkCard();
+      render();
+      post('linkModeExited', {});
+      post('nodeSelected', { id: '' });
+      if (message) hint(message);
+    }
+
+    document.addEventListener('keydown', (event) => {
+      // 选中一张卡片后按 L 直接开始连线，省得先打开详情再找按钮。
+      if ((event.key === 'l' || event.key === 'L') && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (editingNoteID) return;
+        const source = detailNodeID || selectedID;
+        if (!source || mode === 'link') return;
+        event.preventDefault();
+        beginLinkFromDetail(source);
+        return;
+      }
+      if (event.key !== 'Escape') return;
+      if (mode === 'link') { exitLinkMode('已退出连线'); return; }
+      // 正在写笔记时先退出编辑（丢掉这一次改动），再按一次才关闭详情。
+      if (detailNodeID && cancelEdit()) return;
+      if (detailNodeID) { closeDetail(); return; }
+      if (linkCardID) { closeLinkCard(); return; }
+      if (selectedID) {
+        selectedID = '';
+        render();
+        post('nodeSelected', { id: '' });
+      }
+    });
+
+    // ---- 回中：双指连点两下 ----------------------------------------
+    //
+    // macOS 上双指轻点 = 辅助点按，在 WebView 里到达时是 contextmenu 事件。
+    // 连着两下就是 500ms 内收到两次。空白处双击鼠标也走同一条路，
+    // 两种习惯都能把跑丢的脑图找回来。
+    let lastSecondaryTap = 0;
+    const recenter = () => {
+      const target = (selectedID && positions[selectedID])
+        || positions[(model.nodes.find((n) => !model.edges.some((e) => e.target === n.id)) || {}).id];
+      if (!target) { fit(); return; }
+      panX = viewport.clientWidth / 2 - (target.x + target.w / 2) * scale;
+      panY = viewport.clientHeight / 2 - target.cy * scale;
+      applyTransform();
+      hint('已回到脑图中心');
+    };
+
+    viewport.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      if (inPopup(event.target)) return;
+      const now = Date.now();
+      if (now - lastSecondaryTap < 500) {
+        lastSecondaryTap = 0;
+        recenter();
+        return;
+      }
+      lastSecondaryTap = now;
+    });
+
+    const fit = () => {
+      const ids = Object.keys(positions);
+      if (!ids.length) return;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      ids.forEach((id) => {
+        const p = positions[id];
+        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x + p.w); maxY = Math.max(maxY, p.y + p.h);
+      });
+      const pad = 40;
+      const sx = (viewport.clientWidth - pad * 2) / Math.max(1, maxX - minX);
+      const sy = (viewport.clientHeight - pad * 2) / Math.max(1, maxY - minY);
+      scale = Math.min(2.4, Math.max(0.18, Math.min(sx, sy)));
+      panX = pad - minX * scale;
+      panY = (viewport.clientHeight - (maxY - minY) * scale) / 2 - minY * scale;
+      applyTransform();
+    };
+
+    /// 首屏：不缩到看不清。把根摆到左侧，缩放留在可读区间，其余靠平移。
+    const initialView = () => {
+      const root = model.nodes.find((n) => !model.edges.some((e) => e.target === n.id));
+      scale = 1;
+      const p = root && positions[root.id];
+      if (p) {
+        panX = 60 - p.x * scale;
+        panY = viewport.clientHeight / 2 - p.cy * scale;
+      } else {
+        panX = 60; panY = 60;
+      }
+      applyTransform();
+    };
+
+    window.graphBridge = {
+      setGraph(payload) {
+        const data = payload || {};
+        const first = model.nodes.length === 0;
+        model = {
+          nodes: data.nodes || [],
+          edges: (data.edges || []).filter((e) => (e.type || 'tree') === 'tree'),
+          links: (data.edges || []).filter((e) => e.type === 'link')
+            .map((e) => Object.assign({}, e, { directed: !!e.directed }))
+        };
+        childOrder = data.childOrder || {};
+        collapsed = new Set(data.collapsed || []);
+        noteCards = data.noteCards || [];
+        // 浮层引用的对象可能已经没了，重推之后统一收掉。
+        if (detailNodeID && !model.nodes.some((n) => n.id === detailNodeID)) closeDetail();
+        if (linkCardID && !model.links.some((l) => l.id === linkCardID)) closeLinkCard();
+        render();
+        if (first) initialView();
+      },
+      /// 正在生成讲解的节点。UI 拿它显示「生成中…」并禁掉重复点击。
+      setBusy(ids) {
+        busy = new Set(ids || []);
+        render();
+      },
+      setCollapsed(ids) {
+        collapsed = new Set(ids || []);
+        render();
+        // 展开/收起会整体重排，坐标全变；不回中的话树就跑到视口外面去了。
+        recenter();
+      },
+      setMode(next) {
+        mode = (next === 'link' || next === 'link-directed') ? 'link' : 'select';
+        linkDirected = next === 'link-directed';
+        pendingSource = null;
+        viewport.classList.toggle('linking', mode === 'link');
+        render();
+        if (mode === 'link') hint(linkDirected ? '点起点，再点终点（单向）' : '点两个节点建立双向链接');
+      },
+      setSearch(text) { searchQuery = (text || '').trim().toLowerCase(); render(); },
+      setSelected(id) { selectedID = id || ''; render(); },
+      focus(id) {
+        const p = positions[id];
+        if (!p) { hint('目标在收起的分支里'); return; }
+        selectedID = id;
+        render();
+        panX = viewport.clientWidth / 2 - (p.x + p.w / 2) * scale;
+        panY = viewport.clientHeight / 2 - p.cy * scale;
+        applyTransform();
+        post('nodeSelected', { id });
+      },
+      expandAll() {
+        collapsed = new Set();
+        render();
+        recenter();
+        post('collapseChanged', { collapsed: [] });
+      },
+      collapseAll() {
+        // 只留根和一级分支，其余全收起——这才是大图的默认可读状态。
+        const parentOf = {};
+        model.edges.forEach((e) => { parentOf[e.target] = e.source; });
+        const depth = {};
+        model.nodes.forEach((n) => {
+          let d = 0, cursor = n.id;
+          while (parentOf[cursor] && d < 12) { cursor = parentOf[cursor]; d += 1; }
+          depth[n.id] = d;
+        });
+        collapsed = new Set(model.nodes.filter((n) => depth[n.id] >= 1).map((n) => n.id));
+        render();
+        recenter();
+        post('collapseChanged', { collapsed: Array.from(collapsed) });
+      },
+      relayout() {
+        // 手工排序一并清掉，回到 AI 派生的原始顺序。
+        childOrder = {};
+        render();
+        fit();
+        post('layoutReset', {});
+      },
+      fit,
+      zoomBy(factor) {
+        const next = Math.min(2.4, Math.max(0.18, scale * factor));
+        const cx = viewport.clientWidth / 2, cy = viewport.clientHeight / 2;
+        panX = cx - (cx - panX) * (next / scale);
+        panY = cy - (cy - panY) * (next / scale);
+        scale = next;
+        applyTransform();
+      }
+    };
+
+    applyTransform();
+    post('bridgeReady', {});
+  })();
+  </script>
+</body>
+</html>

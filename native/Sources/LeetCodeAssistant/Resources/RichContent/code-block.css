@@ -1,0 +1,91 @@
+/* 聊天界面的代码块是全项目只读代码渲染的视觉基准。
+   conversation / solution / knowledge graph 共用这份样式，不再各养一套工具条。 */
+code { font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; }
+:not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, CanvasText 5%, transparent);
+}
+.code-block {
+  min-width: 0;
+  margin: 15px 0;
+  border: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: color-mix(in srgb, CanvasText 5.2%, Canvas);
+  box-shadow: none;
+}
+.code-head {
+  height: 40px;
+  padding: 0 8px 0 12px;
+  display: flex;
+  align-items: center;
+  color: color-mix(in srgb, CanvasText 50%, transparent);
+  font-size: 12px;
+}
+.code-head .copy {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 160ms cubic-bezier(.2,.8,.2,1);
+}
+.code-head .copy:hover { background: color-mix(in srgb, CanvasText 8%, transparent); }
+.code-head .copy:active { transform: scale(.94); }
+.code-head .copy.copied { color: #30a46c; }
+.copy-glyph { position: relative; width: 16px; height: 16px; display: block; }
+.copy-glyph::before, .copy-glyph::after {
+  content: '';
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 1.6px solid currentColor;
+  border-radius: 2px;
+}
+.copy-glyph::before { left: 1px; top: 1px; opacity: .72; }
+.copy-glyph::after {
+  right: 1px;
+  bottom: 1px;
+  background: color-mix(in srgb, CanvasText 5.2%, Canvas);
+}
+.copy.copied .copy-glyph::before { display: none; }
+.copy.copied .copy-glyph::after {
+  width: 11px;
+  height: 6px;
+  right: 2px;
+  bottom: 5px;
+  border-width: 0 0 1.8px 1.8px;
+  border-radius: 0;
+  background: transparent;
+  transform: rotate(-45deg);
+}
+.code-block pre {
+  max-width: 100%;
+  margin: 0;
+  padding: 6px 16px 18px;
+  border: 0;
+  overflow: auto;
+  background: transparent !important;
+  box-shadow: none;
+}
+.code-block pre code.hljs {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
+  font: 12px/1.62 "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  .hljs { color: #d7dce2; background: transparent; }
+  .code-block { background: rgba(255,255,255,.035); }
+}

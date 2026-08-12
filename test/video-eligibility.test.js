@@ -24,6 +24,12 @@ test('failed classification hides the video entry instead of guessing locally', 
   assert.match(renderer, /latestState\.eligibility = 'ineligible'/);
 });
 
+test('missing video task credentials are rejected before an AI request', () => {
+  assert.match(main, /skipped: 'provider_unavailable'/);
+  assert.match(renderer, /function hasConfiguredVideoTaskModel\(\)/);
+  assert.match(renderer, /if \(!hasConfiguredVideoTaskModel\(\)\)/);
+});
+
 test('old broad eligibility decisions are invalidated by a schema version', () => {
   assert.match(renderer, /VIDEO_ELIGIBILITY_VERSION = 2/);
   assert.match(renderer, /eligibilityVersion === VIDEO_ELIGIBILITY_VERSION/);

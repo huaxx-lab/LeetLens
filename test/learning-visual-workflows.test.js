@@ -131,11 +131,11 @@ test('learning navigation uses the native fullscreen toolbar instead of edge gue
   assert.doesNotMatch(renderer, /syncFullscreenLearningHeaderReveal|learning-header-revealed|clientY\s*<=\s*92/);
   assert.doesNotMatch(styles, /body\.is-fullscreen \.learning-shell[^}]*padding-top/s);
   assert.match(styles, /\.learning-header\s*\{[^}]*position:\s*relative/s);
-  assert.match(index, /id="learning-region-select"[^>]*aria-label="学习区域"/);
+  assert.match(index, /class="learning-region-nav" aria-label="学习区域"/);
   assert.match(index, /data-learning-subtab="knowledge"/);
   assert.match(renderer, /\[\['library', '题目清单'\], \['activity', '学习活动'\], \['submissions', '提交记录'\]\]/);
   assert.match(renderer, /:\s*'library';/);
-  assert.match(styles, /\.learning-region-picker[\s\S]*\.learning-context-nav/);
+  assert.match(styles, /\.learning-region-nav[\s\S]*\.learning-context-nav/);
   assert.doesNotMatch(index, /learning-sidebar/);
   assert.doesNotMatch(renderer, /toggleLearningSidebar|syncLearningResponsiveLayout/);
   assert.doesNotMatch(styles, /sidebar-collapsed|sidebar-drawer-open/);
@@ -144,7 +144,7 @@ test('learning navigation uses the native fullscreen toolbar instead of edge gue
 });
 
 test('knowledge base opens on the mind map by default', () => {
-  assert.match(index, /<option value="knowledge">知识库<\/option>/);
+  assert.match(index, /data-learning-region="knowledge">知识库</);
   assert.match(renderer, /library:\s*'knowledge'/);
 });
 

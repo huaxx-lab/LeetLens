@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="github.min.css">
+  <link rel="stylesheet" href="katex.min.css">
+  <link rel="stylesheet" href="code-block.css">
+  <style>
+    :root { color-scheme: light dark; font: 15px/1.72 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px clamp(18px, 3vw, 36px) 48px; color: color-mix(in srgb, CanvasText 88%, transparent); background: Canvas; }
+    #article { width: min(100%, 980px); margin: 0 auto; }
+
+    h1, h2, h3, h4 { font-weight: 600; line-height: 1.4; margin: 1.4em 0 .5em; }
+    h1 { font-size: 1.32em; } h2 { font-size: 1.18em; } h3 { font-size: 1.06em; } h4 { font-size: 1em; }
+    p, ul, ol { margin: .72em 0; }
+    ul, ol { padding-left: 1.45em; }
+    li { margin: 4px 0; }
+    strong { font-weight: 600; color: color-mix(in srgb, CanvasText 96%, transparent); }
+    a { color: color-mix(in srgb, AccentColor 92%, CanvasText); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    /* 引用块只留一条细竖线，不画框——整页尽量少边框 */
+    blockquote { margin: .8em 0; padding: 0 0 0 12px; border-left: 2px solid color-mix(in srgb, CanvasText 14%, transparent); color: color-mix(in srgb, CanvasText 64%, transparent); }
+    hr { border: 0; border-top: 1px solid color-mix(in srgb, CanvasText 8%, transparent); margin: 1.6em 0; }
+    :not(pre) > code { padding: 1px 4px; border-radius: 4px; font-size: .9em; background: color-mix(in srgb, CanvasText 5%, transparent); }
+    table { display: block; width: 100%; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 1em 0; font-size: .94em; }
+    th, td { padding: 6px 12px; text-align: left; }
+    thead th { border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
+    tbody tr + tr td { border-top: 1px solid color-mix(in srgb, CanvasText 6%, transparent); }
+
+    /* ── 代码：单块完全使用聊天的共享样式；这里只保留题解特有的多语言分组 ── */
+
+    /* 语言标签页：同一段落里连续的多语言代码块合并成一组 */
+    .code-group { min-width: 0; margin: 1em 0; border-radius: 6px; overflow: hidden; background: color-mix(in srgb, CanvasText 5.2%, Canvas); }
+    .code-group-toolbar { display: grid; height: 40px; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 2px; padding: 0 8px 0 12px; }
+    .code-tabs { display: flex; min-width: 0; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+    .code-tabs::-webkit-scrollbar { display: none; }
+    .code-group-toolbar button[data-lang] { flex: 0 0 auto; white-space: nowrap; height: 22px; padding: 0 10px; border: 0; border-radius: 6px; font: inherit; font-size: 11.5px; font-weight: 500; color: color-mix(in srgb, CanvasText 55%, transparent); background: transparent; cursor: pointer; }
+    .code-group-toolbar .copy {
+      width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
+      border: 0; border-radius: 7px; background: transparent;
+      color: color-mix(in srgb, CanvasText 50%, transparent); cursor: pointer;
+    }
+    .code-group-toolbar .copy:hover { background: color-mix(in srgb, CanvasText 8%, transparent); }
+    .code-group-toolbar .copy.copied { color: #30a46c; }
+    .code-group-toolbar button[data-lang]:hover { color: color-mix(in srgb, CanvasText 80%, transparent); }
+    .code-group-toolbar button[data-lang][aria-selected="true"] { color: CanvasText; background: color-mix(in srgb, CanvasText 9%, transparent); }
+    .code-version { flex: 0 0 auto; padding: 0 7px 0 3px; font-size: 10.5px; font-weight: 600; color: color-mix(in srgb, CanvasText 42%, transparent); }
+    .code-group .code-block { margin: 0; border-radius: 0; background: transparent; }
+    .code-group .code-head { display: none; }
+    .code-group-panel[hidden] { display: none; }
+
+    /* github.min.css is light-only. These restrained overrides keep the same token
+       hierarchy in both appearances without putting a second background inside code. */
+    .hljs-comment, .hljs-quote { color: #6e7781; }
+    .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-type { color: #cf222e; }
+    .hljs-title, .hljs-title.class_, .hljs-title.function_ { color: #8250df; }
+    .hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute { color: #0a3069; }
+    .hljs-number, .hljs-symbol, .hljs-bullet, .hljs-variable, .hljs-template-variable { color: #0550ae; }
+    .hljs-built_in, .hljs-meta { color: #953800; }
+    @media (prefers-color-scheme: dark) {
+      .hljs-comment, .hljs-quote { color: #8b949e; }
+      .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-type { color: #ff7b72; }
+      .hljs-title, .hljs-title.class_, .hljs-title.function_ { color: #d2a8ff; }
+      .hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute { color: #a5d6ff; }
+      .hljs-number, .hljs-symbol, .hljs-bullet, .hljs-variable, .hljs-template-variable { color: #79c0ff; }
+      .hljs-built_in, .hljs-meta { color: #ffa657; }
+    }
+
+    /* ── 图片：连续多张合成一个可切换的容器 ── */
+    img { max-width: 100%; height: auto; border-radius: 8px; }
+    /* 一组图解 = 一个可切换的容器。官方正文里的 `< 图, 图, 图 >` 是动画的逐帧，
+       平铺成一长条既占屏又看不出先后，所以叠在同一格里一张张切。 */
+    .gallery { margin: 1.1em 0; border-radius: 8px; overflow: hidden; background: color-mix(in srgb, CanvasText 3.5%, Canvas); outline: none; }
+    /* 所有帧占同一个网格单元：容器高度取最高的一张，切换时不会跳。 */
+    .gallery-stage { display: grid; place-items: center; padding: 10px; }
+    .gallery-stage img {
+      grid-area: 1 / 1; display: block;
+      width: 100%; max-height: 52vh; object-fit: contain;
+      cursor: zoom-in; opacity: 0; visibility: hidden; transition: opacity .16s ease;
+    }
+    .gallery-stage img.is-active { opacity: 1; visibility: visible; }
+    .gallery-bar { display: flex; align-items: center; justify-content: center; gap: 8px; height: 34px; padding: 0 8px; font-size: 11.5px; color: color-mix(in srgb, CanvasText 58%, transparent); }
+    .gallery-nav, .gallery-play {
+      width: 24px; height: 24px; flex: none; padding: 0;
+      border: 0; border-radius: 999px; cursor: pointer;
+      font-size: 13px; line-height: 24px; text-align: center;
+      color: inherit; background: color-mix(in srgb, CanvasText 8%, transparent);
+    }
+    .gallery-nav:hover, .gallery-play:hover { background: color-mix(in srgb, CanvasText 16%, transparent); }
+    .gallery-nav:disabled { opacity: .35; cursor: default; }
+    .gallery-dots { display: flex; align-items: center; gap: 5px; flex: 1; justify-content: center; flex-wrap: wrap; }
+    .gallery-dot { width: 6px; height: 6px; padding: 0; border: 0; border-radius: 999px; cursor: pointer; background: color-mix(in srgb, CanvasText 22%, transparent); }
+    .gallery-dot.is-active { background: color-mix(in srgb, CanvasText 62%, transparent); }
+    .gallery-count { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+
+    /* 单图点开也能放大 */
+    p > img, li > img { cursor: zoom-in; }
+
+    #zoom { position: fixed; inset: 0; z-index: 60; display: none; place-items: center; padding: 32px; background: rgba(0,0,0,.82); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+    #zoom.is-open { display: grid; }
+    #zoom img { max-width: 100%; max-height: 100%; border-radius: 10px; }
+    #zoom button { position: absolute; top: 16px; right: 20px; width: 30px; height: 30px; border: 0; border-radius: 999px; font-size: 17px; color: #fff; background: rgba(255,255,255,.16); cursor: pointer; }
+
+    .video-card { display: flex; align-items: center; gap: 8px; margin: 1em 0; padding: 12px 14px; border-radius: 10px; font-size: 12.5px; color: color-mix(in srgb, CanvasText 70%, transparent); background: color-mix(in srgb, CanvasText 4%, Canvas); }
+    .video-card em { margin-left: auto; font-style: normal; font-size: 11px; color: color-mix(in srgb, CanvasText 45%, transparent); }
+    .video-shell { position: relative; width: min(100%, 760px); margin: 1.1em auto; overflow: hidden; border-radius: 6px; background: #111; aspect-ratio: var(--video-ratio, 16 / 9); }
+    .video-shell [data-player] { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .video-shell .prism-player { width: 100% !important; height: 100% !important; }
+    .video-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+    .video-status { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; font-size: 12.5px; color: rgba(255,255,255,.82); background: rgba(0,0,0,.54); }
+
+    .empty { padding: 60px 0; text-align: center; color: color-mix(in srgb, CanvasText 45%, transparent); }
+  </style>
+</head>
+<body>
+  <main id="article"></main>
+  <div id="zoom" role="dialog" aria-label="查看图片"><button type="button" aria-label="关闭">×</button><img alt=""></div>
+
+  <script src="markdown-it.min.js"></script>
+  <script src="purify.min.js"></script>
+  <script src="highlight.min.js"></script>
+  <script src="code-block.js"></script>
+  <script src="katex.min.js"></script>
+  <script>
+    const LANG_LABELS = {
+      java: 'Java', python: 'Python', python3: 'Python', cpp: 'C++', c: 'C', csharp: 'C#',
+      javascript: 'JavaScript', js: 'JavaScript', typescript: 'TypeScript', ts: 'TypeScript',
+      go: 'Go', golang: 'Go', rust: 'Rust', swift: 'Swift', kotlin: 'Kotlin', php: 'PHP',
+      ruby: 'Ruby', scala: 'Scala', sql: 'SQL', mysql: 'MySQL', bash: 'Shell', shell: 'Shell',
+      objectivec: 'Objective-C', dart: 'Dart', racket: 'Racket', erlang: 'Erlang', elixir: 'Elixir'
+    };
+    const canonical = raw => {
+      let key = String(raw || '').trim().toLowerCase();
+      key = key.replace(/^\[|\]$/g, '');
+      const sol = key.match(/^sol\d*-(.+)$/);
+      if (sol) key = sol[1];
+      key = key.replace(/\s+/g, '');
+      return window.CodeBlock.canonicalLanguage(key);
+    };
+
+    // 官网围栏通常是 `Java [sol1-Java]`。前半段是显示语言，方括号里的
+    // sol1/sol2 是解法版本；两者必须分开解析，否则高亮和分组都会出错。
+    const fenceInfo = raw => {
+      const source = String(raw || '').trim();
+      // Production articles contain sol1-Java and sol-Java. Some old content also
+      // omits the final bracket; tolerate it without showing metadata as a language.
+      const tagged = source.match(/^(.*?)\s*\[\s*(sol\d*)\s*-\s*([^\]]+?)\s*\]?\s*$/i);
+      const plainLanguage = source.split(/[\s,{]/, 1)[0];
+      const language = canonical(tagged ? (tagged[3] || tagged[1]) : plainLanguage);
+      return {
+        language,
+        version: tagged ? tagged[2].toLowerCase() : '',
+        label: LANG_LABELS[language] || (language ? language.toUpperCase() : 'TEXT')
+      };
+    };
+
+    const md = window.markdownit({ html: false, linkify: true, breaks: false });
+    const esc = window.CodeBlock.escapeHtml;
+
+    const defaultImage = md.renderer.rules.image;
+    md.renderer.rules.image = (tokens, index, options, env, self) => {
+      const token = tokens[index];
+      const src = token.attrGet('src') || '';
+      if (/^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$/.test(src)) {
+        return `<span class="video-source" data-video-uuid="${esc(src.toLowerCase())}" data-video-title="${esc(token.content || '')}"></span>`;
+      }
+      return defaultImage(tokens, index, options, env, self);
+    };
+
+    // 代码块统一渲染成带工具条的卡片；语言写进 data-lang，后面据此合并成标签页。
+    md.renderer.rules.fence = (tokens, index) => {
+      const token = tokens[index];
+      const info = fenceInfo(token.info);
+      const lang = info.language;
+      return window.CodeBlock.fence(
+        token.content,
+        token.info,
+        `data-lang="${esc(lang)}" data-label="${esc(info.label)}" data-version="${esc(info.version)}"`
+      );
+    };
+
+    const copyButton = window.CodeBlock.copyButton;
+
+    /// 一组图解收进一个可切换的容器。
+    ///
+    /// 力扣官方正文用 `<![图1](url),![图2](url)>` 表示一段动画的逐帧。
+    /// 渲染出来是一个段落里塞着若干张图，中间夹着 `<`、`,`、`>` 这些光秃秃的标点；
+    /// 也有文章把每一帧写成独立段落。两种都要收进同一个容器，
+    /// 否则就是一串超大图竖着排下去，还带着漏出来的尖括号。
+    const SEPARATOR_ONLY = /^[\s<>,，、;；:：'"«»‹›〈〉《》.。\-–—]*$/u;
+
+    function makeCarousel(pictures) {
+      const gallery = document.createElement('figure');
+      gallery.className = 'gallery';
+      gallery.tabIndex = 0;
+      gallery.innerHTML = '<div class="gallery-stage"></div>'
+        + '<div class="gallery-bar">'
+        + '<button type="button" class="gallery-nav" data-step="-1" aria-label="上一张">‹</button>'
+        + '<button type="button" class="gallery-play" aria-label="播放">▶</button>'
+        + '<div class="gallery-dots"></div>'
+        + '<span class="gallery-count"></span>'
+        + '<button type="button" class="gallery-nav" data-step="1" aria-label="下一张">›</button>'
+        + '</div>';
+      const stage = gallery.querySelector('.gallery-stage');
+      const dots = gallery.querySelector('.gallery-dots');
+      const count = gallery.querySelector('.gallery-count');
+      const play = gallery.querySelector('.gallery-play');
+      pictures.forEach((picture, index) => {
+        picture.loading = 'eager';
+        stage.append(picture);
+        const dot = document.createElement('button');
+        dot.type = 'button';
+        dot.className = 'gallery-dot';
+        dot.dataset.index = String(index);
+        dot.setAttribute('aria-label', `第 ${index + 1} 张`);
+        dots.append(dot);
+      });
+
+      let current = 0;
+      let timer = 0;
+      const show = (next) => {
+        current = (next + pictures.length) % pictures.length;
+        pictures.forEach((picture, index) => picture.classList.toggle('is-active', index === current));
+        [...dots.children].forEach((dot, index) => dot.classList.toggle('is-active', index === current));
+        count.textContent = `${current + 1} / ${pictures.length}`;
+      };
+      const stop = () => {
+        if (!timer) return;
+        clearInterval(timer);
+        timer = 0;
+        play.textContent = '▶';
+        play.setAttribute('aria-label', '播放');
+      };
+      // 逐帧图讲的是过程，能自己走一遍比手点十下有用。
+      const start = () => {
+        timer = setInterval(() => show(current + 1), 900);
+        play.textContent = '❚❚';
+        play.setAttribute('aria-label', '暂停');
+      };
+
+      gallery.addEventListener('click', (event) => {
+        const nav = event.target.closest('.gallery-nav');
+        if (nav) { stop(); show(current + Number(nav.dataset.step)); return; }
+        const dot = event.target.closest('.gallery-dot');
+        if (dot) { stop(); show(Number(dot.dataset.index)); return; }
+        if (event.target.closest('.gallery-play')) { timer ? stop() : start(); }
+      });
+      gallery.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        stop();
+        show(current + (event.key === 'ArrowRight' ? 1 : -1));
+      });
+
+      show(0);
+      return gallery;
+    }
+
+    function buildGalleries(root) {
+      const candidateImage = element => {
+        if (!element?.matches) return null;
+        const pictures = element.matches('img') ? [element] : [...element.querySelectorAll('img')];
+        if (pictures.length !== 1) return null;
+        if (!element.matches('img, figure') && element.textContent.trim() !== '') return null;
+        return pictures[0];
+      };
+      const spacer = element => {
+        if (!element?.matches?.('p, br, hr')) return false;
+        if (element.querySelector?.('img, video, pre, code')) return false;
+        return SEPARATOR_ONLY.test(element.textContent || '');
+      };
+
+      // 第一遍：一个段落里就塞着整组图（`<![a](u),![b](u)>` 最常见的形态）。
+      // 从里往外走，先处理最深的那个容器，外层就不会再把已经收好的图重收一遍。
+      for (const holder of [...root.querySelectorAll('p, figure, div')].reverse()) {
+        if (!holder.isConnected || holder.closest('.gallery')) continue;
+        if (holder.querySelector('pre, code, video, table, .gallery')) continue;
+        const pictures = [...holder.querySelectorAll('img')];
+        if (pictures.length < 2) continue;
+        // 图片之外只允许剩下分隔标点，正文里夹着说明的段落不能动。
+        if (!SEPARATOR_ONLY.test(holder.textContent || '')) continue;
+        holder.replaceWith(makeCarousel(pictures));
+      }
+
+      // 第二遍：每一帧各占一个段落，中间夹着独立的标点段落。
+      const parents = [root, ...root.querySelectorAll('article, section, div')].reverse();
+      for (const parent of parents) {
+        if (parent.closest('.gallery') || !parent.isConnected) continue;
+        const children = [...parent.children];
+        for (let index = 0; index < children.length;) {
+          if (!candidateImage(children[index])) { index += 1; continue; }
+          const start = index;
+          let end = index;
+          const run = [];
+          const separators = [];
+          while (end < children.length) {
+            if (candidateImage(children[end])) run.push(children[end]);
+            else if (run.length && spacer(children[end])) separators.push(children[end]);
+            else break;
+            end += 1;
+          }
+          index = end;
+          if (run.length < 2 || run.some(item => !item.isConnected)) continue;
+          const pictures = run.map(candidateImage).filter(Boolean);
+          // 只有确认形成多图组后才清理紧邻的前导标点，
+          // 普通正文里的比较符不会受影响。
+          const leadingSeparator = start > 0 && spacer(children[start - 1])
+            ? children[start - 1]
+            : null;
+
+          const gallery = makeCarousel(pictures);
+          parent.insertBefore(gallery, run[0]);
+          run.forEach(node => node.remove());
+          separators.forEach(node => node.remove());
+          leadingSeparator?.remove();
+        }
+      }
+    }
+
+    /// 同一解法版本内连续、语言互不相同的代码块合并成标签页。
+    function buildCodeGroups(root) {
+      const blocks = [...root.querySelectorAll('.code-block')];
+      const handled = new Set();
+      for (const block of blocks) {
+        if (handled.has(block)) continue;
+        const run = [block];
+        const version = block.dataset.version || '';
+        let cursor = block.nextElementSibling;
+        while (cursor?.classList?.contains('code-block') && (cursor.dataset.version || '') === version) {
+          run.push(cursor);
+          cursor = cursor.nextElementSibling;
+        }
+        run.forEach(node => handled.add(node));
+        const languages = run.map(node => node.dataset.lang || '');
+       if (run.length < 2 || new Set(languages).size !== languages.length) continue;
+
+       const group = document.createElement('section');
+        const versionNumber = version.replace(/^sol/i, '');
+       group.className = 'code-group';
+       group.innerHTML = '<div class="code-group-toolbar" role="tablist">'
+          + (versionNumber ? `<span class="code-version">解法 ${esc(versionNumber)}</span>` : '')
+          + '<div class="code-tabs">'
+          + run.map((node, position) => `<button type="button" role="tab" data-lang="${esc(languages[position])}" aria-selected="false">${esc(node.dataset.label || languages[position])}</button>`).join('')
+          + '</div>'
+         + copyButton()
+         + '</div>';
+        run[0].before(group);
+        run.forEach(node => {
+          const panel = document.createElement('div');
+          panel.className = 'code-group-panel';
+          panel.dataset.lang = node.dataset.lang || '';
+          panel.append(node);
+          group.append(panel);
+        });
+
+        const activate = language => {
+          group.querySelectorAll('[data-lang][role="tab"]').forEach(tab => {
+            tab.setAttribute('aria-selected', String(tab.dataset.lang === language));
+          });
+          group.querySelectorAll('.code-group-panel').forEach(panel => {
+            panel.hidden = panel.dataset.lang !== language;
+          });
+        };
+        group.addEventListener('click', event => {
+          const tab = event.target.closest('[data-lang][role="tab"]');
+          if (tab) activate(tab.dataset.lang);
+        });
+        activate(languages.includes('java') ? 'java' : languages[0]);
+      }
+    }
+
+    function wireCopy(root) {
+      root.addEventListener('click', event => {
+        const button = event.target.closest('[data-copy]');
+        if (!button) return;
+        const code = window.CodeBlock.codeFromButton(button);
+        if (!code) return;
+        // file:// 页面里的 Web 剪贴板会受权限和焦点影响。
+        // 和聊天、脑图统一交给原生 NSPasteboard，复制行为才不会因页面入口而不同。
+        window.webkit?.messageHandlers?.copyCode?.postMessage(code);
+        window.CodeBlock.showCopied(button);
+      });
+    }
+
+    function wireZoom(root) {
+      const zoom = document.getElementById('zoom');
+      const target = zoom.querySelector('img');
+      root.addEventListener('click', event => {
+        const image = event.target.closest('img');
+        if (!image) return;
+        target.src = image.src;
+        zoom.classList.add('is-open');
+      });
+      zoom.addEventListener('click', () => zoom.classList.remove('is-open'));
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') zoom.classList.remove('is-open');
+      });
+    }
+
+    /// 力扣题解的公式直接写在正文里（`函数 $\\text{check}(i, j, k)$ 表示…`），
+    /// 不是包在 `<code>` 里的。只扫 code 节点就等于一条都渲染不了——原来正文里
+    /// 满屏的 `$\\text{...}$` 就是这么漏出来的。这里扫**文本节点**，$…$ 与 $$…$$ 都认。
+    function renderMath(root) {
+      if (!window.katex) return;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: node => (node.parentElement?.closest('pre, code, .katex'))
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT
+      });
+      const targets = [];
+      while (walker.nextNode()) {
+        if (walker.currentNode.nodeValue.includes('$')) targets.push(walker.currentNode);
+      }
+      const pattern = /\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g;
+      for (const node of targets) {
+        const source = node.nodeValue;
+        pattern.lastIndex = 0;
+        if (!pattern.test(source)) continue;
+        pattern.lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+        let cursor = 0;
+        let match;
+        while ((match = pattern.exec(source))) {
+          if (match.index > cursor) {
+            fragment.append(source.slice(cursor, match.index));
+          }
+          const display = match[1] !== undefined;
+          const body = display ? match[1] : match[2];
+          const span = document.createElement('span');
+          try {
+            window.katex.render(body, span, { displayMode: display, throwOnError: false });
+          } catch (_) {
+            span.textContent = match[0];
+          }
+          fragment.append(span);
+          cursor = match.index + match[0].length;
+        }
+        if (cursor < source.length) fragment.append(source.slice(cursor));
+        node.replaceWith(fragment);
+      }
+    }
+
+    let aliPlayerAssets;
+    let activePlayers = [];
+
+    function loadAliPlayer() {
+      if (window.Aliplayer) return Promise.resolve();
+      if (aliPlayerAssets) return aliPlayerAssets;
+      aliPlayerAssets = new Promise((resolve, reject) => {
+        if (!document.querySelector('link[data-aliplayer]')) {
+          const style = document.createElement('link');
+          style.rel = 'stylesheet';
+          style.href = 'aliplayer/skins/default/aliplayer-min.css';
+          style.dataset.aliplayer = 'true';
+          document.head.append(style);
+        }
+        const script = document.createElement('script');
+        script.src = 'aliplayer/browser-aliplayer.min.js';
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('播放器资源加载失败'));
+        document.head.append(script);
+      });
+      return aliPlayerAssets;
+    }
+
+    function videoMessage(title, detail, coverURL = '') {
+      const shell = document.createElement('div');
+      shell.className = 'video-shell';
+      if (coverURL) shell.innerHTML = `<img class="video-cover" src="${esc(coverURL)}" alt="${esc(title)}">`;
+      const status = document.createElement('div');
+      status.className = 'video-status';
+      status.textContent = detail || title;
+      shell.append(status);
+      return shell;
+    }
+
+    async function buildVideoPlayers(root, values) {
+      activePlayers.splice(0).forEach(player => {
+        try { player.dispose(); } catch (_) {}
+      });
+      const videos = new Map((Array.isArray(values) ? values : []).map(value => [String(value.uuid || '').toLowerCase(), value]));
+      root.querySelectorAll('img, .video-source').forEach(image => {
+        const alt = image.dataset.videoTitle || image.getAttribute('alt') || '';
+        const src = image.dataset.videoUuid || image.getAttribute('src') || '';
+        const looksLikeVideo = /\.(?:mp4|mov|m4v)$/i.test(alt)
+          || (/^[0-9a-f-]{20,}$/i.test(src) && !/^https?:/i.test(src));
+        if (!looksLikeVideo) return;
+        const parent = image.closest('p');
+        const target = parent && parent.textContent.trim() === '' && parent.children.length === 1 ? parent : image;
+        const info = videos.get(src.toLowerCase());
+        const title = alt.replace(/\.(?:mp4|mov|m4v)$/i, '') || '官方视频题解';
+        if (!info) {
+          target.replaceWith(videoMessage(title, '暂时无法获取视频播放信息'));
+          return;
+        }
+        if (!info.canSee || info.status !== 'APPROVED' || !info.videoID || !info.playAuth) {
+          const detail = !info.canSee ? '该视频需要对应的力扣账号权限' : '视频暂时不可播放';
+          target.replaceWith(videoMessage(title, detail, info.coverURL));
+          return;
+        }
+
+        const shell = document.createElement('div');
+        shell.className = 'video-shell';
+        if (info.width > 0 && info.height > 0) {
+          shell.style.setProperty('--video-ratio', `${info.width} / ${info.height}`);
+        }
+        const playerRoot = document.createElement('div');
+        playerRoot.dataset.player = 'true';
+        playerRoot.id = `lc-video-${Math.random().toString(36).slice(2)}`;
+        shell.append(playerRoot);
+        target.replaceWith(shell);
+
+        loadAliPlayer().then(() => {
+          const player = new window.Aliplayer({
+            id: playerRoot.id,
+            vid: info.videoID,
+            playauth: info.playAuth,
+            encryptType: 1,
+            cover: info.coverURL || '',
+            autoplay: false,
+            preload: true,
+            playsinline: true,
+            keyShortCuts: false,
+            useH5Prism: true,
+            assetPrefix: new URL('aliplayer', window.location.href).href.replace(/\/$/, '')
+          });
+          activePlayers.push(player);
+        }).catch(error => {
+          shell.replaceWith(videoMessage(title, error.message || '播放器加载失败', info.coverURL));
+        });
+      });
+    }
+
+    const article = document.getElementById('article');
+    window.__renderSolution = async (markdown, videos) => {
+      const source = String(markdown || '').trim();
+      if (!source) {
+        article.innerHTML = '<div class="empty">这篇题解没有正文</div>';
+        return;
+      }
+      article.innerHTML = window.DOMPurify.sanitize(md.render(source), {
+        ADD_ATTR: ['data-lang', 'data-label', 'data-version', 'data-copy', 'data-step', 'data-video-uuid', 'data-video-title', 'role', 'aria-selected', 'aria-label']
+      });
+      await buildVideoPlayers(article, videos);
+      buildGalleries(article);
+      buildCodeGroups(article);
+      renderMath(article);
+    };
+
+    wireCopy(article);
+    wireZoom(article);
+  </script>
+</body>
+</html>

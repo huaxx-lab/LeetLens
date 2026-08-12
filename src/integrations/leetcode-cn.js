@@ -349,6 +349,7 @@ function buildLeetCodeDashboard(value, now = Date.now()) {
     },
     analysis: {
       pendingQuestions: Object.keys(state.analysis.queue).length,
+      failedQuestions: Object.keys(state.analysis.dead).length,
       pending: Object.fromEntries(Object.entries(state.analysis.queue).map(([slug, task]) => [slug, {
         submissionCount: task.submissionIds.length,
         queuedAt: task.queuedAt,
@@ -356,6 +357,7 @@ function buildLeetCodeDashboard(value, now = Date.now()) {
         lastError: task.lastError,
         nextAttemptAt: task.nextAttemptAt
       }])),
+      failed: state.analysis.dead,
       records: state.analysis.records
     }
   };

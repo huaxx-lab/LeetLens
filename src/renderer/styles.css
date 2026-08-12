@@ -64,8 +64,6 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  -ms-overflow-style: none;
-  scrollbar-width: none;
 }
 
 .sr-only {
@@ -80,11 +78,31 @@
   border: 0 !important;
 }
 
-/* Preserve wheel, trackpad and programmatic scrolling without platform chrome. */
+/* 悬浮滚动条：原生滚动条整体藏掉（样式化的滚动条会占布局宽度，那不是悬浮），
+   真正的 thumb 由 floating-scrollbar.js 画成一颗浮在内容之上的胶囊。 */
+* {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 *::-webkit-scrollbar {
-  display: none;
   width: 0;
   height: 0;
+}
+
+.floating-scrollbar {
+  position: fixed;
+  z-index: 2147483647;
+  display: none;
+  border-radius: 999px;
+  background: rgba(142, 142, 147, .45);
+  opacity: 0;
+  transition: opacity .28s ease;
+  pointer-events: none;
+}
+
+.floating-scrollbar.is-active {
+  opacity: 1;
 }
 
 html,
@@ -1079,11 +1097,7 @@ button.message-learning-state:hover {
   max-height: min(52vh, 560px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  /* 卡片内滚动条隐藏：细深色滑块贴在卡片右缘很脏，也会和右侧导航条抢视觉。 */
-  scrollbar-width: none;
 }
-
-.message.is-user .msg-body::-webkit-scrollbar { width: 0; height: 0; }
 
 
 .message.is-user.user-collapsed .msg-body {
@@ -2987,14 +3001,6 @@ body.is-fullscreen .input-bar {
   touch-action: pan-x pan-y;
 }
 
-.code-block pre::-webkit-scrollbar-thumb {
-  background-color: rgba(188, 211, 229, 0.3);
-}
-
-.code-block pre::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(126, 189, 235, 0.5);
-}
-
 .reasoning-picker {
   position: relative;
 }
@@ -4106,24 +4112,38 @@ body.is-fullscreen .overlay {
   overflow: clip;
 }
 
-.learning-region-picker {
-  position: relative;
-  display: grid;
-  width: clamp(92px,14vw,126px);
-  height: 32px;
-  grid-template-columns: minmax(0,1fr) 18px;
+/* 一级导航改为分段控件：与知识库 subnav 同一种交互语言。 */
+.learning-region-nav {
+  display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  color: #304854;
+  gap: 2px;
+  padding: 3px;
   background: rgba(238,241,243,.72);
-  border: 1px solid rgba(44,61,72,.1);
-  border-radius: 7px;
-  box-shadow: inset 0 1px rgba(255,255,255,.65);
+  border: 1px solid rgba(44,61,72,.08);
+  border-radius: 9px;
 }
 
-.learning-region-picker > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.learning-region-picker select { z-index: 1; width: 100%; height: 100%; grid-column: 1 / -1; grid-row: 1; padding: 0 28px 0 11px; color: inherit; appearance: none; background: transparent; border: 0; outline: 0; font-size: 11px; font-weight: 680; }
-.learning-region-picker > svg { z-index: 2; width: 15px; height: 15px; grid-column: 2; grid-row: 1; fill: none; stroke: #76848b; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
-.learning-region-picker:focus-within { border-color: rgba(25,105,151,.28); box-shadow: 0 0 0 2px rgba(25,105,151,.07); }
+.learning-region-nav > button {
+  height: 26px;
+  padding: 0 12px;
+  color: #5b6a72;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 100ms ease;
+}
+
+.learning-region-nav > button:hover { color: #1f3a44; background: rgba(255,255,255,.5); }
+.learning-region-nav > button:active { transform: scale(.96); }
+.learning-region-nav > button.active { color: #0b6f68; background: rgba(255,255,255,.92); box-shadow: 0 1px 3px rgba(31,54,68,.10); }
+
+@media (max-width: 620px) {
+  .learning-region-nav > button { padding: 0 9px; font-size: 11.5px; }
+}
 .learning-context-nav { display: flex; min-width: 0; align-items: center; justify-content: center; }
 
 .learning-subnav {
@@ -4195,7 +4215,7 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
   padding: 4px 12px;
 }
 
-body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="knowledge"] .learning-region-picker,
+body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="knowledge"] .learning-region-nav,
 body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="knowledge"] .learning-header-actions { display: none; }
 
 .learning-heading {
@@ -4217,19 +4237,19 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
 .learning-header-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 4px; }
 .learning-header-actions .tb-btn { width: clamp(29px, calc(29px * var(--display-scale)), 34px); height: clamp(29px, calc(29px * var(--display-scale)), 34px); flex: 0 0 auto; }
 .learning-header-actions .tb-btn svg { width: clamp(14px, calc(14px * var(--display-scale)), 17px); height: clamp(14px, calc(14px * var(--display-scale)), 17px); }
-.learning-sync-state { max-width: 116px; overflow: hidden; color: #899198; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.learning-sync-state { max-width: 116px; overflow: hidden; color: #899198; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
 .learning-trash-tab { position: relative; color: #67717a; }
 .learning-trash-tab:hover,
 .learning-trash-tab.active { color: #a8473e; background: rgba(208,82,70,.08); }
 .learning-trash-tab > svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.learning-trash-tab > em { position: absolute; top: -2px; right: -2px; display: grid; min-width: 13px; height: 13px; padding: 0 3px; color: #fff; background: #bd5b50; border: 1px solid rgba(255,255,255,.9); border-radius: 7px; font-size: 8px; font-style: normal; place-items: center; }
+.learning-trash-tab > em { position: absolute; top: -2px; right: -2px; display: grid; min-width: 15px; height: 15px; padding: 0 4px; color: #fff; background: #bd5b50; border: 1px solid rgba(255,255,255,.9); border-radius: 8px; font-size: 9px; font-style: normal; place-items: center; }
 .learning-trash-tab > em:empty { display: none; }
 
 .learning-content {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  background: linear-gradient(180deg, rgba(222, 242, 248, 0.24), transparent 190px);
+  background: linear-gradient(180deg, rgba(207, 236, 233, 0.34), transparent 190px);
   container-name: learning-content;
   container-type: inline-size;
   overscroll-behavior: contain;
@@ -4244,13 +4264,19 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
 @media (max-width: 759px) {
   .learning-header { grid-template-columns: auto minmax(0,1fr) auto; gap: 6px; padding-right: 7px; padding-left: 7px; }
   .learning-sync-state { display: none; }
-  .learning-region-picker { width: 92px; }
+  .learning-region-nav { gap: 1px; }
   .learning-subnav { width: 100%; }
   .learning-subnav > button { padding-right: 5px; padding-left: 5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .learning-page-enter { animation: none; }
+  .learning-day-band,
+  .learning-stat-strip,
+  .learning-plan-section,
+  .learning-plan-list > * { animation: none; }
+  .learning-rings > div { transition: none; }
+  .learning-settings-button svg { transition: none; }
 }
 
 .learning-loading,
@@ -5350,6 +5376,7 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
 
 /* 色带不再是一块独立卡片：整页铺一层横向晕染并向下渐隐，
    顶部内容与统计条都坐在同一片底色上，自然融进界面。 */
+/* 单色相环境光：只用学习中心主题 teal 一族，去掉蓝/绿/驼三色混合。 */
 .learning-today::before {
   position: absolute;
   top: 0;
@@ -5357,12 +5384,22 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
   left: 0;
   height: 520px;
   background:
-    linear-gradient(112deg, rgba(215, 240, 249, 0.6), rgba(241, 248, 244, 0.45) 58%, rgba(255, 242, 218, 0.35));
+    linear-gradient(112deg, rgba(190, 229, 226, 0.62), rgba(214, 238, 235, 0.4) 58%, rgba(226, 240, 237, 0.26));
   -webkit-mask-image: linear-gradient(180deg, #000 0, #000 190px, transparent 100%);
   mask-image: linear-gradient(180deg, #000 0, #000 190px, transparent 100%);
   content: "";
   pointer-events: none;
 }
+
+@property --progress { syntax: "<number>"; inherits: false; initial-value: 0; }
+
+/* 分区进场动画：依次抬起，进场即进入"已就绪"状态。 */
+.learning-day-band,
+.learning-stat-strip,
+.learning-plan-section { animation: learning-section-enter .42s cubic-bezier(.2,.8,.2,1) backwards; }
+.learning-stat-strip { animation-delay: 70ms; }
+.learning-plan-section { animation-delay: 140ms; }
+@keyframes learning-section-enter { from { opacity: 0; transform: translateY(10px); } }
 
 .learning-day-band {
   position: relative;
@@ -5378,12 +5415,14 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
 }
 
 .learning-day-copy { min-width: 0; }
-.learning-day-copy > span { color: #08776f; font-size: 10.5px; font-weight: 700; }
+.learning-day-copy > span { color: #08776f; font-size: 11.5px; font-weight: 700; }
 .learning-day-copy > strong { display: block; margin-top: 5px; color: var(--text); font-size: 28px; font-weight: 680; line-height: 1; }
-.learning-day-copy small { color: var(--text-secondary); font-size: 12px; font-weight: 550; }
-.learning-day-copy p { margin-top: 7px; color: var(--text-secondary); font-size: 11px; }
+.learning-day-copy strong b { font-weight: inherit; font-variant-numeric: tabular-nums; }
+.learning-day-copy small { color: var(--text-secondary); font-size: 13px; font-weight: 550; }
+.learning-day-copy p { margin-top: 7px; color: var(--text-secondary); font-size: 12px; }
 
-/* 主环（新题）大、副环（复习）小并错位叠进主环，像两滴大小不一的玻璃珠。 */
+/* 主环（新题）大、副环（复习）小并错位叠进主环，像两滴大小不一的玻璃珠。
+   进度值从 0 升到目标的动画靠 @property --progress 过渡实现。 */
 .learning-rings {
   display: flex;
   flex: 0 0 auto;
@@ -5397,13 +5436,14 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
   width: 72px;
   height: 72px;
   align-content: center;
-  background: conic-gradient(var(--blue) calc(var(--progress) * 1%), rgba(255, 255, 255, 0.38) 0);
+  background: conic-gradient(#0e8f82 calc(var(--progress) * 1%), rgba(13, 94, 89, 0.1) 0);
   border-radius: 50%;
   box-shadow:
-    0 12px 28px rgba(31, 75, 105, 0.12),
+    0 12px 28px rgba(24, 82, 78, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.6);
   text-align: center;
   backdrop-filter: saturate(160%) blur(10px);
+  transition: --progress 900ms cubic-bezier(.3,.8,.3,1), transform 180ms ease;
 }
 
 .learning-rings > div:nth-child(2) {
@@ -5411,18 +5451,20 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
   width: 54px;
   height: 54px;
   margin: 30px 0 0 -14px;
-  background: conic-gradient(#16a085 calc(var(--progress) * 1%), rgba(255, 255, 255, 0.38) 0);
+  background: conic-gradient(#3364a8 calc(var(--progress) * 1%), rgba(34, 80, 128, 0.1) 0);
   box-shadow:
-    0 10px 22px rgba(22, 92, 78, 0.13),
+    0 10px 22px rgba(28, 64, 104, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
+
+.learning-rings > div:hover { transform: scale(1.05); }
 
 .learning-rings > div::before { position: absolute; inset: 5px; background: rgba(248, 252, 252, 0.66); border-radius: 50%; box-shadow: 0 0 8px 3px rgba(248, 252, 252, 0.45); content: ""; backdrop-filter: blur(6px); }
 .learning-rings span,
 .learning-rings strong { position: relative; z-index: 1; display: block; }
-.learning-rings span { color: var(--text-tertiary); font-size: 10.5px; }
-.learning-rings strong { margin-top: 1px; color: var(--text); font-size: 12.5px; }
-.learning-rings > div:nth-child(2) strong { font-size: 11.5px; }
+.learning-rings span { color: var(--text-tertiary); font-size: 11px; }
+.learning-rings strong { margin-top: 1px; color: var(--text); font-size: 13px; font-variant-numeric: tabular-nums; }
+.learning-rings > div:nth-child(2) strong { font-size: 12px; }
 
 .learning-settings-button {
   position: absolute;
@@ -5435,11 +5477,13 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
   background: rgba(255, 255, 255, 0.34);
   border: 1px solid rgba(31, 75, 105, 0.09);
   border-radius: 50%;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
   place-items: center;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
 }
 
-.learning-settings-button:hover { color: #fff; background: var(--blue); }
+.learning-settings-button svg { transition: transform 240ms ease; }
+.learning-settings-button:hover { color: #0b6f68; background: rgba(255, 255, 255, 0.78); border-color: rgba(31, 75, 105, 0.16); }
+.learning-settings-button:hover svg { transform: rotate(45deg); }
 
 .learning-stat-strip {
   display: grid;
@@ -5458,7 +5502,9 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
 .learning-stat-strip > div:last-child { border-right: 0; }
 .learning-stat-strip strong,
 .learning-stat-strip span { display: block; }
-.learning-stat-strip strong { color: var(--text); font-size: 16px; font-weight: 650; }
+.learning-stat-strip strong { color: var(--text); font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.learning-stat-strip > div.is-accent strong,
+.learning-stat-strip > div.is-accent span { color: #b45f00; }
 .learning-stat-strip span { margin-top: 2px; color: var(--text-tertiary); font-size: 10.5px; white-space: nowrap; }
 
 .learning-plan-section { padding: 14px 12px 0; }
@@ -5475,16 +5521,16 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
 }
 .learning-plan-section header strong,
 .learning-plan-section header span { display: block; }
-.learning-plan-section header strong { color: var(--text); font-size: 12px; }
-.learning-plan-section header span { margin-top: 2px; color: var(--text-tertiary); font-size: 10.5px; }
+.learning-plan-section header strong { color: var(--text); font-size: 13px; }
+.learning-plan-section header span { margin-top: 2px; color: var(--text-tertiary); font-size: 11.5px; }
 
+/* 去浮雕：保留 hairline 边框，不再叠 inset 白高光。 */
 .learning-plan-list,
 .learning-library-list {
   overflow: hidden;
   background: rgba(255, 255, 255, 0.74);
   border: 1px solid var(--separator);
-  border-radius: 8px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
 }
 
 .learning-item-row {
@@ -5500,16 +5546,26 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
   border: 0;
   border-bottom: 1px solid var(--separator);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
+  transition: background 130ms ease, transform 90ms ease;
 }
 
 .learning-item-row:last-child { border-bottom: 0; }
-.learning-item-row:hover { background: rgba(219, 240, 250, 0.46); }
+.learning-item-row:hover { background: rgba(31, 54, 68, 0.045); }
+.learning-item-row:active { transform: scale(.995); }
+
+/* 列表行依次渐入。 */
+.learning-plan-list > * { animation: learning-row-enter .34s cubic-bezier(.2,.8,.2,1) backwards; }
+.learning-plan-list > *:nth-child(2) { animation-delay: 40ms; }
+.learning-plan-list > *:nth-child(3) { animation-delay: 80ms; }
+.learning-plan-list > *:nth-child(4) { animation-delay: 120ms; }
+.learning-plan-list > *:nth-child(n+5) { animation-delay: 160ms; }
+@keyframes learning-row-enter { from { opacity: 0; transform: translateY(6px); } }
 .learning-item-kind { display: grid; width: 30px; height: 30px; color: #08776f; background: rgba(22, 160, 133, 0.1); border-radius: 7px; font-size: 10.5px; font-weight: 700; place-items: center; }
 .learning-item-kind[data-kind="problem"] { color: #086bc2; background: rgba(8, 119, 230, 0.1); }
 .learning-item-copy { min-width: 0; }
-.learning-item-copy > strong { display: block; overflow: hidden; color: var(--text); font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.learning-item-category { display: block; margin-top: 4px; overflow: hidden; color: var(--text-tertiary); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.learning-item-copy > strong { display: block; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.learning-item-category { display: block; margin-top: 4px; overflow: hidden; color: var(--text-tertiary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 .learning-item-labels { display: flex; min-width: 0; gap: 3px; margin-top: 5px; overflow: hidden; }
 .learning-item-labels > span { flex: 0 0 auto; padding: 2px 4px; color: var(--text-tertiary); background: rgba(31, 75, 105, 0.055); border-radius: 4px; font-size: 10.5px; white-space: nowrap; }
 .learning-item-meta { display: grid; min-width: 0; justify-items: end; gap: 7px; }
@@ -5522,7 +5578,7 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
 .learning-mastery b,
 .learning-insight-lead b,
 .learning-distribution b,
-.learning-weak-concepts b { display: block; height: 100%; background: linear-gradient(90deg, #1b9c8b, #0877e6); border-radius: inherit; }
+.learning-weak-concepts b { display: block; height: 100%; background: #0e8f82; border-radius: inherit; }
 .learning-item-meta em { color: #b45f00; font-size: 10.5px; font-style: normal; font-weight: 650; }
 
 .learning-state { display: inline-flex; align-items: center; min-height: 18px; padding: 0 5px; color: #53616d; background: rgba(83, 97, 109, 0.08); border-radius: 5px; font-size: 10.5px; font-weight: 650; white-space: nowrap; }
@@ -5589,7 +5645,8 @@ body.is-fullscreen .learning-overlay .learning-workspace[data-learning-view="kno
 .learning-hub-nav label > svg { position: absolute; right: 9px; color: #718087; pointer-events: none; }
 .learning-hub-nav select:focus { border-color: rgba(55,119,120,.34); box-shadow: 0 0 0 2px rgba(55,119,120,.08); }
 .learning-filter-bar { display: flex; align-items: center; gap: 8px; }
-.learning-filter-bar label { display: flex; flex: 1; height: 34px; align-items: center; gap: 6px; padding: 0 9px; color: var(--text-tertiary); background: rgba(255, 255, 255, 0.66); border: 1px solid var(--separator); border-radius: 8px; box-shadow: inset 0 1px 0 rgba(255,255,255,.86); }
+.learning-filter-bar label { display: flex; flex: 1; height: 34px; align-items: center; gap: 6px; padding: 0 9px; color: var(--text-tertiary); background: rgba(255, 255, 255, 0.66); border: 1px solid var(--separator); border-radius: 10px; transition: border-color 140ms ease, box-shadow 140ms ease; }
+.learning-filter-bar label:focus-within { border-color: rgba(14, 143, 130, 0.3); box-shadow: 0 0 0 3px rgba(14, 143, 130, 0.08); }
 .learning-filter-bar input { flex: 1; min-width: 0; height: 100%; color: var(--text); background: transparent; border: 0; outline: 0; font-size: 11.5px; }
 .learning-filter-bar > span { color: var(--text-tertiary); font-size: 10.5px; white-space: nowrap; }
 .learning-label-filter { display: flex; gap: 4px; margin: 8px 0; padding-bottom: 3px; overflow-x: auto; scrollbar-width: none; }
@@ -6535,20 +6592,7 @@ body[data-keyboard-navigation="true"] .titlebar-actions .tb-btn:focus {
   .learning-map-inspector { min-height: 34px; padding-top: 4px; }
 }
 
-/* Keep every surface scrollable while removing platform scrollbar chrome. */
-* {
-  -ms-overflow-style: none !important;
-  scrollbar-width: none !important;
-}
-
-*::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-}
-
-.CodeMirror-vscrollbar,
-.CodeMirror-hscrollbar,
+/* 编辑器的填充块没有内容，留着只会在角上多两块灰。 */
 .CodeMirror-scrollbar-filler,
 .CodeMirror-gutter-filler {
   display: none !important;

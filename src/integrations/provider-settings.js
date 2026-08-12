@@ -1,7 +1,17 @@
 'use strict';
 
 const PROVIDER_IDS = Object.freeze(['deepseek', 'alibaba', 'opencode-go']);
-const TASK_MODEL_IDS = Object.freeze(['video', 'title', 'learning']);
+const TASK_MODEL_IDS = Object.freeze([
+  'conversation',
+  'title',
+  'video',
+  'learning',
+  'studyPlan',
+  'studyContent',
+  'studyAssessment',
+  'leetCodeAnalysis'
+]);
+const LEARNING_ROUTE_FALLBACKS = new Set(['studyPlan', 'studyContent', 'studyAssessment', 'leetCodeAnalysis']);
 const DEFAULT_CONTEXT_POLICY = Object.freeze({
   contextWindowTokens: 128000,
   reservedOutputTokens: 8192,
@@ -218,7 +228,11 @@ function nextCustomProviderId(name, providers = {}) {
 function sanitizeTaskModels(value, providers, activeProvider) {
   const source = value && typeof value === 'object' ? value : {};
   return Object.fromEntries(TASK_MODEL_IDS.map(taskId => {
-    const route = source[taskId] && typeof source[taskId] === 'object' ? source[taskId] : {};
+    const storedRoute = source[taskId];
+    const legacyRoute = LEARNING_ROUTE_FALLBACKS.has(taskId) ? source.learning : null;
+    const route = storedRoute && typeof storedRoute === 'object'
+      ? storedRoute
+      : (legacyRoute && typeof legacyRoute === 'object' ? legacyRoute : {});
     const requestedProvider = typeof route.providerId === 'string' ? route.providerId : '';
     const providerId = requestedProvider && providers[requestedProvider] ? requestedProvider : '';
     const model = providerId && typeof route.model === 'string'

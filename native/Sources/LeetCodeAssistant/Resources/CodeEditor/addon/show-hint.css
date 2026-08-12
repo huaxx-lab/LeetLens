@@ -1,0 +1,46 @@
+.CodeMirror-hints {
+  position: absolute;
+  z-index: 50;
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 6px;
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: 240px;
+  border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, Canvas 96%, transparent);
+  color: CanvasText;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, .16), 0 2px 8px rgba(0, 0, 0, .08);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  backdrop-filter: blur(22px) saturate(1.15);
+  font: 12.5px/1.35 -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.CodeMirror-hint {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 7px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: CanvasText;
+  cursor: pointer;
+}
+
+li.CodeMirror-hint-active {
+  background: color-mix(in srgb, Highlight 16%, transparent);
+  color: CanvasText;
+  font-weight: 600;
+}
+
+.CodeMirror-hint.is-remote-completion::after {
+  content: "服务器";
+  float: right;
+  margin-left: 18px;
+  color: color-mix(in srgb, CanvasText 46%, transparent);
+  font-size: 10.5px;
+  font-weight: 500;
+}

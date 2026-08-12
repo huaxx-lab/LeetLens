@@ -1,0 +1,525 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script>
+    window.addEventListener('error', event => {
+      const handler = window.webkit && window.webkit.messageHandlers.editorFailed;
+      if (handler) handler.postMessage({ message: event.message || `本地资源加载失败：${event.filename || '未知脚本'}` });
+    }, true);
+  </script>
+  <link rel="stylesheet" href="codemirror.css">
+  <link rel="stylesheet" href="show-hint.css">
+  <style>
+    :root { color-scheme: light dark; }
+    html, body, #editor { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+    .CodeMirror { width: 100%; height: 100%; background: transparent; color: CanvasText; font: 13px/1.58 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    /* 滚动条由注入的悬浮 thumb 接管 */
+    .CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler { display: none !important; }
+    .CodeMirror-gutters { background: rgba(127,127,127,.04); background: color-mix(in srgb, CanvasText 3%, transparent); border-right: 1px solid rgba(127,127,127,.16); border-right-color: color-mix(in srgb, CanvasText 9%, transparent); }
+    .CodeMirror-linenumber { color: #8a8a8a; color: color-mix(in srgb, CanvasText 38%, transparent); }
+    .CodeMirror-cursor { border-left-color: CanvasText; }
+    .CodeMirror-selected { background: rgba(10,122,255,.22) !important; background: color-mix(in srgb, Highlight 30%, transparent) !important; }
+    .CodeMirror-activeline-background { background: rgba(127,127,127,.045); background: color-mix(in srgb, CanvasText 3.5%, transparent); }
+    .cm-keyword { color: #a626a4; } .cm-def { color: #4078f2; } .cm-variable { color: CanvasText; }
+    .cm-variable-2 { color: #986801; } .cm-variable-3, .cm-type { color: #0184bc; }
+    .cm-number { color: #986801; } .cm-string, .cm-string-2 { color: #50a14f; }
+    .cm-comment { color: #7f848e; font-style: italic; }
+    .cm-operator { color: #383a42; }
+    .cm-builtin { color: #c18401; } .cm-meta { color: #4078f2; }
+    @media (prefers-color-scheme: dark) {
+      .cm-keyword { color: #c678dd; } .cm-def { color: #61afef; } .cm-variable-2 { color: #e5c07b; }
+      .cm-variable-3, .cm-type { color: #56b6c2; } .cm-number { color: #d19a66; }
+      .cm-string, .cm-string-2 { color: #98c379; } .cm-comment { color: #7f848e; }
+      .cm-operator { color: #abb2bf; } .cm-builtin { color: #e5c07b; } .cm-meta { color: #61afef; }
+    }
+    .diagnostic-gutter { width: 14px; }
+    .diagnostic-marker { color: #e45649; font: 11px/1 -apple-system,sans-serif; cursor: default; }
+    .diagnostic-line { background: color-mix(in srgb, #e45649 8%, transparent); }
+
+    /* 补全弹层：无轨道悬浮卡片，限高保证优先在光标下方展开 */
+    .CodeMirror-hints {
+      z-index: 10000 !important;
+      width: min(278px, calc(100vw - 20px)) !important;
+      min-width: min(224px, calc(100vw - 20px)) !important;
+      max-width: min(328px, calc(100vw - 20px)) !important;
+      max-height: min(224px, 36vh) !important;
+      margin: 4px 0 0 !important;
+      padding: 4px !important;
+      overflow: auto !important;
+      background: color-mix(in srgb, Canvas 94%, transparent) !important;
+      border: 1px solid color-mix(in srgb, CanvasText 14%, transparent) !important;
+      border-radius: 8px !important;
+      box-shadow: 0 9px 24px rgba(18,28,34,.16), 0 1px 4px rgba(18,28,34,.10) !important;
+      font: 12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace !important;
+    }
+    .CodeMirror-hint {
+      display: flex !important;
+      align-items: center;
+      gap: 7px;
+      padding: 3px 8px 3px 6px !important;
+      border-radius: 5px;
+      color: CanvasText !important;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .CodeMirror-hint::before {
+      flex: none;
+      width: 15px; height: 15px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font: 700 9px/1 -apple-system,sans-serif;
+      color: #fff;
+      background: #8a8a8e;
+    }
+    .CodeMirror-hint[data-completion-kind="method"]::before { content: "M"; background: #7a6cf5; }
+    .CodeMirror-hint[data-completion-kind="type"]::before { content: "T"; background: #0a84d0; }
+    .CodeMirror-hint[data-completion-kind="variable"]::before { content: "V"; background: #34a06a; }
+    .CodeMirror-hint[data-completion-kind="keyword"]::before { content: "K"; background: #b057c8; }
+    .CodeMirror-hint[data-completion-kind="property"]::before { content: "P"; background: #c07a2a; }
+    .CodeMirror-hint[data-completion-kind="symbol"]::before { content: "S"; background: #8a8a8e; }
+    .CodeMirror-hint-active {
+      background: color-mix(in srgb, Highlight 22%, transparent) !important;
+      color: CanvasText !important;
+    }
+    .code-completion-label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+    .CodeMirror-hint small {
+      margin-left: auto;
+      padding-left: 10px;
+      color: color-mix(in srgb, CanvasText 52%, transparent);
+      font: 10.5px/1.3 -apple-system,sans-serif;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .is-remote-completion .code-completion-label { font-weight: 500; }
+  </style>
+</head>
+<body>
+  <textarea id="editor"></textarea>
+  <script src="codemirror.js"></script>
+  <script src="clike.js"></script>
+  <script src="python.js"></script>
+  <script src="javascript.js"></script>
+  <script src="matchbrackets.js"></script>
+  <script src="closebrackets.js"></script>
+  <script src="show-hint.js"></script>
+  <script src="anyword-hint.js"></script>
+  <script>
+  (() => {
+    const modes = {
+      java: 'text/x-java', cpp: 'text/x-c++src', c: 'text/x-csrc',
+      python: 'python', python3: 'python', javascript: 'javascript', typescript: 'text/typescript'
+    };
+    const CODE_COMPLETIONS = {
+      java: [
+        ['class', '关键字'], ['public', '关键字'], ['private', '关键字'], ['static', '关键字'], ['final', '关键字'], ['return', '关键字'],
+        ['new', '关键字'], ['if', '关键字'], ['else', '关键字'], ['for', '关键字'], ['while', '关键字'], ['int', '类型'], ['long', '类型'],
+        ['double', '类型'], ['boolean', '类型'], ['String', '类型'], ['StringBuilder', '类型'], ['List', '类型'], ['ArrayList', '类型'],
+        ['Map', '类型'], ['HashMap', '类型'], ['Set', '类型'], ['HashSet', '类型'], ['Deque', '类型'], ['ArrayDeque', '类型'],
+        ['PriorityQueue', '类型'], ['length', '属性'], ['size()', '方法'], ['add()', '方法'], ['get()', '方法'], ['set()', '方法'],
+        ['put()', '方法'], ['contains()', '方法'], ['containsKey()', '方法'], ['getOrDefault()', '方法'], ['computeIfAbsent()', '方法'],
+        ['charAt()', '方法'], ['substring()', '方法'], ['toCharArray()', '方法'], ['append()', '方法'], ['reverse()', '方法'],
+        ['Arrays.sort()', '函数'], ['Arrays.fill()', '函数'], ['Collections.sort()', '函数'], ['Math.max()', '函数'], ['Math.min()', '函数'], ['Math.abs()', '函数']
+      ],
+      python: [
+        ['def', '关键字'], ['class', '关键字'], ['return', '关键字'], ['if', '关键字'], ['elif', '关键字'], ['else', '关键字'],
+        ['for', '关键字'], ['while', '关键字'], ['in', '关键字'], ['import', '关键字'], ['from', '关键字'], ['lambda', '关键字'],
+        ['len()', '函数'], ['range()', '函数'], ['enumerate()', '函数'], ['zip()', '函数'], ['sorted()', '函数'], ['sum()', '函数'],
+        ['min()', '函数'], ['max()', '函数'], ['abs()', '函数'], ['set()', '类型'], ['dict()', '类型'], ['list()', '类型'],
+        ['defaultdict()', '类型'], ['Counter()', '类型'], ['deque()', '类型'], ['append()', '方法'], ['popleft()', '方法'], ['heappush()', '函数'],
+        ['heappop()', '函数'], ['bisect_left()', '函数'], ['bisect_right()', '函数'], ['join()', '方法'], ['split()', '方法'], ['items()', '方法']
+      ],
+      cpp: [
+        ['class', '关键字'], ['public', '关键字'], ['private', '关键字'], ['return', '关键字'], ['auto', '关键字'], ['const', '关键字'],
+        ['if', '关键字'], ['else', '关键字'], ['for', '关键字'], ['while', '关键字'], ['int', '类型'], ['long long', '类型'],
+        ['string', '类型'], ['vector', '类型'], ['unordered_map', '类型'], ['unordered_set', '类型'], ['queue', '类型'], ['deque', '类型'],
+        ['stack', '类型'], ['priority_queue', '类型'], ['size()', '方法'], ['push_back()', '方法'], ['emplace_back()', '方法'], ['pop_back()', '方法'],
+        ['find()', '方法'], ['count()', '方法'], ['insert()', '方法'], ['erase()', '方法'], ['sort()', '函数'], ['reverse()', '函数'],
+        ['lower_bound()', '函数'], ['upper_bound()', '函数'], ['min()', '函数'], ['max()', '函数'], ['abs()', '函数'], ['accumulate()', '函数']
+      ],
+      javascript: [
+        ['const', '关键字'], ['let', '关键字'], ['function', '关键字'], ['class', '关键字'], ['return', '关键字'], ['if', '关键字'],
+        ['else', '关键字'], ['for', '关键字'], ['while', '关键字'], ['of', '关键字'], ['async', '关键字'], ['await', '关键字'],
+        ['Array', '类型'], ['Object', '类型'], ['Map', '类型'], ['Set', '类型'], ['length', '属性'], ['push()', '方法'],
+        ['pop()', '方法'], ['shift()', '方法'], ['unshift()', '方法'], ['slice()', '方法'], ['splice()', '方法'], ['includes()', '方法'],
+        ['indexOf()', '方法'], ['map()', '方法'], ['filter()', '方法'], ['reduce()', '方法'], ['sort()', '方法'], ['forEach()', '方法'],
+        ['Object.keys()', '函数'], ['Object.entries()', '函数'], ['Math.max()', '函数'], ['Math.min()', '函数'], ['Math.abs()', '函数']
+      ],
+      typescript: [
+        ['interface', '关键字'], ['type', '关键字'], ['const', '关键字'], ['let', '关键字'], ['function', '关键字'], ['class', '关键字'],
+        ['public', '关键字'], ['private', '关键字'], ['readonly', '关键字'], ['return', '关键字'], ['string', '类型'], ['number', '类型'],
+        ['boolean', '类型'], ['Array', '类型'], ['Record', '类型'], ['Map', '类型'], ['Set', '类型'], ['length', '属性'],
+        ['push()', '方法'], ['pop()', '方法'], ['slice()', '方法'], ['includes()', '方法'], ['map()', '方法'], ['filter()', '方法'],
+        ['reduce()', '方法'], ['sort()', '方法'], ['Object.keys()', '函数'], ['Object.entries()', '函数'], ['Math.max()', '函数'], ['Math.min()', '函数']
+      ]
+    };
+    const MEMBER_COMPLETIONS = {
+      java: {
+        arrays: ['sort()', 'parallelSort()', 'binarySearch()', 'fill()', 'copyOf()', 'copyOfRange()', 'equals()', 'deepEquals()', 'asList()', 'stream()', 'toString()', 'deepToString()', 'setAll()', 'parallelPrefix()'],
+        collections: ['sort()', 'reverse()', 'binarySearch()', 'max()', 'min()', 'frequency()', 'swap()', 'fill()', 'shuffle()', 'unmodifiableList()'],
+        math: ['max()', 'min()', 'abs()', 'ceil()', 'floor()', 'round()', 'sqrt()', 'pow()', 'log()', 'random()'],
+        string: ['valueOf()', 'format()', 'join()', 'compareTo()', 'charAt()', 'substring()', 'split()', 'startsWith()', 'endsWith()', 'indexOf()', 'toCharArray()'],
+        array: ['length', 'clone()'],
+        list: ['size()', 'isEmpty()', 'add()', 'addAll()', 'get()', 'set()', 'remove()', 'contains()', 'indexOf()', 'subList()', 'sort()', 'stream()', 'clear()'],
+        map: ['size()', 'isEmpty()', 'put()', 'putAll()', 'get()', 'getOrDefault()', 'containsKey()', 'containsValue()', 'computeIfAbsent()', 'keySet()', 'values()', 'entrySet()', 'remove()', 'clear()'],
+        set: ['size()', 'isEmpty()', 'add()', 'addAll()', 'contains()', 'remove()', 'retainAll()', 'stream()', 'clear()'],
+        deque: ['size()', 'isEmpty()', 'offer()', 'offerFirst()', 'offerLast()', 'peek()', 'peekFirst()', 'peekLast()', 'poll()', 'pollFirst()', 'pollLast()', 'push()', 'pop()', 'clear()'],
+        '*': ['size()', 'isEmpty()', 'add()', 'get()', 'set()', 'put()', 'remove()', 'contains()', 'containsKey()', 'getOrDefault()', 'computeIfAbsent()', 'peek()', 'poll()', 'offer()', 'push()', 'pop()', 'clear()']
+      },
+      javascript: {
+        math: ['max()', 'min()', 'abs()', 'ceil()', 'floor()', 'round()', 'sqrt()', 'pow()', 'random()'],
+        object: ['keys()', 'values()', 'entries()', 'assign()', 'fromEntries()'],
+        json: ['parse()', 'stringify()'],
+        '*': ['push()', 'pop()', 'shift()', 'unshift()', 'slice()', 'splice()', 'includes()', 'indexOf()', 'map()', 'filter()', 'reduce()', 'sort()', 'forEach()', 'join()']
+      },
+      typescript: {
+        math: ['max()', 'min()', 'abs()', 'ceil()', 'floor()', 'round()', 'sqrt()', 'pow()', 'random()'],
+        object: ['keys()', 'values()', 'entries()', 'assign()', 'fromEntries()'],
+        '*': ['push()', 'pop()', 'slice()', 'includes()', 'map()', 'filter()', 'reduce()', 'sort()', 'forEach()', 'join()']
+      }
+    };
+    const JAVA_CONSTRUCTOR_COMPLETIONS = {
+      list: [['ArrayList<>()', 'List 实现'], ['LinkedList<>()', 'List 实现']],
+      set: [['HashSet<>()', 'Set 实现'], ['TreeSet<>()', '有序 Set']],
+      map: [['HashMap<>()', 'Map 实现'], ['TreeMap<>()', '有序 Map']],
+      deque: [['ArrayDeque<>()', 'Deque 实现'], ['LinkedList<>()', 'Deque 实现']],
+      default: [
+        ['ArrayList<>()', '集合'], ['HashMap<>()', '键值映射'], ['HashSet<>()', '集合'],
+        ['ArrayDeque<>()', '双端队列'], ['PriorityQueue<>()', '优先队列'], ['StringBuilder()', '字符串构建器']
+      ]
+    };
+
+    let language = 'java';
+    let changeTimer = 0;
+    let diagnosticTimer = 0;
+    let remoteTimer = 0;
+    let completionGeneration = 0;
+    let completionSnapshot = null;
+    const editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
+      lineNumbers: true,
+      gutters: ['CodeMirror-linenumbers', 'diagnostic-gutter'],
+      mode: modes.java,
+      indentUnit: 4,
+      tabSize: 4,
+      indentWithTabs: false,
+      smartIndent: true,
+      electricChars: true,
+      matchBrackets: true,
+      autoCloseBrackets: true,
+      styleActiveLine: true,
+      lineWrapping: false,
+      extraKeys: {
+        'Tab': cm => cm.somethingSelected() ? cm.indentSelection('add') : cm.replaceSelection(' '.repeat(cm.getOption('indentUnit')), 'end', '+input'),
+        'Shift-Tab': cm => cm.indentSelection('subtract'),
+        'Cmd-Space': complete,
+        'Ctrl-Space': complete
+      }
+    });
+
+    function post(name, payload) {
+      const handler = window.webkit && window.webkit.messageHandlers[name];
+      if (handler) handler.postMessage(payload);
+    }
+
+    function normalizedCompletionLanguage(value) {
+      const lang = String(value || '').toLowerCase();
+      if (lang === 'python3' || lang.startsWith('python')) return 'python';
+      if (lang === 'c++' || lang.startsWith('cpp')) return 'cpp';
+      if (lang === 'js' || lang.startsWith('javascript')) return 'javascript';
+      if (lang === 'ts' || lang.startsWith('typescript')) return 'typescript';
+      return lang;
+    }
+
+    function renderCodeCompletion(element, _data, completion) {
+      const completionText = completion.displayText || completion.text;
+      element.dataset.completionKind = completion.kind || (completionText.includes('(') ? 'method' : 'symbol');
+      const label = document.createElement('span');
+      label.className = 'code-completion-label';
+      label.textContent = completionText;
+      element.appendChild(label);
+      if (!completion.detail) return;
+      const detail = document.createElement('small');
+      detail.textContent = completion.detail;
+      element.appendChild(detail);
+    }
+
+    function completionKind(detail, text) {
+      if (detail === '关键字') return 'keyword';
+      if (detail === '类型') return 'type';
+      if (detail === '局部变量' || detail === '方法参数' || detail === '当前文件') return 'variable';
+      if (detail === '属性') return 'property';
+      return String(text || '').includes('(') ? 'method' : 'symbol';
+    }
+
+    function remoteCompletionKind(kind) {
+      const value = Number(kind);
+      if ([2, 3, 4].includes(value)) return 'method';
+      if (value === 5) return 'property';
+      if ([6, 12, 13].includes(value)) return 'variable';
+      if ([7, 8, 9, 22, 25].includes(value)) return 'type';
+      if (value === 14) return 'keyword';
+      return 'symbol';
+    }
+
+    function normalizedJavaType(type) {
+      const source = String(type || '').replace(/\s+/g, '');
+      const base = source.replace(/<.*>/, '').replace(/\[\]$/, '').split('.').pop().toLowerCase();
+      if (source.endsWith('[]')) return 'array';
+      if (['list', 'arraylist', 'linkedlist'].includes(base)) return 'list';
+      if (['map', 'hashmap', 'treemap', 'linkedhashmap'].includes(base)) return 'map';
+      if (['set', 'hashset', 'treeset', 'linkedhashset'].includes(base)) return 'set';
+      if (['deque', 'queue', 'arraydeque', 'priorityqueue'].includes(base)) return 'deque';
+      if (base === 'string' || base === 'stringbuilder') return 'string';
+      return base;
+    }
+
+    function javaSymbolsBeforeCursor(cm, cursor) {
+      const lines = cm.getValue().split('\n');
+      const source = [...lines.slice(0, cursor.line), lines[cursor.line].slice(0, cursor.ch)].join('\n');
+      const variables = new Map();
+      const declaration = /\b([A-Za-z_$][\w$]*(?:\s*<[^;{}()=]+>)?(?:\s*\[\])*)\s+([A-Za-z_$][\w$]*)\s*(?=[=,;:)])/g;
+      const primitives = new Set(['byte', 'short', 'int', 'long', 'float', 'double', 'boolean', 'char', 'var']);
+      for (const match of source.matchAll(declaration)) {
+        const rawType = match[1].trim();
+        const baseType = rawType.replace(/<.*>/, '').replace(/\[\]$/, '').trim();
+        if (!primitives.has(baseType) && !/^[A-Z]/.test(baseType)) continue;
+        variables.set(match[2], { name: match[2], type: rawType, detail: match[0].trim().endsWith(')') ? '方法参数' : '局部变量' });
+      }
+      const methods = new Set();
+      const methodPattern = /\b(?:public|protected|private|static|final|synchronized|abstract|native|\s)+[A-Za-z_$][\w$<>, ?\[\].]*\s+([A-Za-z_$][\w$]*)\s*\([^;{}]*\)\s*\{/g;
+      for (const match of source.matchAll(methodPattern)) methods.add(match[1]);
+      return { source, variables, methods };
+    }
+
+    function javaConstructorCompletions(lineBeforeCursor, prefix) {
+      const assignment = lineBeforeCursor.match(/([A-Za-z_$][\w$]*(?:\s*<[^>]+>)?(?:\s*\[\])?)\s+[A-Za-z_$][\w$]*\s*=\s*new\s+(?:[A-Za-z_$][\w$]*)?$/);
+      const expectedType = normalizedJavaType(assignment && assignment[1]);
+      const definitions = JAVA_CONSTRUCTOR_COMPLETIONS[expectedType] || JAVA_CONSTRUCTOR_COMPLETIONS.default;
+      return definitions
+        .filter(([text]) => !prefix || text.toLowerCase().startsWith(prefix))
+        .map(([text, detail]) => ({ text, displayText: text, detail, kind: 'type', render: renderCodeCompletion }));
+    }
+
+    function codeCompletionHint(cm, hintLanguage) {
+      const cursor = cm.getCursor();
+      const line = cm.getLine(cursor.line);
+      const lineBeforeCursor = line.slice(0, cursor.ch);
+      const memberMatch = lineBeforeCursor.match(/([A-Za-z_$][\w$]*)\.([\w$]*)$/);
+      const normalizedLanguage = normalizedCompletionLanguage(hintLanguage);
+      if (memberMatch) {
+        const ownerName = memberMatch[1];
+        let owner = ownerName.toLowerCase();
+        const memberPrefix = memberMatch[2].toLowerCase();
+        const languageMembers = MEMBER_COMPLETIONS[normalizedLanguage] || {};
+        let detail = ownerName;
+        if (normalizedLanguage === 'java') {
+          const symbol = javaSymbolsBeforeCursor(cm, cursor).variables.get(ownerName);
+          if (symbol) {
+            owner = normalizedJavaType(symbol.type);
+            detail = symbol.type.replace(/\s+/g, ' ');
+          }
+        }
+        const members = [...new Set(languageMembers[owner] || languageMembers['*'] || [])]
+          .filter(text => !memberPrefix || text.toLowerCase().startsWith(memberPrefix))
+          .map(text => ({ text, displayText: text, detail: text.includes('(') ? detail : '属性', kind: text.includes('(') ? 'method' : 'property', render: renderCodeCompletion }));
+        return { list: members, from: CodeMirror.Pos(cursor.line, cursor.ch - memberMatch[2].length), to: cursor };
+      }
+      const constructorMatch = normalizedLanguage === 'java' && lineBeforeCursor.match(/\bnew\s+([A-Za-z_$][\w$]*)?$/);
+      if (constructorMatch) {
+        const prefix = String(constructorMatch[1] || '').toLowerCase();
+        return {
+          list: javaConstructorCompletions(lineBeforeCursor, prefix),
+          from: CodeMirror.Pos(cursor.line, cursor.ch - prefix.length),
+          to: cursor
+        };
+      }
+      let start = cursor.ch;
+      while (start && /[\w$+#-]/.test(line.charAt(start - 1))) start -= 1;
+      const prefix = line.slice(start, cursor.ch).toLowerCase();
+      const definitions = CODE_COMPLETIONS[normalizedLanguage] || [];
+      const builtIns = definitions
+        .filter(([text]) => !prefix || text.toLowerCase().startsWith(prefix))
+        .map(([text, detail]) => ({ text, displayText: text, detail, kind: completionKind(detail, text), render: renderCodeCompletion }));
+      const anyword = CodeMirror.hint.anyword(cm, { word: /[\w$]+/, range: 500 });
+      const scoped = [];
+      if (normalizedLanguage === 'java') {
+        const symbols = javaSymbolsBeforeCursor(cm, cursor);
+        for (const symbol of symbols.variables.values()) {
+          if (!prefix || symbol.name.toLowerCase().startsWith(prefix)) {
+            scoped.push({ text: symbol.name, displayText: symbol.name, detail: symbol.type, kind: 'variable', render: renderCodeCompletion });
+          }
+        }
+        for (const method of symbols.methods) {
+          const text = `${method}()`;
+          if (!prefix || method.toLowerCase().startsWith(prefix)) {
+            scoped.push({ text, displayText: text, detail: '当前类', kind: 'method', render: renderCodeCompletion });
+          }
+        }
+      }
+      const seen = new Set();
+      const list = [...scoped, ...(anyword.list || []).map(item => typeof item === 'string'
+        ? { text: item, displayText: item, detail: '当前文件', kind: 'variable', render: renderCodeCompletion }
+        : item), ...builtIns].filter(item => {
+        const text = item && item.text;
+        if (!text || seen.has(text) || (prefix && !text.toLowerCase().startsWith(prefix))) return false;
+        seen.add(text);
+        return true;
+      });
+      return { ...anyword, list, from: CodeMirror.Pos(cursor.line, start), to: cursor };
+    }
+
+    function remoteCompletionText(item) {
+      return String(item.insertText || item.text || item.label || '')
+        .replace(/\$\{\d+:([^}]*)\}/g, '$1')
+        .replace(/\$\{\d+\}/g, '')
+        .replace(/\$\d+/g, '');
+    }
+
+    function mergeRemoteCompletions(local, remoteItems) {
+      const seen = new Set();
+      const list = [];
+      for (const item of (local && local.list) || []) {
+        const text = typeof item === 'string' ? item : item && item.text;
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        list.push(item);
+      }
+      for (const item of Array.isArray(remoteItems) ? remoteItems : []) {
+        const text = remoteCompletionText(item);
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        list.push({
+          text,
+          displayText: String(item.label || text),
+          detail: String(item.detail || 'Java 语义'),
+          kind: remoteCompletionKind(item.kind),
+          render: renderCodeCompletion,
+          className: 'is-remote-completion'
+        });
+      }
+      return { ...local, list };
+    }
+
+    function showCompletion(cm, remoteItems = []) {
+      cm.showHint({
+        hint: instance => mergeRemoteCompletions(codeCompletionHint(instance, language), remoteItems),
+        completeSingle: false,
+        closeOnUnfocus: true,
+        alignWithWord: true,
+        container: document.body
+      });
+    }
+
+    function complete(cm) {
+      completionGeneration += 1;
+      clearTimeout(remoteTimer);
+      showCompletion(cm);
+      if (language !== 'java') return;
+      const cursor = cm.getCursor();
+      const code = cm.getValue();
+      const requestID = completionGeneration;
+      completionSnapshot = { requestID, code, line: cursor.line, character: cursor.ch };
+      remoteTimer = setTimeout(() => {
+        post('remoteCompletionRequested', { requestID, code, line: cursor.line, character: cursor.ch, language });
+      }, 70);
+    }
+
+    function scanDiagnostics(source) {
+      const issues = [];
+      const stack = [];
+      const pairs = { ')': '(', ']': '[', '}': '{' };
+      const lines = source.split('\n');
+      let quote = '', quoteLine = 0, escaped = false, blockComment = false;
+      lines.forEach((line, lineIndex) => {
+        let lineComment = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i], next = line[i + 1];
+          if (lineComment) break;
+          if (blockComment) { if (ch === '*' && next === '/') { blockComment = false; i++; } continue; }
+          if (quote) {
+            if (escaped) { escaped = false; continue; }
+            if (ch === '\\') { escaped = true; continue; }
+            if (ch === quote) { quote = ''; continue; }
+            continue;
+          }
+          if (ch === '/' && next === '/') { lineComment = true; break; }
+          if (ch === '/' && next === '*') { blockComment = true; i++; continue; }
+          if (ch === '"' || ch === "'") { quote = ch; quoteLine = lineIndex; continue; }
+          if ('([{'.includes(ch)) stack.push({ ch, line: lineIndex });
+          else if (pairs[ch]) {
+            const open = stack.pop();
+            if (!open || open.ch !== pairs[ch]) issues.push({ line: lineIndex, message: `括号 ${ch} 没有匹配的开始符号` });
+          }
+        }
+        if (quote && language !== 'python' && language !== 'python3') {
+          issues.push({ line: quoteLine, message: '字符串未在本行闭合' }); quote = ''; escaped = false;
+        }
+      });
+      if (blockComment) issues.push({ line: Math.max(0, lines.length - 1), message: '块注释未闭合' });
+      if (quote) issues.push({ line: quoteLine, message: '字符串未闭合' });
+      stack.forEach(open => issues.push({ line: open.line, message: `括号 ${open.ch} 未闭合` }));
+      return issues.slice(0, 24);
+    }
+
+    function updateDiagnostics() {
+      editor.clearGutter('diagnostic-gutter');
+      editor.eachLine(handle => editor.removeLineClass(handle, 'background', 'diagnostic-line'));
+      const issues = scanDiagnostics(editor.getValue());
+      const seen = new Set();
+      issues.forEach(issue => {
+        if (seen.has(issue.line)) return; seen.add(issue.line);
+        const marker = document.createElement('span'); marker.className = 'diagnostic-marker'; marker.textContent = '●'; marker.title = issue.message;
+        editor.setGutterMarker(issue.line, 'diagnostic-gutter', marker);
+        editor.addLineClass(issue.line, 'background', 'diagnostic-line');
+      });
+      post('editorDiagnostics', { issues });
+    }
+
+    // 宿主要按内容高度自适应外框，否则写死的高度会把代码结尾裁掉。
+    const contentHeight = () => Math.ceil(editor.getScrollInfo().height);
+
+    editor.on('change', () => {
+      clearTimeout(changeTimer); clearTimeout(diagnosticTimer);
+      changeTimer = setTimeout(() => post('editorChanged', { code: editor.getValue(), contentHeight: contentHeight() }), 40);
+      diagnosticTimer = setTimeout(updateDiagnostics, 160);
+    });
+
+    editor.on('inputRead', (cm, change) => {
+      const inserted = (change.text || []).join('\n');
+      const cursor = cm.getCursor();
+      const before = cm.getLine(cursor.line).slice(0, cursor.ch);
+      const prefix = before.match(/[\w$]+$/)?.[0] || '';
+      const constructorContext = language === 'java' && /\bnew\s+(?:[A-Za-z_$][\w$]*)?$/.test(before);
+      if (/[\w$.]$/.test(inserted) && (prefix.length >= 1 || before.endsWith('.'))) complete(cm);
+      else if (/\s$/.test(inserted) && constructorContext) complete(cm);
+      else { completionGeneration += 1; clearTimeout(remoteTimer); }
+    });
+
+    window.editorBridge = {
+      setValue(value, lang) {
+        language = modes[lang] ? lang : 'java';
+        editor.setOption('mode', modes[lang] || modes.java);
+        if (editor.getValue() !== value) editor.setValue(value || '');
+        updateDiagnostics(); editor.refresh();
+        // 值没变时不会触发 change，高度也就报不上去；这里补一次。
+        post('editorChanged', { code: editor.getValue(), contentHeight: contentHeight() });
+      },
+      setLanguage(lang) { language = modes[lang] ? lang : 'java'; editor.setOption('mode', modes[lang] || modes.java); updateDiagnostics(); },
+      applyRemoteCompletions(requestID, items) {
+        if (!completionSnapshot || completionSnapshot.requestID !== requestID || completionGeneration !== requestID) return;
+        const cursor = editor.getCursor();
+        if (editor.getValue() !== completionSnapshot.code || cursor.line !== completionSnapshot.line || cursor.ch !== completionSnapshot.character) return;
+        showCompletion(editor, Array.isArray(items) ? items : []);
+      },
+      format() { editor.operation(() => { for (let i = 0; i < editor.lineCount(); i++) editor.indentLine(i, 'smart'); }); editor.focus(); },
+      undo() { editor.undo(); editor.focus(); },
+      redo() { editor.redo(); editor.focus(); }
+    };
+    post('editorReady', { mode: modes[language], lineCount: editor.lineCount(), contentHeight: contentHeight() });
+  })();
+  </script>
+</body>
+</html>

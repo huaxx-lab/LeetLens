@@ -2,7 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { analysisFingerprint, normalizeSubmissionDetail, queueSubmissionAnalysis, sanitizeAnalysisState } = require('../src/integrations/leetcode-analysis');
+const {
+  analysisFingerprint,
+  markAnalysisDead,
+  normalizeSubmissionDetail,
+  queueSubmissionAnalysis,
+  sanitizeAnalysisState
+} = require('../src/integrations/leetcode-analysis');
 
 test('submission details preserve bounded official performance percentiles', () => {
   const detail = normalizeSubmissionDetail({
@@ -83,4 +89,32 @@ test('analysis state preserves retry diagnostics and summary ordering metadata',
   assert.equal(state.queue['two-sum'].lastError, 'detail unavailable');
   assert.equal(state.records['two-sum'].latestSubmissionAt, 900);
   assert.equal(state.records['two-sum'].summaryUpdatedAt, 1000);
+});
+
+test('dead-lettered submissions leave the active queue and stay out of incremental sync', () => {
+  let state = queueSubmissionAnalysis({}, [
+    { id: '1', titleSlug: 'two-sum', activityType: 'attempt' },
+    { id: '2', titleSlug: 'two-sum', activityType: 'attempt' }
+  ]);
+  state = markAnalysisDead(state, 'two-sum', ['1'], {
+    reason: 'detail_unavailable',
+    error: 'detail unavailable',
+    failedAt: 100,
+    lastAttemptAt: 90
+  });
+  assert.deepEqual(state.queue['two-sum'].submissionIds, ['2']);
+  assert.deepEqual(state.dead['two-sum'].submissionIds, ['1']);
+  assert.equal(state.dead['two-sum'].lastError, 'detail unavailable');
+
+  state = queueSubmissionAnalysis(state, [{ id: '1', titleSlug: 'two-sum', activityType: 'attempt' }]);
+  assert.deepEqual(state.queue['two-sum'].submissionIds, ['2']);
+});
+
+test('an explicit on-demand analysis can revive a dead-lettered submission', () => {
+  let state = markAnalysisDead({}, 'two-sum', ['1'], { failedAt: 100 });
+  state = queueSubmissionAnalysis(state, [
+    { id: '1', titleSlug: 'two-sum', activityType: 'historical' }
+  ], { includeHistorical: true, reason: 'on_demand' });
+  assert.deepEqual(state.queue['two-sum'].submissionIds, ['1']);
+  assert.equal(state.dead['two-sum'], undefined);
 });

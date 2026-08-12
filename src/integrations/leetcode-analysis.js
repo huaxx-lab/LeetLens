@@ -84,6 +84,21 @@ function sanitizeAnalysisState(value) {
       reason: raw.reason === 'on_demand' ? 'on_demand' : 'incremental'
     };
   }
+  const dead = {};
+  for (const [key, raw] of Object.entries(source.dead || {}).slice(-200)) {
+    const slug = validSlug(key);
+    if (!slug || !raw || typeof raw !== 'object') continue;
+    const submissionIds = [...new Set((Array.isArray(raw.submissionIds) ? raw.submissionIds : [])
+      .map(id => cleanText(id, 80)).filter(Boolean))].slice(-80);
+    if (!submissionIds.length) continue;
+    dead[slug] = {
+      submissionIds,
+      failedAt: Math.max(0, Number(raw.failedAt) || Date.now()),
+      lastAttemptAt: Math.max(0, Number(raw.lastAttemptAt) || 0),
+      lastError: cleanText(raw.lastError, 300),
+      reason: raw.reason === 'detail_unavailable' ? 'detail_unavailable' : 'retry_exhausted'
+    };
+  }
   const records = {};
   for (const [key, raw] of Object.entries(source.records || {})) {
     const slug = validSlug(key);
@@ -124,7 +139,7 @@ function sanitizeAnalysisState(value) {
       updatedAt: Math.max(0, Number(raw.updatedAt) || 0)
     };
   }
-  return { version: ANALYSIS_VERSION, queue, records };
+  return { version: ANALYSIS_VERSION, queue, dead, records };
 }
 
 function queueSubmissionAnalysis(value, submissions, { includeHistorical = false, reason = 'incremental' } = {}) {
@@ -137,11 +152,17 @@ function queueSubmissionAnalysis(value, submissions, { includeHistorical = false
     const id = cleanText(submission?.id, 80);
     if (!slug || !id || (!includeHistorical && submission.activityType === 'historical')) continue;
     const analyzed = new Set(state.records[slug]?.analyzedSubmissionIds || []);
-    if (analyzed.has(id)) continue;
+    const dead = new Set(state.dead[slug]?.submissionIds || []);
+    if (analyzed.has(id) || (reason !== 'on_demand' && dead.has(id))) continue;
     if (!grouped.has(slug)) grouped.set(slug, []);
     grouped.get(slug).push(id);
   }
   for (const [slug, ids] of grouped) {
+    if (reason === 'on_demand' && state.dead[slug]) {
+      const revived = new Set(ids);
+      state.dead[slug].submissionIds = state.dead[slug].submissionIds.filter(id => !revived.has(id));
+      if (!state.dead[slug].submissionIds.length) delete state.dead[slug];
+    }
     const previous = state.queue[slug] || { submissionIds: [], queuedAt: Date.now(), attempts: 0, nextAttemptAt: 0 };
     state.queue[slug] = {
       ...previous,
@@ -154,10 +175,40 @@ function queueSubmissionAnalysis(value, submissions, { includeHistorical = false
   return state;
 }
 
+function markAnalysisDead(value, titleSlug, submissionIds, {
+  reason = 'retry_exhausted',
+  error = '',
+  failedAt = Date.now(),
+  lastAttemptAt = Date.now()
+} = {}) {
+  const state = sanitizeAnalysisState(value);
+  const slug = validSlug(titleSlug);
+  const ids = [...new Set((Array.isArray(submissionIds) ? submissionIds : [])
+    .map(id => cleanText(id, 80)).filter(Boolean))];
+  if (!slug || !ids.length) return state;
+  const previous = state.dead[slug] || { submissionIds: [] };
+  state.dead[slug] = {
+    submissionIds: [...new Set([...previous.submissionIds, ...ids])].slice(-80),
+    failedAt: Math.max(0, Number(failedAt) || Date.now()),
+    lastAttemptAt: Math.max(0, Number(lastAttemptAt) || 0),
+    lastError: cleanText(error, 300),
+    reason: reason === 'detail_unavailable' ? 'detail_unavailable' : 'retry_exhausted'
+  };
+  const active = state.queue[slug];
+  if (active) {
+    const deadIds = new Set(ids);
+    active.submissionIds = active.submissionIds.filter(id => !deadIds.has(id));
+    for (const id of ids) delete active.failedSubmissionAttempts[id];
+    if (!active.submissionIds.length) delete state.queue[slug];
+  }
+  return state;
+}
+
 module.exports = {
   ANALYSIS_VERSION,
   analysisFingerprint,
   detailHash,
+  markAnalysisDead,
   normalizeSubmissionDetail,
   queueSubmissionAnalysis,
   sanitizeAnalysisState

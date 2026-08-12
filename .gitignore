@@ -1,8 +1,20 @@
 # Dependencies and generated assets
 node_modules/
+# 例外：原生版把 ts-fsrs 作为资源随包发布，克隆下来就得能构建。
+!native/Sources/LeetCodeAssistant/Resources/LearningBridge/node_modules/
+!native/Sources/LeetCodeAssistant/Resources/LearningBridge/node_modules/**
 .renderer-assets/
 build/
 dist.noindex/
+
+# Swift Package Manager / Xcode
+native/.build/
+.swiftpm/
+*.xcuserdatad/
+
+# 本地调试产物
+output/
+.playwright-cli/
 
 # Local configuration and secrets
 .env
