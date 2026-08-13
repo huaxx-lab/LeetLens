@@ -32,7 +32,7 @@
   </a>
 </p>
 
-<p align="center"><strong>⭐ 觉得有用就点个 Star，这是我继续写下去最实在的动力。</strong></p>
+<p align="center"><strong>⭐ 觉得有用的话帮忙点个 Star，这是我继续写下去最实在的动力。</strong></p>
 
 ---
 
