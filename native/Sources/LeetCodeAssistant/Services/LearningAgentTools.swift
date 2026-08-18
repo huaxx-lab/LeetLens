@@ -173,6 +173,7 @@ enum LearningAgentTools {
             description: """
             检索 B 站公开视频，按相关度返回算法、数据结构或题目讲解。用户问"找个视频讲讲"、"有没有 B 站教程"时调用；
             返回标题、作者、时长、播放量和可直接打开的链接。只读取公开搜索结果，不登录、不点赞、不上传。
+            一次调用即可；结果为空时直接如实说明，不要换关键词反复重试。
             """,
             parametersJSON: schema(
                 [
@@ -620,7 +621,9 @@ enum LearningAgentTools {
             "title": "B 站视频",
             "layout": Layout.video.rawValue,
             "query": query,
-            "summary": items.isEmpty ? "没有找到「\(query)」的公开视频" : "找到 \(items.count) 个相关视频",
+            "summary": items.isEmpty
+                ? "没有找到「\(query)」的公开视频（未连接哔哩哔哩账户时检索可能受限，可在设置里连接）"
+                : "找到 \(items.count) 个相关视频",
             "items": Array(items)
         ])
     }
