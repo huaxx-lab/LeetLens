@@ -94,11 +94,13 @@ struct RootWorkspaceView: View {
                 workspace.handleFullScreenChange(isFullScreen)
             }
         }
-        // 全屏时系统会收起红绿灯，最左一列的列头就不必再为它留出左内缩。
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+        // 用 will* 而不是 did*：did* 在系统那段窗口动画**跑完之后**才发，
+        // 顶栏布局（上移一个标题栏、左内缩 78pt、两处 offset）会在画面已经稳定
+        // 之后突然整体跳一下。will* 在动画开始时就发，这一跳就藏在系统动画里。
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
             workspace.handleFullScreenChange(true)
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in
             workspace.handleFullScreenChange(false)
         }
         // 内容一路画到窗口顶端，列头才能和红绿灯同处一行（窗口态下标题栏那 28pt
@@ -171,8 +173,8 @@ struct RootWorkspaceView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
-        // hiddenTitleBar 仍会为红绿灯保留 28pt 安全区。把整个分栏内容仅在窗口态
-        // 上移这 28pt：各列头与红绿灯合并为一行，正文也紧接在同一条分隔线下。
+        // hiddenTitleBar 仍会为红绿灯保留一段标题栏安全区。把整个分栏内容仅在窗口态
+        // 上移这一段：各列头与红绿灯合并为一行，正文也紧接在同一条分隔线下。
         // 全屏时该安全区不存在，不能继续上移。
         .padding(
             .top,
@@ -270,7 +272,11 @@ private struct DetailColumnHeader: View {
                 }
 
                 if showsNavigationChrome {
-                    navigationChrome
+                    // 全屏且侧栏展开时，前进/后退已经并到侧栏列头那一组里了。
+                    if !(workspace.isWindowFullScreen && workspace.isSidebarPresented) {
+                        historyChrome
+                    }
+                    newConversationButton
                     titleChrome
                 }
             }
@@ -286,14 +292,17 @@ private struct DetailColumnHeader: View {
         .padding(.leading, workspace.isSidebarPresented ? AppDesign.Spacing.xs : workspace.headerLeadingInset)
         .padding(.trailing, AppDesign.Spacing.xs)
         .frame(height: AppDesign.Size.columnHeader)
+        // 窗口态和红绿灯同一条中线：实测本行控件未偏移时中心 55、红绿灯 49。
+        // 全屏没有红绿灯，不偏移（侧栏那一组会来对齐本行）。
+        .offset(y: workspace.isWindowFullScreen ? 0 : -6)
     }
 
-    private var leadingAlignmentOffset: CGFloat {
-        (!workspace.isSidebarPresented && !workspace.isWindowFullScreen) ? -2 : 0
-    }
+    /// 整行的对齐统一由列头末尾那个 offset 负责，这里不再按侧栏状态另外偏移——
+    /// 否则展开/收起侧栏时，同一行控件会在 49 和 51 两个中线之间跳。
+    private var leadingAlignmentOffset: CGFloat { 0 }
 
     @ViewBuilder
-    private var navigationChrome: some View {
+    private var historyChrome: some View {
         headerButton("chevron.left", help: "后退", disabled: !workspace.canNavigateBack) {
             withAnimation(AppDesign.Motion.selection) { workspace.navigateBack() }
         }
@@ -303,7 +312,9 @@ private struct DetailColumnHeader: View {
             withAnimation(AppDesign.Motion.selection) { workspace.navigateForward() }
         }
         .keyboardShortcut("]", modifiers: .command)
+    }
 
+    private var newConversationButton: some View {
         headerButton("square.and.pencil", help: "新建会话") {
             withAnimation(AppDesign.Motion.selection) {
                 workspace.selectedConversationID = nil
@@ -490,13 +501,41 @@ private struct WindowChromeConfiguration: NSViewRepresentable {
 
         private var toolbarObservation: NSKeyValueObservation?
         private var isRemovingToolbar = false
+        /// 全屏期间不许动 toolbar，见 `removeToolbar`。用通知而不是只读 styleMask：
+        /// 进入全屏的过程中 AppKit 会先装 toolbar、后置上 `.fullScreen` 位，
+        /// 只看 styleMask 会在那一帧漏判，照样把它拆掉。
+        private var isFullScreen = false
+        private var fullScreenObservers: [NSObjectProtocol] = []
 
         func attach(to newWindow: NSWindow?) {
             guard window !== newWindow else { return }
             toolbarObservation?.invalidate()
             toolbarObservation = nil
+            fullScreenObservers.forEach(NotificationCenter.default.removeObserver)
+            fullScreenObservers = []
             window = newWindow
             guard let newWindow else { return }
+
+            isFullScreen = newWindow.styleMask.contains(.fullScreen)
+            for (name, value) in [
+                (NSWindow.willEnterFullScreenNotification, true),
+                (NSWindow.willExitFullScreenNotification, false)
+            ] {
+                let observer = NotificationCenter.default.addObserver(
+                    forName: name,
+                    object: newWindow,
+                    queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.isFullScreen = value
+                        // 退出全屏时 AppKit 留下的那条 toolbar 要立刻收走，
+                        // 否则窗口顶上会多出一条空工具栏。
+                        if !value, let window = self.window { self.removeToolbar(from: window) }
+                    }
+                }
+                fullScreenObservers.append(observer)
+            }
 
             // SwiftUI 会在搜索、Inspector 与聚焦视图重建时再次安装空 NSToolbar。
             // 只监听属性变化并立即移除，不再使用轮询 Timer，也不改任何列布局。
@@ -525,24 +564,44 @@ private struct WindowChromeConfiguration: NSViewRepresentable {
             }
         }
 
+        /// **每一处写入都必须先比对再赋值**。`apply()` 由 `updateNSView` 驱动，
+        /// SwiftUI 每次重绘都会走一遍；全屏下把鼠标顶到屏幕上沿会让系统菜单栏滑出、
+        /// 窗口跟着改高度，于是整段动画期间这里被连续调用几十次。无条件写
+        /// `styleMask` / `backgroundColor` 会反复让 NSThemeFrame 失效，而红绿灯的
+        /// 点击是一次 `trackMouse` 模态循环——按下去的那一刻循环被打断，
+        /// 按钮就只剩"画得出来、悬停有反馈、点了没反应"。
         func apply() {
             guard let window else { return }
             AppKitScrollNormalizer.normalize(window: window)
-            window.level = alwaysOnTop ? .floating : .normal
-            window.styleMask.insert(.fullSizeContentView)
-            window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
-            window.backgroundColor = .textBackgroundColor
+            let level: NSWindow.Level = alwaysOnTop ? .floating : .normal
+            if window.level != level { window.level = level }
+            if !window.styleMask.contains(.fullSizeContentView) {
+                window.styleMask.insert(.fullSizeContentView)
+            }
+            if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+            if window.titleVisibility != .hidden { window.titleVisibility = .hidden }
+            if window.backgroundColor != .textBackgroundColor {
+                window.backgroundColor = .textBackgroundColor
+            }
             removeToolbar(from: window)
-            onFullScreenChange?(window.styleMask.contains(.fullScreen))
+            // 不要在这里读 styleMask：全屏过渡期间它翻转的时机在动画中段，
+            // 会把 will* 通知刚settle 好的状态又推回去，画面来回抖一次。
+            onFullScreenChange?(isFullScreen)
         }
 
         func detach() {
             toolbarObservation?.invalidate()
             toolbarObservation = nil
+            fullScreenObservers.forEach(NotificationCenter.default.removeObserver)
+            fullScreenObservers = []
             window = nil
         }
 
+        /// 窗口不挂工具栏（控件都在各列自己的头部），但 SwiftUI 每次重建视图
+        /// 都会塞一条空的进来，所以这里一发现就摘掉。全屏也要摘：留着的话
+        /// `NavigationSplitView` 自带的侧栏切换按钮会冒出来，和我们列头里那颗撞车。
+        ///
+        /// （曾经怀疑「全屏摘 toolbar 导致红绿灯点不动」，已证伪。）
         private func removeToolbar(from window: NSWindow) {
             guard !isRemovingToolbar, window.toolbar != nil else { return }
             isRemovingToolbar = true

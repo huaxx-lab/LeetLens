@@ -552,70 +552,147 @@ private struct LearningRecordDetailView: View {
         .background(Color.accentColor.opacity(0.05), in: RoundedRectangle(cornerRadius: AppDesign.Radius.medium, style: .continuous))
     }
 
+    /// 力扣分析的 summary 会被 `mergeLeetCodeAnalysis` 直接抄进 `diagnosis`，
+    /// 两个区块原样各印一遍，同一段话在一屏里出现两次。诊断留在上面（它是"当前状态"），
+    /// 这里只在真的不一样时才展开——与 `visibleEvidence` 的去重口径一致。
+    private var duplicatesDiagnosis: Bool {
+        guard let summary = trajectoryAnalysis?.summary else { return false }
+        return Self.normalized(summary) == Self.normalized(record.diagnosis)
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: "", options: .regularExpression)
+    }
+
     /// 整题维度的 AI 分析（薄弱点 / 下一步 / 每次尝试的变化），刷题页分析队列已经算过。
     @ViewBuilder
     private var trajectoryAnalysisSection: some View {
         if let analysis = trajectoryAnalysis,
-           !analysis.summary.isEmpty || !analysis.weaknesses.isEmpty || !analysis.improvements.isEmpty {
+           (!analysis.summary.isEmpty && !duplicatesDiagnosis)
+               || !analysis.weaknesses.isEmpty
+               || !analysis.improvements.isEmpty
+               || !analysis.attemptInsights.isEmpty {
             Divider().padding(.vertical, 22)
             detailSection("AI 解题分析") {
-                if !analysis.summary.isEmpty {
+                if !analysis.summary.isEmpty, !duplicatesDiagnosis {
                     Text(analysis.summary)
                         .font(.system(size: 14))
-                        .lineSpacing(5)
+                        .lineSpacing(6)
                         .textSelection(.enabled)
                 }
-                if !analysis.weaknesses.isEmpty {
-                    analysisList("待巩固", values: analysis.weaknesses, tint: .orange)
-                }
-                if !analysis.improvements.isEmpty {
-                    analysisList("下一步", values: analysis.improvements, tint: .blue)
-                }
-                if !analysis.attemptInsights.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("每次尝试")
-                            .font(AppDesign.Typography.micro.weight(.medium))
-                            .foregroundStyle(.secondary)
-                        ForEach(analysis.attemptInsights.prefix(5), id: \.submissionID) { insight in
-                            VStack(alignment: .leading, spacing: 2) {
-                                if !insight.issue.isEmpty {
-                                    Text(insight.issue).font(AppDesign.Typography.aux)
-                                }
-                                if !insight.change.isEmpty {
-                                    Text("改动：\(insight.change)")
-                                        .font(AppDesign.Typography.micro)
-                                        .foregroundStyle(.secondary)
-                                }
-                                if !insight.outcome.isEmpty {
-                                    Text("结果：\(insight.outcome)")
-                                        .font(AppDesign.Typography.micro)
-                                        .foregroundStyle(.tertiary)
-                                }
-                            }
-                            .padding(.leading, 2)
+                // 「待巩固」「下一步」并排：两栏都是短句列表，竖着堆会把「每次尝试」推到屏外。
+                if !analysis.weaknesses.isEmpty || !analysis.improvements.isEmpty {
+                    HStack(alignment: .top, spacing: 14) {
+                        if !analysis.weaknesses.isEmpty {
+                            analysisList("待巩固", values: analysis.weaknesses, tint: .orange)
+                        }
+                        if !analysis.improvements.isEmpty {
+                            analysisList("下一步", values: analysis.improvements, tint: .blue)
                         }
                     }
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                if !analysis.attemptInsights.isEmpty {
+                    attemptTimeline(analysis.attemptInsights)
                 }
                 Text("分析更新于 \(analysis.updatedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(AppDesign.Typography.micro)
                     .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
             }
         }
     }
 
     private func analysisList(_ title: String, values: [String], tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(AppDesign.Typography.micro.weight(.medium))
+                .font(AppDesign.Typography.auxEmphasis)
                 .foregroundStyle(tint)
             ForEach(values.prefix(4), id: \.self) { value in
-                HStack(alignment: .top, spacing: 7) {
-                    Circle().fill(tint.opacity(0.55)).frame(width: 5, height: 5).padding(.top, 6)
-                    Text(value).font(AppDesign.Typography.aux).lineSpacing(3)
+                HStack(alignment: .top, spacing: 8) {
+                    Circle().fill(tint.opacity(0.6)).frame(width: 5, height: 5).padding(.top, 6)
+                    Text(value)
+                        .font(AppDesign.Typography.body)
+                        .lineSpacing(4)
+                        .textSelection(.enabled)
                     Spacer(minLength: 0)
                 }
             }
         }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.06), in: RoundedRectangle(cornerRadius: AppDesign.Radius.medium, style: .continuous))
+    }
+
+    /// 每次尝试是一条时间线：序号在左边一列对齐，issue 是标题，改动/结果是从属行。
+    /// 原来三行同级、字号还一路降到 11pt 的 `.tertiary`，四次提交连成一片灰字读不出边界。
+    private func attemptTimeline(_ insights: [LeetCodeAttemptInsight]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("每次尝试")
+                .font(AppDesign.Typography.auxEmphasis)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(insights.prefix(5).enumerated()), id: \.element.submissionID) { index, insight in
+                    if index > 0 {
+                        Divider().padding(.leading, 30).padding(.vertical, 10)
+                    }
+                    attemptRow(index: index, insight: insight)
+                }
+            }
+        }
+    }
+
+    private func attemptRow(index: Int, insight: LeetCodeAttemptInsight) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(index + 1)")
+                .font(AppDesign.Typography.micro.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 20, height: 20)
+                .background(.quaternary, in: Circle())
+            VStack(alignment: .leading, spacing: 5) {
+                if !insight.issue.isEmpty {
+                    Text(insight.issue)
+                        .font(AppDesign.Typography.body)
+                        .lineSpacing(4)
+                        .textSelection(.enabled)
+                }
+                if !insight.change.isEmpty {
+                    attemptDetail("改动", value: insight.change, tint: .secondary)
+                }
+                if !insight.outcome.isEmpty {
+                    attemptDetail("结果", value: insight.outcome, tint: Self.verdictStyle(insight.outcome))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func attemptDetail(_ label: String, value: String, tint: some ShapeStyle) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(label)
+                .font(AppDesign.Typography.micro)
+                .foregroundStyle(.tertiary)
+                .frame(width: 24, alignment: .leading)
+            Text(value)
+                .font(AppDesign.Typography.aux)
+                .foregroundStyle(tint)
+                .lineSpacing(3)
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// 判定词决定这一行的颜色。只看第一个分句——整句里的"通过 4/93"是用例数，
+    /// 拿它判成功会把每一次 Wrong Answer 都染成绿色。
+    private static func verdictStyle(_ outcome: String) -> AnyShapeStyle {
+        let verdict = outcome
+            .prefix(while: { !"，,。;；:：(（".contains($0) })
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased()
+        if verdict.contains("accepted") || verdict.contains("通过") { return AnyShapeStyle(Color.green) }
+        if verdict.isEmpty { return AnyShapeStyle(HierarchicalShapeStyle.secondary) }
+        return AnyShapeStyle(Color.orange)
     }
 
     private func difficultyTitle(_ value: String) -> String {

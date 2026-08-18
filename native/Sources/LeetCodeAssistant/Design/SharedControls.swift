@@ -91,3 +91,57 @@ struct CompactIconButton: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
+
+/// 列头图标按钮。和详情列头的 `headerButton` 同一套尺寸（`toolbarControl` 28pt），
+/// 这样两列的控件能落在同一条中线上。
+struct ColumnHeaderButton: View {
+    let systemName: String
+    let help: String
+    var disabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(AppDesign.Typography.icon)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: AppDesign.Size.toolbarControl, height: AppDesign.Size.toolbarControl)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .foregroundStyle(disabled ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+        .help(help)
+    }
+}
+
+/// 「收起侧栏 + 后退 + 前进」这一组，**只在全屏且侧栏展开时**用。
+///
+/// 全屏没有红绿灯占位，侧栏列头左边整片是空的；把这三个键并到那里，
+/// 版式才和 ChatGPT / Codex 一致。窗口态不走这条：那时红绿灯占着最左，
+/// 侧栏列头只放 ⧉、前进后退留在详情列头，保持原样。
+struct WorkspaceHistoryChrome: View {
+    @Bindable var workspace: WorkspaceState
+
+    var body: some View {
+        HStack(spacing: AppDesign.Spacing.xxs) {
+            ColumnHeaderButton(systemName: "sidebar.left", help: "收起侧栏") {
+                workspace.toggleSidebar()
+            }
+            ColumnHeaderButton(
+                systemName: "chevron.left",
+                help: "后退",
+                disabled: !workspace.canNavigateBack
+            ) {
+                withAnimation(AppDesign.Motion.selection) { workspace.navigateBack() }
+            }
+            ColumnHeaderButton(
+                systemName: "chevron.right",
+                help: "前进",
+                disabled: !workspace.canNavigateForward
+            ) {
+                withAnimation(AppDesign.Motion.selection) { workspace.navigateForward() }
+            }
+        }
+    }
+}

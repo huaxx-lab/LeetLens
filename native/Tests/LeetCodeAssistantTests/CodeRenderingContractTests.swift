@@ -68,6 +68,22 @@ final class CodeRenderingContractTests: XCTestCase {
         XCTAssertTrue(graph.contains("rubberwires"))
     }
 
+    /// 高亮记忆化的键是 `语言 + 分隔符 + 源码`，读回来时按分隔符切。
+    /// 分隔符写成 `'\\u0000'`（JS 源码里的双反斜杠）会得到 6 个字符的字面量，
+    /// 而切分只跳 1 个字符，于是没有语言的代码块被渲染成 `u0000<源码>`。
+    func testHighlightMemoSeparatorIsASingleCharacter() throws {
+        let conversation = try resource("conversation", extension: "html")
+        let separator = try XCTUnwrap(
+            conversation.range(of: "const SEP = '", options: [], range: nil).map { range -> String in
+                let rest = conversation[range.upperBound...]
+                return String(rest.prefix(while: { $0 != "'" }))
+            }
+        )
+
+        XCTAssertFalse(separator.hasPrefix("\\\\"), "分隔符被双重转义，会渲染出可见的 u0000")
+        XCTAssertTrue(conversation.contains("key.slice(at + SEP.length)"), "切分必须按分隔符真实长度")
+    }
+
     private func resource(_ name: String, extension fileExtension: String) throws -> String {
         let url = try XCTUnwrap(Bundle.module.url(forResource: name, withExtension: fileExtension))
         return try String(contentsOf: url, encoding: .utf8)

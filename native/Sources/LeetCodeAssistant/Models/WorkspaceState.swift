@@ -419,7 +419,12 @@ final class WorkspaceState {
 
     func handleFullScreenChange(_ isFullScreen: Bool) {
         guard isWindowFullScreen != isFullScreen else { return }
-        isWindowFullScreen = isFullScreen
+        // 显式关掉动画：这一下改的是顶栏的排布口径（内缩、偏移、控件归属），
+        // 让 SwiftUI 再叠一层自己的补间，就会在系统窗口动画之上多出一段
+        // 不同步的滑动，看着像"跳"了两次。
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { isWindowFullScreen = isFullScreen }
     }
 
     /// 最左一列列头的左内缩。窗口态要给红绿灯让位，控件才能和它同处一行；

@@ -152,10 +152,12 @@
         return value;
       };
     };
-    const SEP = '\\u0000';
+    /// 分隔符必须是真的 NUL（一个字符）。写成 '\\u0000' 会得到 6 个字符的字面量 \u0000，
+    /// 而下面按 `at + 1` 切分只跳过 1 个字符，无语言的代码块就被渲染成 "u0000<源码>"。
+    const SEP = '\u0000';
     const highlightMemo = memo(key => {
       const at = key.indexOf(SEP);
-      return markdown.options.highlight(key.slice(at + 1), key.slice(0, at));
+      return markdown.options.highlight(key.slice(at + SEP.length), key.slice(0, at));
     }, 200);
     const highlightCached = (code, language) => highlightMemo(`${language}${SEP}${code}`);
     markdown.renderer.rules.fence = (tokens, index) => {

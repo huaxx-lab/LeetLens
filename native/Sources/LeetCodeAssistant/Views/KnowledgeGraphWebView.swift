@@ -23,6 +23,8 @@ struct KnowledgeGraphWebView: NSViewRepresentable {
     /// 单调递增；外部想强制重推一次图时 +1。
     let reloadToken: Int
     let focusRequest: String?
+    /// 与 `focusRequest` 配套的递增票据：目标 id 没变也要能再对焦一次。
+    let focusToken: Int
     let fitRequest: Int
 
     var onSelect: (String) -> Void
@@ -91,6 +93,7 @@ struct KnowledgeGraphWebView: NSViewRepresentable {
         private var lastBusy: [String] = []
         private var lastMode = ""
         private var lastFocus: String?
+        private var lastFocusToken = 0
         private var lastFitRequest = 0
         private var lastReloadToken = -1
 
@@ -190,8 +193,9 @@ struct KnowledgeGraphWebView: NSViewRepresentable {
                 lastMode = mode
                 call(webView, "setMode", argument: mode)
             }
-            if let focus = parent.focusRequest, focus != lastFocus {
+            if let focus = parent.focusRequest, focus != lastFocus || parent.focusToken != lastFocusToken {
                 lastFocus = focus
+                lastFocusToken = parent.focusToken
                 call(webView, "focus", argument: focus)
             }
             if parent.fitRequest != lastFitRequest {

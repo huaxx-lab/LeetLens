@@ -7,6 +7,8 @@ struct GlobalSidebarView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var expandedGroups: Set<SidebarGroup> = [.learning, .conversations, .plans]
     @State private var pendingConversationDeletion: ConversationSummary?
+    /// 账户行那个 `Menu` 必须拿到显式宽度，见 `accountMenu` 的注释。
+    @State private var sidebarWidth = AppDesign.Size.sidebarIdeal
 
     var body: some View {
         // Codex 式侧栏：品牌行 → 新建会话 → 导航列表 → 账户行，全程零横线，
@@ -61,6 +63,7 @@ struct GlobalSidebarView: View {
                 .padding(.top, AppDesign.Spacing.xs)
                 .padding(.bottom, AppDesign.Spacing.xs)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sidebarWidth = $0 }
         .background(sidebarSurface)
         .confirmationDialog(
             "删除这个会话？",
@@ -84,13 +87,26 @@ struct GlobalSidebarView: View {
     /// 控件从 `headerLeadingInset` 之后开始排，两者同处一行（对齐 Codex）。
     private var columnHeader: some View {
         HStack(spacing: 0) {
-            Spacer(minLength: 0)
-            sidebarIconButton("sidebar.left", help: "收起侧栏") {
-                workspace.toggleSidebar()
+            // 收起动画期间这一列还在（宽度渐变到 0），但详情列头的 ⧉ 已经出现了。
+            // 不加这道判断就会同时看到两颗，其中一颗跟着变窄的侧栏往左滑。
+            if workspace.isSidebarPresented {
+                if workspace.isWindowFullScreen {
+                    // 全屏没有红绿灯占位，⧉ 和前进后退并成一组顶到最左。
+                    WorkspaceHistoryChrome(workspace: workspace)
+                    Spacer(minLength: 0)
+                } else {
+                    // 窗口态保持原样：最左是红绿灯，这颗按钮靠右贴住列尾。
+                    Spacer(minLength: 0)
+                    sidebarIconButton("sidebar.left", help: "收起侧栏") {
+                        workspace.toggleSidebar()
+                    }
+                }
             }
         }
-        // 侧栏是最左列：窗口态下控件上移 2pt 与红绿灯中心对齐（全屏不偏移）。
-        .offset(y: workspace.isWindowFullScreen ? 0 : -2)
+        // 侧栏这一列天生比详情列低一截，两种状态都要往回提：
+        // 窗口态对齐红绿灯（实测红绿灯中心 49，本行未提时 61）→ -12；
+        // 全屏没有红绿灯，改为对齐详情列头（实测详情 ✎ 中心 53，本行 63）→ -10。
+        .offset(y: workspace.isWindowFullScreen ? -10 : -16)
         .padding(.leading, workspace.headerLeadingInset)
         .padding(.trailing, AppDesign.Spacing.xs)
         .frame(height: AppDesign.Size.columnHeader)
@@ -268,6 +284,15 @@ struct GlobalSidebarView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
+        // `Menu` + `.borderlessButton` **完全不理会 label 的尺寸**，会把自己排成
+        // 「可用宽度 × 512」，于是头像和名字被挤到那块巨大区域的正中间——
+        // 看起来就是账户行没有左对齐。`.fixedSize()` 不但无效还会更糟，
+        // 唯一可行的是量出可用宽度后显式钉死。
+        .frame(
+            width: max(0, sidebarWidth - AppDesign.Spacing.xs * 2),
+            height: AppDesign.Size.columnHeader,
+            alignment: .leading
+        )
         .accessibilityLabel("账户与设置")
     }
 

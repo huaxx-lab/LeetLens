@@ -24,6 +24,9 @@ struct KnowledgeGraphWorkspaceView: View {
     @State private var reloadToken = 0
     @State private var fitRequest = 0
     @State private var focusRequest: String?
+    /// 同一个节点可能被反复请求对焦（离开脑图再点同一道题跳回来）。只比对 id
+    /// 的话第二次就被当成"没变"吞掉，所以额外带一个递增票据。
+    @State private var focusToken = 0
     /// 正在生成讲解的节点。画布拿它显示「生成中…」，同时挡住重复点击。
     @State private var busyNodes: Set<String> = []
     @State private var errorText = ""
@@ -40,15 +43,31 @@ struct KnowledgeGraphWorkspaceView: View {
     var body: some View {
         canvas
             .background(AppDesign.ColorToken.canvas)
-            .task(id: dataStore.activeLearningRevision) { await load() }
-            .onChange(of: workspace.selectedLearningRecordID) { _, value in
-                // 从别的模块跳进来时，把镜头对到那道题上。
-                guard let value, isLoaded else { return }
-                let id = KnowledgeGraphBuilder.nodeID(forRecord: value)
-                guard elements.nodes.contains(where: { $0.id == id }) else { return }
-                selectedNodeID = id
-                focusRequest = id
+            .task(id: dataStore.activeLearningRevision) {
+                await load()
+                // 进页面时带着目标进来的（题库/复习页点"在脑图中查看"），
+                // 那次赋值发生在本视图存在之前，onChange 根本不会触发。
+                focusSelectedRecord()
             }
+            .onChange(of: workspace.selectedLearningRecordID) { _, _ in
+                focusSelectedRecord()
+            }
+            // 目标没变、只是又从别的页面跳回来时，上面那条不触发；
+            // 这条按"重新进入脑图"这个事件补一次。
+            .onChange(of: workspace.selectedSection) { _, section in
+                guard section == .knowledge else { return }
+                focusSelectedRecord()
+            }
+    }
+
+    /// 把镜头对到 workspace 选中的那道题上。
+    private func focusSelectedRecord() {
+        guard isLoaded, let recordID = workspace.selectedLearningRecordID else { return }
+        let id = KnowledgeGraphBuilder.nodeID(forRecord: recordID)
+        guard elements.nodes.contains(where: { $0.id == id }) else { return }
+        selectedNodeID = id
+        focusRequest = id
+        focusToken += 1
     }
 
     // MARK: - 画布
@@ -89,6 +108,7 @@ struct KnowledgeGraphWorkspaceView: View {
                 linkDirected: linkDirected,
                 reloadToken: reloadToken,
                 focusRequest: focusRequest,
+                focusToken: focusToken,
                 fitRequest: fitRequest,
                 onSelect: { selectedNodeID = $0.isEmpty ? nil : $0 },
                 onActivate: activate(nodeID:),

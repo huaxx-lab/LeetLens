@@ -4,9 +4,12 @@ import SwiftUI
 /// 全项目统一的滚动条：无轨道、无边框的悬浮胶囊，可拖动。
 /// 弹性动效：滚动时 thumb 沿滚动方向拉伸、略微变粗，静止后弹簧回弹并淡出。
 ///
-/// **为什么不是纯 overlay**：thumb 必须能抓住拖动。捕获承载视图后优先直写
-/// NSScrollView 的 bounds（当前系统 SwiftUI ScrollView 由其承载）；拿不到时
-/// 退化为合成 scrollWheel 事件，两种承载都能滚。
+/// **拖动为什么走 `ScrollPosition` 而不是 NSScrollView**：原实现先取
+/// `background` 里那个 NSView 的 `enclosingScrollView` 再直写 bounds。但那个
+/// 视图是 ScrollView 的**背景兄弟节点**，不是它的后代——`enclosingScrollView`
+/// 往上找只会找到外层（通常为 nil），于是 `guard` 当场返回，全 App 的 thumb
+/// 都拖不动（对话页能拖是因为它滚的是 WKWebView，走 JS 那套自绘滚动条）。
+/// `ScrollPosition.scrollTo(point:)` 直接由 SwiftUI 定位，与承载方式无关。
 struct FloatingScrollIndicatorModifier: ViewModifier {
     let axes: Axis.Set
 
@@ -15,14 +18,14 @@ struct FloatingScrollIndicatorModifier: ViewModifier {
     @State private var stretch: CGFloat = 0
     @State private var idleTask: Task<Void, Never>?
     @State private var lastActivity = Date.distantPast
-    @State private var hostView: NSView?
-    @State private var dragStartOrigin: CGPoint?
+    @State private var scrollPosition = ScrollPosition()
+    @State private var dragStartOffset: CGPoint?
 
     func body(content: Content) -> some View {
         content
             // 关掉系统指示器，避免和我们的胶囊叠在一起画两条。
             .scrollIndicators(.hidden)
-            .background { ScrollHostCapture { hostView = $0 } }
+            .scrollPosition($scrollPosition)
             .onScrollGeometryChange(for: ScrollMetrics.self) { geometry in
                 ScrollMetrics(
                     offset: geometry.contentOffset,
@@ -70,32 +73,22 @@ struct FloatingScrollIndicatorModifier: ViewModifier {
     private func dragGesture(vertical: Bool, proxySize: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                guard let scrollView = hostView?.enclosingScrollView else { return }
-                let document = scrollView.documentView?.bounds ?? .zero
-                let visible = scrollView.contentView.bounds
-                if dragStartOrigin == nil { dragStartOrigin = visible.origin }
-                guard let start = dragStartOrigin else { return }
+                let start = dragStartOffset ?? metrics.offset
+                if dragStartOffset == nil { dragStartOffset = start }
+                guard let target = metrics.offset(
+                    draggingFrom: start,
+                    by: vertical ? value.translation.height : value.translation.width,
+                    vertical: vertical,
+                    in: proxySize
+                ) else { return }
 
-                let containerLength = vertical ? scrollView.bounds.height : scrollView.bounds.width
-                let contentLength = vertical ? document.height : document.width
-                let visibleLength = vertical ? visible.height : visible.width
-                let scrollable = contentLength - visibleLength
-                let track = containerLength - FloatingScrollIndicator.trackInset * 2
-                let thumbLength = min(track, max(FloatingScrollIndicator.minimumLength, track * visibleLength / max(1, contentLength)))
-                guard scrollable > 0, track > thumbLength else { return }
-
-                let translation = vertical ? value.translation.height : value.translation.width
-                let delta = translation * scrollable / (track - thumbLength)
-                var origin = visible.origin
-                if vertical {
-                    origin.y = min(max(start.y + delta, 0), scrollable)
-                } else {
-                    origin.x = min(max(start.x + delta, 0), scrollable)
-                }
-                scrollView.contentView.bounds.origin = origin
-                scrollView.reflectScrolledClipView(scrollView.contentView)
+                // 拖动是直接定位，不能带动画：带上就会在手指后面追，松手还要再滑一段。
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { scrollPosition.scrollTo(point: target) }
+                reveal(delta: 0)
             }
-            .onEnded { _ in dragStartOrigin = nil }
+            .onEnded { _ in dragStartOffset = nil }
     }
 
     private func reveal(delta: CGFloat) {
@@ -126,18 +119,6 @@ struct FloatingScrollIndicatorModifier: ViewModifier {
     }
 }
 
-private struct ScrollHostCapture: NSViewRepresentable {
-    let onResolve: (NSView) -> Void
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async { onResolve(view) }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
 enum FloatingScrollIndicator {
     static let thickness: CGFloat = 6
     static let edgeInset: CGFloat = 4
@@ -165,6 +146,25 @@ enum FloatingScrollIndicator {
         let clampedOrigin = min(origin, trackInset + track - stretched)
         return (clampedOrigin, stretched)
     }
+
+    /// 把 thumb 在轨道上走过的距离换算成内容要滚多远。thumb 长度必须和 `bar`
+    /// 用同一个公式，否则手指和 thumb 会越拖越分家。入参与返回都在"条形坐标"里
+    /// （顶端为 0），insets 的换算由调用方完成。
+    static func dragTarget(
+        start: CGFloat,
+        translation: CGFloat,
+        contentLength: CGFloat,
+        containerLength: CGFloat
+    ) -> CGFloat? {
+        guard containerLength > 0, contentLength > containerLength + 0.5 else { return nil }
+        let track = containerLength - trackInset * 2
+        guard track > minimumLength else { return nil }
+        let length = max(minimumLength, track * containerLength / contentLength)
+        let travel = track - length
+        guard travel > 0.5 else { return nil }
+        let scrollable = contentLength - containerLength
+        return min(max(start + translation * scrollable / travel, 0), scrollable)
+    }
 }
 
 private struct ScrollMetrics: Equatable {
@@ -189,5 +189,26 @@ private struct ScrollMetrics: Equatable {
             containerLength: size.width,
             extra: extra
         )
+    }
+
+    /// 拖动 thumb 时的目标 contentOffset。`start` 是按下那一刻的 contentOffset，
+    /// 换进条形坐标算完再换回来——`scrollTo(point:)` 收的是 contentOffset。
+    func offset(draggingFrom start: CGPoint, by translation: CGFloat, vertical: Bool, in size: CGSize) -> CGPoint? {
+        if vertical {
+            guard let value = FloatingScrollIndicator.dragTarget(
+                start: start.y + insets.top,
+                translation: translation,
+                contentLength: contentSize.height + insets.top + insets.bottom,
+                containerLength: size.height
+            ) else { return nil }
+            return CGPoint(x: offset.x, y: value - insets.top)
+        }
+        guard let value = FloatingScrollIndicator.dragTarget(
+            start: start.x + insets.leading,
+            translation: translation,
+            contentLength: contentSize.width + insets.leading + insets.trailing,
+            containerLength: size.width
+        ) else { return nil }
+        return CGPoint(x: value - insets.leading, y: offset.y)
     }
 }

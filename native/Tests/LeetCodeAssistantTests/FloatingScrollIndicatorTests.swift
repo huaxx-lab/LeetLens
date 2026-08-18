@@ -53,4 +53,51 @@ struct FloatingScrollIndicatorTests {
     func skipsUnusablyShortTracks() {
         #expect(FloatingScrollIndicator.bar(offset: 0, contentLength: 400, containerLength: 30) == nil)
     }
+
+    /// 拖动的换算必须和 `bar` 用同一套 thumb 长度：thumb 走完整条轨道，
+    /// 内容就要正好走完可滚区间，不多不少。
+    @Test("thumb 拖到底就是内容的底")
+    func dragMapsTrackTravelToContent() {
+        let container: CGFloat = 500
+        let content: CGFloat = 1500
+        let track = container - FloatingScrollIndicator.trackInset * 2
+        let length = FloatingScrollIndicator.bar(offset: 0, contentLength: content, containerLength: container)!.length
+
+        let bottom = FloatingScrollIndicator.dragTarget(
+            start: 0,
+            translation: track - length,
+            contentLength: content,
+            containerLength: container
+        )
+        #expect(bottom == content - container)
+
+        let half = FloatingScrollIndicator.dragTarget(
+            start: 0,
+            translation: (track - length) / 2,
+            contentLength: content,
+            containerLength: container
+        )!
+        #expect(abs(half - (content - container) / 2) < 0.001)
+    }
+
+    @Test("往回拖过头夹在两端，不会滚出内容")
+    func dragClampsToBounds() {
+        let target = FloatingScrollIndicator.dragTarget(
+            start: 200,
+            translation: -5_000,
+            contentLength: 1500,
+            containerLength: 500
+        )
+        #expect(target == 0)
+        #expect(
+            FloatingScrollIndicator.dragTarget(start: 200, translation: 5_000, contentLength: 1500, containerLength: 500)
+                == 1_000
+        )
+    }
+
+    @Test("画不出 thumb 的场合也不该产生拖动目标")
+    func dragMatchesBarAvailability() {
+        #expect(FloatingScrollIndicator.dragTarget(start: 0, translation: 20, contentLength: 400, containerLength: 400) == nil)
+        #expect(FloatingScrollIndicator.dragTarget(start: 0, translation: 20, contentLength: 400, containerLength: 30) == nil)
+    }
 }

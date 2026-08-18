@@ -111,6 +111,13 @@
     /* 被链接指向的一端用实线蓝框，和选中的虚线框区分开。 */
     .node.linked { outline: 2px solid var(--blue); outline-offset: 2px; }
     .node.pending { box-shadow: 0 0 0 2.5px #AF52DE; }
+    /* 从别的页面跳进来时闪一下：整棵树几十张卡，只把镜头挪过去还是找不到是哪张。 */
+    .node.homing { animation: homing 1.15s ease-out 1; }
+    @keyframes homing {
+      0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 70%, transparent); }
+      35%  { box-shadow: 0 0 0 9px color-mix(in srgb, var(--blue) 26%, transparent); }
+      100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 0%, transparent); }
+    }
     .node.dim { opacity: .2; }
 
     /* AI 讲解。数据来自学习记录里的学习包，和今日复习、学习题库是同一份，
@@ -2044,13 +2051,32 @@
       setSearch(text) { searchQuery = (text || '').trim().toLowerCase(); render(); },
       setSelected(id) { selectedID = id || ''; render(); },
       focus(id) {
+        if (!nodeByID(id)) { hint('这张卡片已经不在图里了'); return; }
+        // 目标藏在收起的分支里时先把祖先链展开。对调用方来说"对不上焦"和
+        // "没有这个节点"是一回事，不该让用户自己去猜要展开哪一枝。
+        const parentOf = {};
+        model.edges.forEach((e) => { parentOf[e.target] = e.source; });
+        let cursor = parentOf[id], hops = 0, expanded = false;
+        while (cursor && hops < 32) {
+          if (collapsed.delete(cursor)) expanded = true;
+          cursor = parentOf[cursor];
+          hops += 1;
+        }
+        selectedID = id;
+        // 位置要在 render 之后读：展开祖先会让整棵树重排。
+        render();
+        if (expanded) post('collapseChanged', { collapsed: Array.from(collapsed) });
         const p = positions[id];
         if (!p) { hint('目标在收起的分支里'); return; }
-        selectedID = id;
-        render();
         panX = viewport.clientWidth / 2 - (p.x + p.w / 2) * scale;
         panY = viewport.clientHeight / 2 - p.cy * scale;
         applyTransform();
+        const el = cards[id];
+        if (el) {
+          el.classList.remove('homing');
+          void el.offsetWidth; // 重启动画：连续两次对焦同一张卡也要再闪一次
+          el.classList.add('homing');
+        }
         post('nodeSelected', { id });
       },
       expandAll() {

@@ -8,6 +8,7 @@ struct LeetCodeAssistantApp: App {
         // 与旧版一致，改为把焦点交给已在运行的实例并退出本次启动。
         SingleInstanceGuard.enforce()
         NSWindow.allowsAutomaticWindowTabbing = false
+        WindowChromeDebugDump.startIfRequested()
 
         // 窗口级滚动条兜底：覆盖主窗口、设置窗口、sheet 与延迟创建的
         // AppKit 滚动容器（List/TextEditor 等不走 .scrollIndicators(.hidden)）。
