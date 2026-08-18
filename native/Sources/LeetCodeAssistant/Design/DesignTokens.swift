@@ -94,7 +94,9 @@ enum AppDesign {
         static let canvas = Color(nsColor: .textBackgroundColor)
         static let sidebar = Color(nsColor: .windowBackgroundColor).opacity(0.42)
         /// 侧栏整列（含顶部红绿灯行）统一的淡灰表面，对齐 Codex。
-        static let sidebarSurface = Color(nsColor: .windowBackgroundColor)
+        /// 侧栏整列底色：比中间画布深一档，窗口态/全屏态共用同一种颜色。
+        /// `windowBackgroundColor` 在新系统上几乎和画布同色，换 underPage 才拉得开。
+        static let sidebarSurface = Color(nsColor: .underPageBackgroundColor)
         static let raised = Color(nsColor: .controlBackgroundColor)
         static let separator = Color.primary.opacity(0.075)
         static let selection = Color.accentColor.opacity(0.12)

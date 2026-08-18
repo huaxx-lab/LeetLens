@@ -2,6 +2,28 @@ import XCTest
 @testable import LeetCodeAssistant
 
 final class ChatServiceTests: XCTestCase {
+    /// 安装到仓库之外（/Applications）后沿路径找不到 node_modules 里的解密桥，
+    /// 要靠数据目录里的提示文件；提示指向的路径不存在时不能当成可用桥。
+    func testElectronBridgeHintResolvesOutsideRepo() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "bridge-hint-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let fake = directory.appending(path: "Electron")
+        try "#!/bin/sh\n".write(to: fake, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+
+        try #"{"path":"\#(fake.path)"}"#
+            .write(to: directory.appending(path: "electron-bridge.json"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(ChatService.locateElectronExecutable(dataDirectory: directory)?.path, fake.path)
+
+        try #"{"path":"/nonexistent/Electron"}"#
+            .write(to: directory.appending(path: "electron-bridge.json"), atomically: true, encoding: .utf8)
+        // 失效提示要落回路径搜寻（临时目录下搜不到，结果应为 nil 或仓库内路径，绝不返回死路径）。
+        XCTAssertNotEqual(ChatService.locateElectronExecutable(dataDirectory: directory)?.path, "/nonexistent/Electron")
+    }
+
     func testResponsesCompletedEventTerminatesStreamWithoutWaitingForDoneSentinel() {
         XCTAssertTrue(ChatService.isTerminalStreamEvent(
             eventName: "response.completed",

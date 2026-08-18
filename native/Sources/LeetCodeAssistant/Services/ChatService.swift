@@ -902,7 +902,9 @@ final class ChatService: @unchecked Sendable {
     }
 
     private func decryptAPIKey(settingsURL: URL, providerID: String) async throws -> String {
-        guard let electronURL = Self.locateElectronExecutable(),
+        guard let electronURL = Self.locateElectronExecutable(
+            dataDirectory: settingsURL.deletingLastPathComponent()
+        ),
               let helperURL = Bundle.module.url(
                 forResource: "decrypt-provider-key",
                 withExtension: "cjs",
@@ -1465,9 +1467,15 @@ final class ChatService: @unchecked Sendable {
         return "模型服务返回 HTTP \(status)"
     }
 
-    static func locateElectronExecutable() -> URL? {
+    static func locateElectronExecutable(dataDirectory: URL? = nil) -> URL? {
         if let explicit = ProcessInfo.processInfo.environment["LEETCODE_ELECTRON_PATH"],
            FileManager.default.isExecutableFile(atPath: explicit) { return URL(filePath: explicit) }
+        // 装到 /Applications 后沿路径再也走不到仓库里的 node_modules，
+        // 所以从仓库内启动的那一次会把桥的位置记进数据目录，安装版先读这份提示。
+        if let hinted = hintedElectronPath(in: dataDirectory),
+           FileManager.default.isExecutableFile(atPath: hinted.path) {
+            return hinted
+        }
         let relative = "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
         var candidates: [URL] = [URL(filePath: FileManager.default.currentDirectoryPath)]
         if let executable = Bundle.main.executableURL { candidates.append(executable.deletingLastPathComponent()) }
@@ -1475,11 +1483,36 @@ final class ChatService: @unchecked Sendable {
             var cursor = base
             for _ in 0..<9 {
                 let candidate = cursor.appending(path: relative)
-                if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
+                if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                    rememberElectronPath(candidate, in: dataDirectory)
+                    return candidate
+                }
                 cursor.deleteLastPathComponent()
             }
         }
         return nil
+    }
+
+    private static func hintURL(in dataDirectory: URL?) -> URL? {
+        dataDirectory?.appending(path: "electron-bridge.json")
+    }
+
+    private static func hintedElectronPath(in dataDirectory: URL?) -> URL? {
+        guard let url = hintURL(in: dataDirectory),
+              let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let path = root["path"] as? String
+        else { return nil }
+        return URL(filePath: path)
+    }
+
+    /// 只记路径，不记任何密钥；Electron 版会忽略这个它不认识的文件。
+    private static func rememberElectronPath(_ url: URL, in dataDirectory: URL?) {
+        guard let hint = hintURL(in: dataDirectory) else { return }
+        let payload = ["path": url.path]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
+        try? data.write(to: hint, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: hint.path)
     }
 
     static func resolveProviderID(

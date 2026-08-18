@@ -64,7 +64,7 @@ struct GlobalSidebarView: View {
                 .padding(.bottom, AppDesign.Spacing.xs)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sidebarWidth = $0 }
-        .background(sidebarSurface)
+        .background(sidebarSurface.ignoresSafeArea())
         .confirmationDialog(
             "删除这个会话？",
             isPresented: Binding(
