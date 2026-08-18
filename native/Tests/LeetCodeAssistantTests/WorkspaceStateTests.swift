@@ -27,9 +27,11 @@ final class WorkspaceStateTests: XCTestCase {
         )
     }
 
-    func testToolTabsSitBelowTheWindowTopButNotInFullScreen() {
-        // 整行一起下移；标签不再单独多挪一截，否则它和 `+`、窗口按钮对不上中线。
-        XCTAssertEqual(ToolHeaderLayoutPolicy.topInset(isFullScreen: false), 8)
+    func testToolTabsShareTheSameHeaderBaselineAsTheOtherColumns() {
+        // 三列列头共用一条中线。侧栏和中间列都往上提去对齐红绿灯，
+        // 这一列原来反而下推 8pt，于是标签条明显低于左边两列。
+        XCTAssertEqual(ToolHeaderLayoutPolicy.topInset(isFullScreen: false), -6)
+        // 全屏没有红绿灯要让位，三列都不偏移。
         XCTAssertEqual(ToolHeaderLayoutPolicy.topInset(isFullScreen: true), 0)
     }
 

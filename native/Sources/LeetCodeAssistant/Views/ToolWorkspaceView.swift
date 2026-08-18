@@ -821,8 +821,11 @@ private struct NonWindowDragging<Content: View>: NSViewRepresentable {
 }
 
 enum ToolHeaderLayoutPolicy {
+    /// 第三列列头的纵向对齐。三列共用一条中线：侧栏和中间列都是往上提
+    /// （`-16` / `-6`，各自对齐红绿灯），这一列原来反而往下推 `Spacing.xs`，
+    /// 于是标签条明显低于左边两列。窗口态改成与中间列同一口径的上提量。
     static func topInset(isFullScreen: Bool) -> CGFloat {
-        isFullScreen ? 0 : AppDesign.Spacing.xs
+        isFullScreen ? 0 : -6
     }
 }
 

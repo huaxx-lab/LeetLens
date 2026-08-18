@@ -30,7 +30,7 @@ enum BilibiliAPIClient {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         do {
-            let cookies = await ensureBuvid(WebsiteSessionStore.cookies(for: .bilibili))
+            let cookies = await WebsiteSessionStore.cookies(for: .bilibili)
             let mixinKey = try await fetchMixinKey(cookies: cookies)
             let timestamp = Int(Date.now.timeIntervalSince1970)
             var parameters: [String: String] = [
@@ -95,26 +95,10 @@ enum BilibiliAPIClient {
 
     // MARK: - WBI 签名
 
-    /// 匿名搜索至少要 `buvid3/buvid4`。浏览器里登录过就直接用现成 Cookie，
-    /// 没有就从公开的指纹接口补一对——不写任何存储。
-    private static func ensureBuvid(_ cookies: [HTTPCookie]) async -> [HTTPCookie] {
-        guard !cookies.contains(where: { $0.name == "buvid3" }),
-              let url = URL(string: "https://api.bilibili.com/x/frontend/finger/spi"),
-              let (payload, _) = try? await URLSession.shared.data(from: url),
-              let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
-              let data = root["data"] as? [String: Any],
-              let buvid3 = data["b_3"] as? String,
-              let buvid4 = data["b_4"] as? String
-        else { return cookies }
-        var merged = cookies
-        for (name, value) in [("buvid3", buvid3), ("buvid4", buvid4)] {
-            guard let cookie = HTTPCookie(properties: [
-                .name: name, .value: value, .domain: ".bilibili.com", .path: "/"
-            ]) else { continue }
-            merged.append(cookie)
-        }
-        return merged
-    }
+    // 这里曾经有一段「没有登录态就从指纹接口补 buvid3/buvid4」的逻辑，已删除：
+    // 实测**补上反而触发风控**（返回 `v_voucher`、结果为空），什么都不带时
+    // 搜索接口正常返回。B 站认的是这对 Cookie 与请求指纹的一致性，
+    // 我们凑出来的组合对不上，反倒比裸奔更可疑。
 
     private static func fetchMixinKey(cookies: [HTTPCookie]) async throws -> String {
         guard let url = URL(string: "https://api.bilibili.com/x/web-interface/nav") else {

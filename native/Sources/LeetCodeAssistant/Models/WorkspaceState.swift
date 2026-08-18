@@ -310,8 +310,12 @@ final class WorkspaceState {
     }
 
     func toggleToolWorkspace() {
-        // 使用短时无回弹过渡，避免瞬切；不再叠加此前卡顿的 spring。
-        withAnimation(AppDesign.Motion.panelTransition) {
+        // 收拢一律瞬时完成，不做补间：这一列里挂着 WKWebView，
+        // 列宽逐帧变化会让整个网页每帧重排一次，表现就是"收起时卡死"。
+        // 展开时列宽同样在变，但内容是从无到有，补间收益也抵不过这份代价。
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
             isToolWorkspacePresented.toggle()
         }
     }

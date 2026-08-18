@@ -621,9 +621,7 @@ enum LearningAgentTools {
             "title": "B 站视频",
             "layout": Layout.video.rawValue,
             "query": query,
-            "summary": items.isEmpty
-                ? "没有找到「\(query)」的公开视频（未连接哔哩哔哩账户时检索可能受限，可在设置里连接）"
-                : "找到 \(items.count) 个相关视频",
+            "summary": items.isEmpty ? "没有找到「\(query)」的公开视频" : "找到 \(items.count) 个相关视频",
             "items": Array(items)
         ])
     }
