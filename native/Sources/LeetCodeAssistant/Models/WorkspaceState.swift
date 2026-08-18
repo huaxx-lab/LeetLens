@@ -242,6 +242,10 @@ final class WorkspaceState {
                 toolSuppressedTaskID = currentTaskID
                 compactSidebar = windowWidth < LayoutBreakpoints.sidebar
                 compactContext = windowWidth < LayoutBreakpoints.context
+                // 收起要在这里就把媒体停掉。挂在 ToolWorkspaceView 上的 onChange
+                // 常常赶不上——这一列连同它的视图树同帧就被拆了，回调根本不触发，
+                // 于是面板已经看不见了，B 站的声音还在响。
+                NotificationCenter.default.post(name: .suspendToolMedia, object: nil)
             }
         }
     }

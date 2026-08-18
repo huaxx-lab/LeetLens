@@ -53,4 +53,8 @@ struct LeetCodeAssistantApp: App {
 
 extension Notification.Name {
     static let openInAppSettings = Notification.Name("openInAppSettings")
+    /// 第三列收起时广播：把浏览器里所有正在播的音视频停掉。
+    /// 走通知而不是直接调用，是因为发出方（`WorkspaceState`）不持有浏览器会话，
+    /// 而接收方那一列此刻正在被拆除。
+    static let suspendToolMedia = Notification.Name("suspendToolMedia")
 }

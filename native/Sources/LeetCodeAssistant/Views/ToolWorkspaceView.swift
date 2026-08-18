@@ -1058,6 +1058,15 @@ final class BrowserSession: ObservableObject {
             self.closeTab(tab.id)
             return true
         }
+        // 会话是单例、活得比第三列久，所以由它自己听「收起」广播。
+        // 挂在那一列的视图上不行：收起时它和回调一起没了。
+        NotificationCenter.default.addObserver(
+            forName: .suspendToolMedia,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.suspendMedia() }
+        }
         restoreIfNeeded(activeTab)
         publishState()
     }
@@ -1216,12 +1225,24 @@ final class BrowserSession: ObservableObject {
         activeContainer = nil
         NSLayoutConstraint.deactivate(browserConstraints)
         browserConstraints.removeAll(keepingCapacity: true)
-        activeTab.webView.removeFromSuperview()
+        // 播放中直接摘掉视图会让 WebKit 的 GPU 进程拿着已失效的合成层继续送帧，
+        // 整个 app 随之被带崩——所以先停播放，再从父视图上摘下来。
+        // 这正是"播视频时拖动第三列必闪退"的成因：拖动会连续触发 release/claim。
+        activeTab.webView.pauseAllMediaPlayback { [webView = activeTab.webView] in
+            webView.removeFromSuperview()
+        }
     }
 
     func suspendMedia() {
         for tab in tabStorage {
+            // `pauseAllMediaPlayback` 只管主 frame。B 站把播放器放在 <iframe> 里，
+            // 只调它的话面板收起后声音照旧——所以再往所有子 frame 里下一道暂停。
             tab.webView.pauseAllMediaPlayback(completionHandler: nil)
+            tab.webView.evaluateJavaScript(
+                BrowserMediaLifecycle.pauseInAllFramesScript,
+                in: nil,
+                in: .page
+            ) { _ in }
         }
     }
 
@@ -1716,6 +1737,25 @@ private final class BrowserContainerView: NSView {
 
 @MainActor
 enum BrowserMediaLifecycle {
+    /// 暂停当前页 **和所有同源子 frame** 里的音视频。
+    /// 跨源 iframe 读不到（会抛异常），逐个 try 掉即可——B 站主站的播放器是同源的。
+    static let pauseInAllFramesScript = """
+    (() => {
+      const pause = doc => {
+        try {
+          doc.querySelectorAll('video,audio').forEach(media => {
+            try { media.pause(); } catch (_) {}
+          });
+        } catch (_) {}
+      };
+      pause(document);
+      for (const frame of Array.from(document.querySelectorAll('iframe'))) {
+        try { if (frame.contentDocument) pause(frame.contentDocument); } catch (_) {}
+      }
+      return true;
+    })()
+    """
+
     static let shutdownScript = """
     (() => {
       document.querySelectorAll('video,audio').forEach(media => {

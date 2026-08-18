@@ -27,6 +27,17 @@ final class WorkspaceStateTests: XCTestCase {
         )
     }
 
+    /// 收起第三列时 B 站的声音要真的停。`pauseAllMediaPlayback` 只管主 frame，
+    /// 而播放器在 <iframe> 里，所以必须另有一段脚本遍历子 frame。
+    @MainActor
+    func testSuspendScriptReachesMediaInsideChildFrames() {
+        let script = BrowserMediaLifecycle.pauseInAllFramesScript
+        XCTAssertTrue(script.contains("iframe"))
+        XCTAssertTrue(script.contains("contentDocument"))
+        XCTAssertTrue(script.contains("video,audio"))
+        XCTAssertTrue(script.contains("pause()"))
+    }
+
     func testToolTabsShareTheSameHeaderBaselineAsTheOtherColumns() {
         // 三列列头共用一条中线。侧栏和中间列都往上提去对齐红绿灯，
         // 这一列原来反而下推 8pt，于是标签条明显低于左边两列。
