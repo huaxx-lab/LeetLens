@@ -657,6 +657,9 @@ private struct TrailingWindowChrome: View {
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
                     .background { Color.clear.titlebarControlGroup() }
+                    // 整行为对齐红绿灯上提了 6pt，胶囊跟着上去就贴到窗口圆角上了。
+                    // 这里把它单独压回来，让它与窗口顶边留出与右边缘一致的呼吸。
+                    .offset(y: workspace.isWindowFullScreen ? 0 : 4)
             }
         }
         .opacity(workspace.isSettingsPresented && !workspace.isToolWorkspacePresented ? 0 : 1)

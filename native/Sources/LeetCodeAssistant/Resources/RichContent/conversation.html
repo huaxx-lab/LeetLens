@@ -48,6 +48,11 @@
     strong { font-weight: 600; color: color-mix(in srgb, CanvasText 96%, transparent); }
     strong code, code strong { font-weight: 500; }
     h1 { font-size: 1.45rem; } h2 { font-size: 1.25rem; } h3 { font-size: 1.08rem; } h4 { font-size: 1rem; }
+    /* 长回答里章节之间要能一眼分段：标题上方留白比下方大一倍，
+       分隔线做淡，不要在正文中间拉出一道硬黑线。 */
+    .body h2 { margin-top: 1.5em; padding-bottom: .3em; border-bottom: 1px solid color-mix(in srgb, CanvasText 8%, transparent); }
+    .body h3 { margin-top: 1.35em; }
+    .body hr { height: 1px; margin: 1.6em 0; border: 0; background: color-mix(in srgb, CanvasText 10%, transparent); }
     p, ul, ol, blockquote, table { margin: .72em 0; }
     /* 浏览器默认 40px 缩进对中文正文太深，正文会被整体推开。 */
     ul, ol { padding-left: 1.45em; }
@@ -55,9 +60,16 @@
     li::marker { color: color-mix(in srgb, CanvasText 45%, transparent); }
     a { color: #0a84ff; text-decoration: none; }
     blockquote { border-left: 3px solid #0a84ff; margin-left: 0; padding: 2px 0 2px 13px; color: color-mix(in srgb, CanvasText 67%, transparent); }
-    .table-scroll { overflow: auto; border: 1px solid color-mix(in srgb, CanvasText 12%, transparent); border-radius: 7px; }
-    table { width: 100%; border-collapse: collapse; margin: 0; }
-    th, td { padding: 7px 10px; border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent); text-align: left; }
+    /* 表格：表头压深、行间斑马纹、首列当行标题。对比列是最常见的用法
+       （「这题 vs 那题」），不给表头和首列做区分的话整张表是一片均匀的字。 */
+    .table-scroll { overflow: auto; border: 1px solid color-mix(in srgb, CanvasText 11%, transparent); border-radius: 10px; margin: 1em 0; }
+    table { width: 100%; border-collapse: collapse; margin: 0; font-size: 13.5px; }
+    th, td { padding: 10px 14px; border-bottom: 1px solid color-mix(in srgb, CanvasText 8%, transparent); text-align: left; vertical-align: top; }
+    thead th { position: sticky; top: 0; z-index: 1; font-weight: 600; white-space: nowrap; background: color-mix(in srgb, CanvasText 5%, Canvas); border-bottom-color: color-mix(in srgb, CanvasText 14%, transparent); }
+    /* 首列多半是行标题（「条件」「你踩的坑」），压一档颜色但不加粗，避免和表头抢。 */
+    tbody td:first-child { color: color-mix(in srgb, CanvasText 62%, transparent); white-space: nowrap; }
+    tbody tr:nth-child(even) { background: color-mix(in srgb, CanvasText 2.5%, transparent); }
+    tbody tr:hover { background: color-mix(in srgb, CanvasText 5%, transparent); }
     tr:last-child td { border-bottom: 0; }
     .visual-block { margin: 18px 0; border: 0; overflow: visible; background: transparent; }
     .visual-head { height: 40px; padding: 0 8px 0 12px; display: flex; align-items: center; gap: 7px; color: color-mix(in srgb, CanvasText 50%, transparent); font-size: 12px; }
@@ -119,6 +131,15 @@
     .agent-video-cover { width: 122px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 7px; background: color-mix(in srgb, CanvasText 8%, Canvas); align-self: start; display: block; }
     .agent-video-cover.is-placeholder { display: grid; place-items: center; color: color-mix(in srgb, CanvasText 35%, transparent); font-size: 18px; }
     .agent-video .agent-title { margin-top: 1px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    /* 正文里裸露的长链接：换成一张可点的窄卡，替掉又长又难点的蓝色 URL。
+       站点色只用在左侧色块和 hover 上，正文整体仍是中性配色。 */
+    .inline-link-card { display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 9px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, CanvasText 9%, transparent); background: color-mix(in srgb, CanvasText 2%, Canvas); cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+    .inline-link-card:hover { background: color-mix(in srgb, var(--link-tint, #6b7280) 7%, Canvas); border-color: color-mix(in srgb, var(--link-tint, #6b7280) 30%, transparent); }
+    .inline-link-glyph { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 7px; font-size: 11px; color: #fff; background: var(--link-tint, #6b7280); }
+    .inline-link-body { display: flex; flex-direction: column; min-width: 0; }
+    .inline-link-title { font-size: 13px; font-weight: 500; }
+    .inline-link-sub { font-size: 11.5px; color: color-mix(in srgb, CanvasText 52%, transparent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .inline-link-caret { margin-left: auto; opacity: .4; flex: none; }
     .agent-running { display: inline-flex; gap: 3px; }
     .agent-running i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .35; animation: agentPulse 1s infinite; }
     .agent-running i:nth-child(2) { animation-delay: .15s; }
@@ -280,6 +301,62 @@
     const displayUser = text => String(text || '').replace(/^【任务】[\s\S]*?【浏览器当前选区】\s*/,'').replace(/^【浏览器当前选区】\s*/,'').trim();
     const renderUserInline = text => escapeHtml(displayUser(text)).replace(/`([^`\n]+)`/g, '<code>$1</code>');
     const sanitizeRich = html => DOMPurify.sanitize(html,{USE_PROFILES:{html:true,mathMl:true},ADD_ATTR:['target','rel','aria-label']});
+    /// 正文里裸露的长链接渲染成卡片。
+    ///
+    /// 模型经常写成「链接：https://…」独占一行，蓝色长 URL 又长又难点，
+    /// 力扣题解链接尤其能占满两行。这里把**独占一行/一个列表项**的裸链换成一张窄卡：
+    /// 左侧站点色块、中间标题与站点信息、右侧箭头，点击走 agentJump 的 url 分支。
+    /// 句子中间的行内链接保持原样，避免打断行文。
+    const INLINE_LINK_KINDS = [
+      {
+        // B 站视频：卡上直接标出 bvid，一眼能认出是哪个视频。
+        pattern: /^https?:\/\/(?:www\.)?bilibili\.com\/video\/(BV[0-9A-Za-z]+)\/?(?:[?#].*)?$/,
+        glyph: '▶',
+        tint: '#fb7299',
+        title: '在 B 站打开视频',
+        subtitle: id => `bilibili.com · ${id}`
+      },
+      {
+        // 力扣题解：URL 里的 slug 是拼音串，没有可读性，只标出题目 slug。
+        pattern: /^https?:\/\/leetcode\.cn\/problems\/([a-z0-9-]+)\/solutions\/[^?#]*\/?(?:[?#].*)?$/i,
+        glyph: '解',
+        tint: '#af52de',
+        title: '打开这篇力扣题解',
+        subtitle: id => `leetcode.cn · ${id}`
+      },
+      {
+        pattern: /^https?:\/\/leetcode\.cn\/problems\/([a-z0-9-]+)\/?(?:[?#].*)?$/i,
+        glyph: '题',
+        tint: '#ffa116',
+        title: '打开这道题',
+        subtitle: id => `leetcode.cn · ${id}`
+      }
+    ];
+    const decorateInlineLinks = root => {
+      for (const anchor of Array.from(root.querySelectorAll('a[href]'))) {
+        const href = anchor.getAttribute('href').trim();
+        // 链接文本必须就是 URL 本身（模型贴的裸链），否则说明作者是有意写成行内文字链。
+        if (anchor.textContent.trim() !== href) continue;
+        const kind = INLINE_LINK_KINDS.find(item => item.pattern.test(href));
+        if (!kind) continue;
+        const host = anchor.closest('li') || anchor.closest('p');
+        if (!host) continue;
+        // 宿主里除了「链接：」这类前缀外不该有别的实质内容，否则会吃掉正文。
+        const rest = host.textContent.trim().replace(href, '').trim();
+        if (rest && !/^[:：\-—\s]*(链接|地址|原文)?[:：\-—\s]*$/.test(rest)) continue;
+        const id = kind.pattern.exec(href)[1];
+        const card = document.createElement('div');
+        card.className = 'inline-link-card';
+        card.style.setProperty('--link-tint', kind.tint);
+        card.dataset.agentJump = 'url';
+        card.dataset.agentId = href;
+        card.innerHTML = `<span class="inline-link-glyph">${escapeHtml(kind.glyph)}</span>`
+          + `<span class="inline-link-body"><span class="inline-link-title">${escapeHtml(kind.title)}</span>`
+          + `<span class="inline-link-sub">${escapeHtml(kind.subtitle(id))}</span></span>`
+          + `<span class="inline-link-caret">›</span>`;
+        host.replaceWith(card);
+      }
+    };
     const renderRichText = text => sanitizeRich(markdown.render(String(text||'')));
     /// 思考过程通常先于正文写完，之后每次流式重渲染都是同一份文本——记忆化避开重复解析。
     const thinkingMemo = memo(key => renderRichText(key.slice(1)), 40);
@@ -431,6 +508,7 @@
       const openAgents=new Set([...article.querySelectorAll('.agent-card[open]')].map(node=>node.dataset.runId||''));
       article.innerHTML=innerHTMLFor(message);
       buildInlineImageGalleries(article);
+      decorateInlineLinks(article);
       article.querySelectorAll('details').forEach((node,index)=>{if(open[index])node.open=true;});
       if(openAgents.size)article.querySelectorAll('.agent-card').forEach(node=>{if(openAgents.has(node.dataset.runId||''))node.setAttribute('open','');});
     };
@@ -459,12 +537,14 @@
         } else {
           article=buildArticle(message);
           buildInlineImageGalleries(article);
+      decorateInlineLinks(article);
           renderedSigs.set(message.id,sig);
           host.insertBefore(article,cursor);
         }
         cursor=article.nextSibling;
       }
       buildInlineImageGalleries(host);
+      decorateInlineLinks(host);
       await mountVisuals(host);
       const lastID=host.lastElementChild?.dataset?.messageId||'';
       if(wasNearBottom||lastID!==previousLastID) window.scrollTo({top:document.documentElement.scrollHeight,left:0,behavior:previousLastID?'smooth':'instant'});
@@ -483,6 +563,7 @@
       if(article){ applyInner(article,message); }
       else { article=buildArticle(message); host.appendChild(article); }
       buildInlineImageGalleries(article);
+      decorateInlineLinks(article);
       renderedSigs.set(message.id,sig);
       await mountVisuals(article);
       if(wasNearBottom)window.scrollTo({top:document.documentElement.scrollHeight,left:0,behavior:'instant'});

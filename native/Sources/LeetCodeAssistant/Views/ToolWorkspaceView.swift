@@ -35,6 +35,8 @@ struct ToolWorkspaceView: View {
         .onChange(of: workspace.isToolWorkspacePresented) { _, isPresented in
             if !isPresented { browserSession.suspendMedia() }
         }
+        // 恢复上次的页面推迟到这里：启动时第三列没打开就不该偷偷加载。
+        .task { browserSession.activateIfNeeded() }
         .onReceive(browserSession.$currentAddress.combineLatest(browserSession.$pageTitle)) { address, title in
             guard let url = URL(string: address) else { return }
             try? dataStore.recordVideoVisit(url: url, title: title)
@@ -1067,11 +1069,20 @@ final class BrowserSession: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.suspendMedia() }
         }
-        restoreIfNeeded(activeTab)
+        // 这里**不**恢复上次的页面。启动时第三列多半还没打开，提前导航等于
+        // 让上次那个 B 站视频在看不见的地方就开始加载甚至出声。
+        // 真正的恢复推迟到 `activateIfNeeded()`——第三列首次真的要显示时。
         publishState()
     }
 
     func open(_ url: URL, inNewTab: Bool = true) {
+        // 同一个链接反复点，应该回到它已经开着的那个标签，而不是一直堆新标签。
+        // 浏览器里点站内链接会走 `navigate`，不经过这里，所以这条只影响
+        // 「从对话/来源列表打开外部链接」这类入口——正是重复开标签的来源。
+        if let existing = tabStorage.first(where: { BrowserSession.sameDocument($0.webView.url ?? $0.lastRequestedURL ?? $0.pendingRestoreURL, url) }) {
+            activate(existing)
+            return
+        }
         let activeTabHasPage = hasPage(activeTab)
         guard inNewTab,
               !BrowserTabOpeningPolicy.shouldReuseActiveTab(
@@ -1087,6 +1098,23 @@ final class BrowserSession: ObservableObject {
         tabStorage.append(tab)
         activate(tab)
         navigate(tab, to: url)
+    }
+
+    /// 两个地址是不是"同一篇文档"。用于「同一个链接点第二次要回到原标签」。
+    /// 忽略 scheme、末尾斜杠、`www.` 前缀和 fragment；查询串保留
+    /// （B 站的 `?p=2` 是不同分 P，力扣的 `?envType=` 也可能是不同入口）。
+    nonisolated static func sameDocument(_ lhs: URL?, _ rhs: URL?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        func key(_ url: URL) -> String? {
+            guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+            components.fragment = nil
+            guard let host = components.host?.lowercased() else { return nil }
+            let path = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+            let query = components.query.map { "?\($0)" } ?? ""
+            return host.hasPrefix("www.") ? "\(host.dropFirst(4))\(path)\(query)" : "\(host)\(path)\(query)"
+        }
+        guard let left = key(lhs), let right = key(rhs) else { return false }
+        return left == right
     }
 
     private func hasPage(_ tab: Tab) -> Bool {
@@ -1225,12 +1253,24 @@ final class BrowserSession: ObservableObject {
         activeContainer = nil
         NSLayoutConstraint.deactivate(browserConstraints)
         browserConstraints.removeAll(keepingCapacity: true)
-        // 播放中直接摘掉视图会让 WebKit 的 GPU 进程拿着已失效的合成层继续送帧，
-        // 整个 app 随之被带崩——所以先停播放，再从父视图上摘下来。
-        // 这正是"播视频时拖动第三列必闪退"的成因：拖动会连续触发 release/claim。
-        activeTab.webView.pauseAllMediaPlayback { [webView = activeTab.webView] in
+        let webView = activeTab.webView
+        // 只是换个容器（放大 / 还原会把 webview 从 inspector 搬进独占列），
+        // 这种"搬家"下一拍就会 claim 回来，停播放会让视频莫名其妙断掉。
+        // 真正离场（收起第三列）才停——那条路径由 `.suspendToolMedia` 负责。
+        //
+        // 但摘视图这一步无论哪种情况都要等一拍：播放中同帧 removeFromSuperview，
+        // WebKit 的 GPU 进程会拿着已失效的合成层继续送帧，把整个 app 带崩。
+        DispatchQueue.main.async { [weak self] in
+            // 这一拍里已经被新宿主认领走了，就不该再摘——摘了会把画面弄没。
+            guard self?.activeContainer == nil || webView.superview !== self?.activeContainer else { return }
             webView.removeFromSuperview()
         }
+    }
+
+    /// 第三列首次真正可见时才把上次的页面加载回来。
+    /// 幂等：之后每次显示都会调，但 `pendingRestoreURL` 只在第一次有值。
+    func activateIfNeeded() {
+        restoreIfNeeded(activeTab)
     }
 
     func suspendMedia() {

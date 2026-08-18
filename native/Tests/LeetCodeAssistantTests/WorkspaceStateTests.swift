@@ -27,6 +27,26 @@ final class WorkspaceStateTests: XCTestCase {
         )
     }
 
+    /// 同一个链接点第二次要回到已开的那个标签，而不是一直堆新标签。
+    func testSameDocumentMatchingIgnoresCosmeticURLDifferences() {
+        func url(_ value: String) -> URL { URL(string: value)! }
+        // scheme、www.、末尾斜杠、fragment 都不影响"是不是同一篇"。
+        XCTAssertTrue(BrowserSession.sameDocument(
+            url("https://www.bilibili.com/video/BV1XoLPz9EmM/"),
+            url("http://bilibili.com/video/BV1XoLPz9EmM#reply")
+        ))
+        // 查询串要保留：B 站分 P、力扣入口参数都是不同页面。
+        XCTAssertFalse(BrowserSession.sameDocument(
+            url("https://www.bilibili.com/video/BV1XoLPz9EmM?p=1"),
+            url("https://www.bilibili.com/video/BV1XoLPz9EmM?p=2")
+        ))
+        XCTAssertFalse(BrowserSession.sameDocument(
+            url("https://www.bilibili.com/video/BV1XoLPz9EmM"),
+            url("https://www.bilibili.com/video/BV1mbFrzyEkj")
+        ))
+        XCTAssertFalse(BrowserSession.sameDocument(nil, url("https://leetcode.cn/")))
+    }
+
     /// 收起第三列时 B 站的声音要真的停。`pauseAllMediaPlayback` 只管主 frame，
     /// 而播放器在 <iframe> 里，所以必须另有一段脚本遍历子 frame。
     @MainActor
