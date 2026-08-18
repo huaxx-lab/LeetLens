@@ -14,6 +14,8 @@ struct ConversationGenerationSnapshot: Equatable {
     var detail: String?
     var reasoning = ""
     var toolCalls: [String] = []
+    /// 本轮跑过的本地工具（ReAct）。界面按它渲染工具卡片。
+    var agentRuns: [AgentToolRun] = []
     var startedAt = Date.now
     var providerID = ""
     var model = ""
@@ -114,8 +116,13 @@ struct ConversationStreamDelta: Equatable {
     var content = ""
     var reasoning = ""
     var toolCalls: [String] = []
+    /// 本轮新增或更新的本地工具调用。按 `id` 覆盖式合并——
+    /// 同一次调用会先后来两条（开始 / 完成），后者带着结果。
+    var agentRuns: [AgentToolRun] = []
 
-    var isEmpty: Bool { content.isEmpty && reasoning.isEmpty && toolCalls.isEmpty }
+    var isEmpty: Bool {
+        content.isEmpty && reasoning.isEmpty && toolCalls.isEmpty && agentRuns.isEmpty
+    }
 
     mutating func append(_ chunk: ChatStreamChunk) {
         switch chunk {
@@ -125,6 +132,12 @@ struct ConversationStreamDelta: Equatable {
             reasoning += value
         case .toolCall(let name):
             if !toolCalls.contains(name) { toolCalls.append(name) }
+        case .agentToolStarted(let run), .agentToolFinished(let run):
+            if let index = agentRuns.firstIndex(where: { $0.id == run.id }) {
+                agentRuns[index] = run
+            } else {
+                agentRuns.append(run)
+            }
         }
     }
 }

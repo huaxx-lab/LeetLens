@@ -68,6 +68,23 @@ final class CodeRenderingContractTests: XCTestCase {
         XCTAssertTrue(graph.contains("rubberwires"))
     }
 
+    /// 工具卡片的三条行为契约：
+    /// 1. 默认收起——`agentCards` 不再给完成的卡片加 `open`；
+    /// 2. 视频布局存在（B 站检索结果靠它渲染）；
+    /// 3. 消息签名包含 `agentRuns`——缺了它，流式期间工具卡片永远不更新。
+    func testAgentCardsAreCollapsedByDefaultAndSignatureCoversRuns() throws {
+        let conversation = try resource("conversation", extension: "html")
+        XCTAssertTrue(conversation.contains("search_bilibili_videos"))
+        XCTAssertTrue(conversation.contains("agentVideoItem"))
+        XCTAssertTrue(conversation.contains("agent-article"))
+        // 默认收起：渲染完成卡片的模板里没有自动 open 属性。
+        XCTAssertFalse(conversation.contains("? ' open' : ''"))
+        // 签名里必须带上 agentRuns，否则流式期间卡片不刷新。
+        XCTAssertTrue(conversation.contains("m.agentRuns||''"))
+        // 流式重绘要能恢复手动展开的卡片。
+        XCTAssertTrue(conversation.contains("openAgents"))
+    }
+
     /// 高亮记忆化的键是 `语言 + 分隔符 + 源码`，读回来时按分隔符切。
     /// 分隔符写成 `'\\u0000'`（JS 源码里的双反斜杠）会得到 6 个字符的字面量，
     /// 而切分只跳 1 个字符，于是没有语言的代码块被渲染成 `u0000<源码>`。

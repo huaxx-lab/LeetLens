@@ -82,6 +82,8 @@ struct ConversationTranscriptMessage: Identifiable, Hashable, Sendable {
     let createdAt: Date
     var artifacts: [ConversationArtifact] = []
     var toolCalls: [String] = []
+    /// 生成这条回答时跑过的本地工具调用（ReAct）。存档后重开会话仍能看到卡片。
+    var agentRuns: [AgentToolRun] = []
     var providerID = ""
     var model = ""
 }
@@ -2157,6 +2159,9 @@ final class LegacyDataStore {
                 ["type": $0.type, "url": $0.url, "title": $0.title]
             },
             "toolCalls": message.toolCalls,
+            "agentRuns": message.agentRuns.map { run -> [String: Any] in
+                ["id": run.id, "name": run.name, "arguments": run.arguments, "result": run.resultJSON]
+            },
             "createdAt": Int(message.createdAt.timeIntervalSince1970 * 1_000)
         ]
         if !message.providerID.isEmpty { value["providerId"] = message.providerID }
@@ -2203,6 +2208,15 @@ final class LegacyDataStore {
                         )
                     },
                     toolCalls: message.stringArray("toolCalls"),
+                    agentRuns: (message["agentRuns"] as? [[String: Any]] ?? []).compactMap { raw in
+                        guard let id = raw["id"] as? String, let name = raw["name"] as? String else { return nil }
+                        return AgentToolRun(
+                            id: id,
+                            name: name,
+                            arguments: raw["arguments"] as? String ?? "",
+                            resultJSON: raw["result"] as? String ?? ""
+                        )
+                    },
                     providerID: message.string("providerId"),
                     model: message.string("model")
                 )

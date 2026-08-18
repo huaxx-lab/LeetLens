@@ -30,6 +30,8 @@ struct RichConversationWebView: NSViewRepresentable {
     let onQuestionActivity: (String, Bool) -> Void
     let onOpenURL: (URL) -> Void
     let onRetry: () -> Void
+    /// 工具卡片上的跳转：(kind, id)，由上层决定落到哪个页面。
+    let onAgentJump: (String, String) -> Void
     let contentTrailingInset: CGFloat
 
     func makeCoordinator() -> Coordinator {
@@ -43,6 +45,7 @@ struct RichConversationWebView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "questionRail")
         configuration.userContentController.add(context.coordinator, name: "conversationAction")
         configuration.userContentController.add(context.coordinator, name: "copyCode")
+        configuration.userContentController.add(context.coordinator, name: "agentJump")
         WebViewPresentation.applyFloatingScrollbars(in: configuration)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -58,6 +61,7 @@ struct RichConversationWebView: NSViewRepresentable {
         context.coordinator.onQuestionActivity = onQuestionActivity
         context.coordinator.onOpenURL = onOpenURL
         context.coordinator.onRetry = onRetry
+        context.coordinator.onAgentJump = onAgentJump
         context.coordinator.contentTrailingInset = contentTrailingInset
         context.coordinator.loadTemplate()
         return webView
@@ -70,6 +74,7 @@ struct RichConversationWebView: NSViewRepresentable {
         context.coordinator.onQuestionActivity = onQuestionActivity
         context.coordinator.onOpenURL = onOpenURL
         context.coordinator.onRetry = onRetry
+        context.coordinator.onAgentJump = onAgentJump
         context.coordinator.updateContentTrailingInset(contentTrailingInset)
         context.coordinator.renderIfNeeded()
         context.coordinator.scrollToQuestionIfNeeded(scrollTargetID, revision: scrollTargetRevision)
@@ -83,6 +88,7 @@ struct RichConversationWebView: NSViewRepresentable {
         var onQuestionActivity: ((String, Bool) -> Void)?
         var onOpenURL: ((URL) -> Void)?
         var onRetry: (() -> Void)?
+        var onAgentJump: ((String, String) -> Void)?
         var contentTrailingInset: CGFloat = 0
         private var isReady = false
         private var appliedContentTrailingInset: CGFloat?
@@ -170,6 +176,12 @@ struct RichConversationWebView: NSViewRepresentable {
             if message.name == "copyCode", let code = message.body as? String, !code.isEmpty {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(code, forType: .string)
+                return
+            }
+            if message.name == "agentJump",
+               let payload = message.body as? [String: Any],
+               let kind = payload["kind"] as? String, !kind.isEmpty {
+                onAgentJump?(kind, payload["id"] as? String ?? "")
                 return
             }
             guard
@@ -270,6 +282,7 @@ struct RichConversationWebView: NSViewRepresentable {
                 "detail": "",
                 "reasoning": "",
                 "tools": message.toolCalls.map(\.conversationToolDisplayName).joined(separator: ","),
+                "agentRuns": agentRunsJSON(message.agentRuns),
                 "artifacts": artifactsJSON(message.artifacts)
             ]
         }
@@ -283,13 +296,26 @@ struct RichConversationWebView: NSViewRepresentable {
                 "detail": generation.detail ?? "",
                 "reasoning": generation.reasoning,
                 "tools": generation.toolCalls.map(\.conversationToolDisplayName).joined(separator: ","),
+                "agentRuns": agentRunsJSON(generation.agentRuns),
                 "elapsed": "\(generation.elapsedSeconds)",
                 "artifacts": "[]"
             ]
         }
 
         private static func generationSignature(_ generation: ConversationGenerationSnapshot) -> String {
-            "\(generation.messageID):\(generation.content.hashValue):\(generation.reasoning.hashValue):\(generation.phase.rawValue):\(generation.detail ?? ""):\(generation.toolCalls.hashValue):\(generation.elapsedSeconds)"
+            "\(generation.messageID):\(generation.content.hashValue):\(generation.reasoning.hashValue):\(generation.phase.rawValue):\(generation.detail ?? ""):\(generation.toolCalls.hashValue):\(generation.agentRuns.hashValue):\(generation.elapsedSeconds)"
+        }
+
+        /// 工具卡片的数据。`result` 本身就是工具产出的那份 JSON 字符串，
+        /// 页面侧解析后按 `layout` 选渲染方式——界面看到的和模型看到的是同一份。
+        private static func agentRunsJSON(_ runs: [AgentToolRun]) -> String {
+            let value = runs.map { run -> [String: String] in
+                ["id": run.id, "name": run.name, "arguments": run.arguments, "result": run.resultJSON]
+            }
+            guard JSONSerialization.isValidJSONObject(value),
+                  let data = try? JSONSerialization.data(withJSONObject: value)
+            else { return "[]" }
+            return String(decoding: data, as: UTF8.self)
         }
 
         private static func artifactsJSON(_ artifacts: [ConversationArtifact]) -> String {

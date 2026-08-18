@@ -93,6 +93,54 @@
     .think-dot { display: none; }
     .think-body { padding: 1px 0 12px; font-size: 13px; line-height: 1.65; color: color-mix(in srgb, CanvasText 60%, transparent); }
     .think-body > :first-child { margin-top: 0; } .think-body > :last-child { margin-bottom: 0; }
+    /* ReAct 工具卡片。每个工具一张，图标和主色按工具区分，
+       内容布局由结果里的 layout 字段决定（list / timeline / metrics / checklist / video）。
+       卡片默认收起，只露一行摘要；点开头部才展开——用户不想一进对话就被大段卡片淹没。 */
+    .agent-card { border: 1px solid color-mix(in srgb, CanvasText 9%, transparent); border-radius: 13px; margin: 0 0 10px; overflow: hidden; background: color-mix(in srgb, CanvasText 2%, Canvas); box-shadow: 0 1px 2px color-mix(in srgb, CanvasText 4%, transparent); }
+    .agent-card[open] { background: color-mix(in srgb, CanvasText 2.5%, transparent); }
+    .agent-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; user-select: none; transition: background .15s ease; }
+    .agent-head:hover { background: color-mix(in srgb, var(--agent-tint, #6b7280) 8%, transparent); }
+    .agent-head .glyph { width: 18px; height: 18px; display: grid; place-items: center; font-size: 10.5px; border-radius: 6px; color: #fff; background: var(--agent-tint, #6b7280); flex: none; }
+    .agent-head .agent-summary { font-weight: 400; font-size: 12px; color: color-mix(in srgb, CanvasText 58%, transparent); margin-left: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agent-head .agent-caret { margin-left: auto; opacity: .45; transition: transform .15s ease; flex: none; }
+    .agent-card[open] .agent-caret { transform: rotate(90deg); }
+    .agent-card:not([open]) .agent-body { display: none; }
+    .agent-body { padding: 2px 12px 12px; }
+    /* 题解正文专属渲染区：跟列表条目区分开，像一篇嵌在对话里的小文章。
+       不限高——正文在工具侧已截到 6000 字，再套一层滚动区会出现吞滚轮的嵌套滚动。 */
+    .agent-article { margin-top: 4px; padding: 14px 16px; border-radius: 10px; border: 1px solid color-mix(in srgb, CanvasText 8%, transparent); background: Canvas; font-size: 13.5px; line-height: 1.72; }
+    .agent-article > :first-child { margin-top: 0; }
+    .agent-article > :last-child { margin-bottom: 0; }
+    .agent-article h1, .agent-article h2, .agent-article h3, .agent-article h4 { margin: .9em 0 .4em; }
+    /* 视频结果：缩略图在左、信息在右的横卡，整张卡可点，直接开 B 站。 */
+    .agent-videos { display: grid; gap: 8px; margin-top: 4px; }
+    .agent-video { display: grid; grid-template-columns: 122px minmax(0, 1fr); gap: 10px; padding: 8px; border-radius: 10px; border: 1px solid color-mix(in srgb, CanvasText 8%, transparent); background: Canvas; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+    .agent-video:hover { background: color-mix(in srgb, var(--agent-tint, #6b7280) 6%, Canvas); border-color: color-mix(in srgb, CanvasText 16%, transparent); }
+    .agent-video-cover { width: 122px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 7px; background: color-mix(in srgb, CanvasText 8%, Canvas); align-self: start; display: block; }
+    .agent-video-cover.is-placeholder { display: grid; place-items: center; color: color-mix(in srgb, CanvasText 35%, transparent); font-size: 18px; }
+    .agent-video .agent-title { margin-top: 1px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .agent-running { display: inline-flex; gap: 3px; }
+    .agent-running i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .35; animation: agentPulse 1s infinite; }
+    .agent-running i:nth-child(2) { animation-delay: .15s; }
+    .agent-running i:nth-child(3) { animation-delay: .3s; }
+    @keyframes agentPulse { 0%, 60%, 100% { opacity: .25; } 30% { opacity: .9; } }
+    .agent-item { padding: 8px 0; border-top: 1px solid color-mix(in srgb, CanvasText 7%, transparent); }
+    .agent-item:first-child { border-top: 0; }
+    .agent-item .agent-title { font-size: 13px; font-weight: 500; }
+    .agent-item .agent-sub { font-size: 11.5px; color: color-mix(in srgb, CanvasText 52%, transparent); margin-top: 1px; }
+    .agent-item .agent-detail { font-size: 12.5px; line-height: 1.55; margin-top: 4px; color: color-mix(in srgb, CanvasText 78%, transparent); }
+    .agent-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+    .agent-badge { font-size: 10.5px; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, CanvasText 7%, transparent); color: color-mix(in srgb, CanvasText 62%, transparent); }
+    .agent-badge.good { background: color-mix(in srgb, #34c759 16%, transparent); color: #1f7a37; }
+    .agent-badge.warn { background: color-mix(in srgb, #ff9500 18%, transparent); color: #9a5b00; }
+    .agent-jumps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .agent-jump { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); background: transparent; color: inherit; cursor: pointer; }
+    .agent-jump:hover { background: color-mix(in srgb, CanvasText 7%, transparent); }
+    .agent-metrics { display: flex; flex-wrap: wrap; gap: 14px; padding-top: 6px; }
+    .agent-metric b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+    .agent-metric span { font-size: 11px; color: color-mix(in srgb, CanvasText 52%, transparent); }
+    .agent-item .agent-index { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; font-size: 10px; font-variant-numeric: tabular-nums; background: color-mix(in srgb, CanvasText 9%, transparent); margin-right: 6px; vertical-align: 1px; }
+    .agent-item .agent-check { margin-right: 6px; opacity: .55; }
     .tool-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
     .tool-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; color: color-mix(in srgb, CanvasText 62%, transparent); background: color-mix(in srgb, CanvasText 6.5%, transparent); }
     .tool-chip svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -251,7 +299,7 @@
       if(!images.length)return '';
       return `<div class="artifact-gallery">${images.map(item=>`<figure><img loading="lazy" src="${escapeHtml(item.url)}" alt="${escapeHtml(item.title||'图片附件')}">${item.title?`<figcaption>${escapeHtml(item.title)}</figcaption>`:''}</figure>`).join('')}</div>`;
     };
-    const messageSignature = m => [m.role,m.state||'',m.content||'',m.detail||'',m.reasoning||'',m.elapsed||'',m.tools||'',m.artifacts||''].join('');
+    const messageSignature = m => [m.role,m.state||'',m.content||'',m.detail||'',m.reasoning||'',m.elapsed||'',m.tools||'',m.agentRuns||'',m.artifacts||''].join('');
     const innerHTMLFor = message => {
       const state=String(message.state||'');
       const parsed=splitThinking(message.content);
@@ -268,13 +316,100 @@
       }
       const tools=String(message.tools||'').split(',').map(s=>s.trim()).filter(Boolean);
       const toolsHTML=tools.length?`<div class="tool-chips">${tools.map(t=>`<span class="tool-chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 1-.1 1.2l2 1.6-2 3.4-2.4-1a7 7 0 0 1-2 1.2L14 21h-4l-.4-2.6a7 7 0 0 1-2-1.2l-2.4 1-2-3.4 2-1.6a7 7 0 0 1 0-2.4l-2-1.6 2-3.4 2.4 1a7 7 0 0 1 2-1.2L10 3h4l.4 2.6a7 7 0 0 1 2 1.2l2.4-1 2 3.4-2 1.6c.06.4.1.8.1 1.2Z"/></svg>${escapeHtml(t)}</span>`).join('')}</div>`:'';
+      const agentHTML=agentCards(message.agentRuns);
       const artifactsHTML=artifactGallery(message.artifacts);
       let status='';
       if(state==='generating'&&!thinking&&!parsed.content) status='<div class="generation-state"><span class="typing" aria-label="正在生成"><i></i><i></i><i></i></span></div>';
       if(state==='cancelled') status='<div class="generation-state">已停止生成</div>';
       if(state==='failed') status=`<div class="generation-state failed"><span>${escapeHtml(message.detail||'请求失败')}</span><button type="button" data-conversation-action="retry">重试</button></div>`;
-      return `${thinkHTML}${toolsHTML}<div class="body">${renderedBody}</div>${artifactsHTML}${status}`;
+      return `${thinkHTML}${toolsHTML}${agentHTML}<div class="body">${renderedBody}</div>${artifactsHTML}${status}`;
     };
+    /// 每个工具一套图标与主色，卡片一眼能认出模型去查了什么。
+    const AGENT_TOOLS = {
+      search_learning_records:   { glyph: '书', tint: '#5856d6' },
+      get_problem_history:       { glyph: '史', tint: '#ff9500' },
+      get_today_plan:            { glyph: '日', tint: '#34c759' },
+      get_weak_points:           { glyph: '弱', tint: '#ff3b30' },
+      search_past_conversations: { glyph: '忆', tint: '#0a84ff' },
+      get_leetcode_progress:     { glyph: '进', tint: '#00b4a6' },
+      search_leetcode_solutions: { glyph: '解', tint: '#af52de' },
+      read_leetcode_solution:    { glyph: '文', tint: '#8e6bd6' },
+      search_bilibili_videos:    { glyph: '视', tint: '#fb7299' }
+    };
+    const agentBadges = list => !Array.isArray(list) || !list.length ? '' :
+      `<div class="agent-badges">${list.map(b =>
+        `<span class="agent-badge ${b.tone === 'good' || b.tone === 'warn' ? b.tone : ''}">${escapeHtml(b.text)}</span>`
+      ).join('')}</div>`;
+    /// 跳转按钮。kind + id 原样交给原生侧，由它决定落到哪个页面。
+    const agentJumps = list => !Array.isArray(list) || !list.length ? '' :
+      `<div class="agent-jumps">${list.map(j =>
+        `<button type="button" class="agent-jump" data-agent-jump="${escapeHtml(j.kind)}" data-agent-id="${escapeHtml(j.id || '')}">${escapeHtml(j.label)}</button>`
+      ).join('')}</div>`;
+    const agentItem = (item, layout, index) => {
+      const lead = layout === 'timeline' ? `<span class="agent-index">${index + 1}</span>`
+        : layout === 'checklist' ? `<span class="agent-check">${item.done ? '✓' : '○'}</span>` : '';
+      return `<div class="agent-item">`
+        + `<div class="agent-title">${lead}${escapeHtml(item.title || '')}</div>`
+        + (item.subtitle ? `<div class="agent-sub">${escapeHtml(item.subtitle)}</div>` : '')
+        + (item.detail ? `<div class="agent-detail">${escapeHtml(item.detail)}</div>` : '')
+        + agentBadges(item.badges) + agentJumps(item.jumps)
+        + `</div>`;
+    };
+    /// 视频条目整张卡就是一个跳转：封面 + 标题 + 作者 + 播放量/时长徽章。
+    const agentVideoItem = item => {
+      const jump = Array.isArray(item.jumps) && item.jumps.length ? item.jumps[0] : null;
+      const cover = String(item.thumbnail || '');
+      const coverHTML = cover
+        ? `<img class="agent-video-cover" loading="lazy" src="${escapeHtml(cover)}" alt="">`
+        : `<span class="agent-video-cover is-placeholder">▶</span>`;
+      return `<div class="agent-video"${jump ? ` data-agent-jump="${escapeHtml(jump.kind)}" data-agent-id="${escapeHtml(jump.id || '')}"` : ''}>`
+        + coverHTML
+        + `<div class="agent-video-info">`
+        + `<div class="agent-title">${escapeHtml(item.title || '')}</div>`
+        + (item.subtitle ? `<div class="agent-sub">${escapeHtml(item.subtitle)}</div>` : '')
+        + (item.detail ? `<div class="agent-sub">${escapeHtml(item.detail)}</div>` : '')
+        + agentBadges(item.badges)
+        + `</div></div>`;
+    };
+    const agentCards = raw => {
+      let runs = [];
+      try { runs = JSON.parse(raw || '[]'); } catch (_) { return ''; }
+      if (!Array.isArray(runs) || !runs.length) return '';
+      return runs.map(run => {
+        const meta = AGENT_TOOLS[run.name] || { glyph: '?', tint: '#6b7280' };
+        let payload = null;
+        try { payload = run.result ? JSON.parse(run.result) : null; } catch (_) {}
+        const title = escapeHtml((payload && payload.title) || run.name);
+        const runID = escapeHtml(run.id || '');
+        // 还没有结果 = 正在跑，画三个点，不要先摆一张空卡。
+        if (!payload) {
+          return `<section class="agent-card" data-run-id="${runID}" style="--agent-tint:${meta.tint}">`
+            + `<header class="agent-head"><span class="glyph">${meta.glyph}</span>${title}`
+            + `<span class="agent-summary"><span class="agent-running"><i></i><i></i><i></i></span></span></header></section>`;
+        }
+        const layout = payload.layout || 'list';
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        let body = '';
+        if (Array.isArray(payload.metrics) && payload.metrics.length) {
+          body += `<div class="agent-metrics">${payload.metrics.map(m =>
+            `<div class="agent-metric"><b>${escapeHtml(String(m.value))}</b><span>${escapeHtml(m.label)}</span></div>`
+          ).join('')}</div>`;
+        }
+        // 读题解返回的是正文：单独的「文章」渲染区，Markdown 排版，别混进条目列表。
+        if (payload.markdown) body += `<div class="agent-article">${renderRichText(payload.markdown)}</div>`;
+        body += layout === 'video'
+          ? `<div class="agent-videos">${items.map(item => agentVideoItem(item)).join('')}</div>`
+          : items.map((item, index) => agentItem(item, layout, index)).join('');
+        body += agentJumps(payload.jumps);
+        // 默认收起：一行摘要足够判断这张卡值不值得展开。
+        return `<section class="agent-card" data-run-id="${runID}" style="--agent-tint:${meta.tint}">`
+          + `<header class="agent-head" data-agent-toggle><span class="glyph">${meta.glyph}</span>${title}`
+          + `<span class="agent-summary">${escapeHtml(payload.summary || '')}</span>`
+          + `<span class="agent-caret">›</span></header>`
+          + `<div class="agent-body">${body}</div></section>`;
+      }).join('');
+    };
+
     const buildArticle = message => {
       const article=document.createElement('article');
       article.className=`message ${message.role==='user'?'user':'assistant'}`;
@@ -291,10 +426,13 @@
     /// 不保留的话用户刚点开的思考过程会被立刻合上。
     const applyInner = (article, message) => {
       const open=[...article.querySelectorAll('details')].map(node=>node.open);
+      // 流式重绘会把整段 innerHTML 换掉；用户手动展开的工具卡片按 run id 记下来恢复，
+      // 否则模型每吐一个字，刚点开的卡片就被合回去。
+      const openAgents=new Set([...article.querySelectorAll('.agent-card[open]')].map(node=>node.dataset.runId||''));
       article.innerHTML=innerHTMLFor(message);
       buildInlineImageGalleries(article);
-      if(!open.length)return;
       article.querySelectorAll('details').forEach((node,index)=>{if(open[index])node.open=true;});
+      if(openAgents.size)article.querySelectorAll('.agent-card').forEach(node=>{if(openAgents.has(node.dataset.runId||''))node.setAttribute('open','');});
     };
     /// 增量渲染：按消息签名 diff，未变化的消息节点完全不动（不重排、不重放动画）——
     /// 这是 SSE 流式期间页面不闪烁的关键。
@@ -409,6 +547,19 @@
       }
       if(event.target.closest('[data-conversation-action="retry"]')){
         window.webkit?.messageHandlers?.conversationAction?.postMessage('retry');
+        return;
+      }
+      const jump=event.target.closest('[data-agent-jump]');
+      if(jump){
+        window.webkit?.messageHandlers?.agentJump?.postMessage({
+          kind: jump.dataset.agentJump, id: jump.dataset.agentId || ''
+        });
+        return;
+      }
+      const toggle=event.target.closest('[data-agent-toggle]');
+      if(toggle){
+        const card=toggle.closest('.agent-card');
+        if(card) card.toggleAttribute('open');
         return;
       }
       const image=event.target.closest('img');

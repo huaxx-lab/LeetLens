@@ -149,6 +149,8 @@ final class WorkspaceState {
         didSet { recordLocation() }
     }
     var selectedLearningRecordID: String?
+    /// 外部（工具卡片、洞察页）想让刷题页打开哪道题。刷题页取用后自行清空。
+    var pendingLeetCodeSlug: String?
     var presentedSources: [ContextItem] = []
     var isSettingsPresented = false
     var isUsagePresented = false
@@ -158,6 +160,9 @@ final class WorkspaceState {
     var questionScrollRequestVersion = 0
     var questionRailPulse = 0
     var conversationGeneration: ConversationGenerationSnapshot?
+    /// 本进程已经主动呈现过哪一天的简报。只做会话级防抖；真正的跨启动去重
+    /// 由简报消息的稳定 id 完成，因此不会往 UserDefaults 再藏一份业务状态。
+    var presentedDailyBriefDay = ""
     var queuedConversationDrafts: [QueuedConversationDraft] = []
     var queuedConversationID: String?
     @ObservationIgnored var conversationGenerationTask: Task<Void, Never>?

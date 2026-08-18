@@ -21,6 +21,7 @@ struct ConversationWorkspaceView: View {
                     workspace.openURL(url)
                 },
                 onRetry: retryGeneration,
+                onAgentJump: handleAgentJump,
                 contentTrailingInset: contentTrailingInset
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -39,6 +40,10 @@ struct ConversationWorkspaceView: View {
             }
         }
         .animation(AppDesign.Motion.panelTransition, value: contentTrailingInset)
+        .task(id: dataStore.isDataReady) {
+            guard dataStore.isDataReady else { return }
+            presentDailyBriefIfNeeded()
+        }
     }
 
     private var isEmptyConversation: Bool {
@@ -80,6 +85,47 @@ struct ConversationWorkspaceView: View {
 
     private var visibleQueuedDrafts: [QueuedConversationDraft] {
         workspace.queuedConversationID == workspace.selectedConversationID ? workspace.queuedConversationDrafts : []
+    }
+
+    /// 一天只新建一份简报；同一天重启 app 时选中已经存在的那份，而不是复制。
+    /// 用户已选中历史会话或已经开始输入时绝不抢焦点。
+    private func presentDailyBriefIfNeeded() {
+        let snapshot = AgentDataSnapshot.capture(from: dataStore)
+        let brief = LearningAgentTools.dailyBrief(snapshot: snapshot)
+        guard workspace.presentedDailyBriefDay != brief.dayKey else { return }
+        workspace.presentedDailyBriefDay = brief.dayKey
+        guard workspace.selectedConversationID == nil,
+              workspace.conversationGeneration == nil,
+              workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+
+        if let existing = dataStore.conversations.first(where: { conversation in
+            conversation.messages.contains { $0.id == brief.messageID }
+        }) {
+            workspace.selectedConversationID = existing.id
+            return
+        }
+
+        let message = ConversationTranscriptMessage(
+            id: brief.messageID,
+            role: "assistant",
+            content: brief.content,
+            createdAt: .now,
+            toolCalls: brief.runs.map(\.name),
+            agentRuns: brief.runs,
+            providerID: "local-agent",
+            model: "deterministic-daily-brief"
+        )
+        do {
+            workspace.selectedConversationID = try dataStore.createConversation(
+                title: brief.title,
+                firstMessage: message
+            )
+        } catch {
+            // 主动能力不能挡住正常聊天；下次重新进入对话页时仍可再试。
+            workspace.presentedDailyBriefDay = ""
+            NSLog("Daily learning brief failed: %@", error.localizedDescription)
+        }
     }
 
     private func sendDraft(artifacts: [ConversationArtifact]) {
@@ -150,6 +196,14 @@ struct ConversationWorkspaceView: View {
             for name in delta.toolCalls where workspace.conversationGeneration?.toolCalls.contains(name) == false {
                 workspace.conversationGeneration?.toolCalls.append(name)
             }
+            for run in delta.agentRuns {
+                // 同一次调用会来两条（开始 / 完成），按 id 覆盖。
+                if let index = workspace.conversationGeneration?.agentRuns.firstIndex(where: { $0.id == run.id }) {
+                    workspace.conversationGeneration?.agentRuns[index] = run
+                } else {
+                    workspace.conversationGeneration?.agentRuns.append(run)
+                }
+            }
         }
         workspace.conversationGenerationTask = Task {
             do {
@@ -171,12 +225,20 @@ struct ConversationWorkspaceView: View {
                     continuityPrompt: continuityPrompt,
                     runtimeIdentity: runtimeIdentity
                 )
+                // 工具跑在主线程拍下的这份快照上：`LegacyDataStore` 是 @MainActor 的，
+                // 而 ReAct 循环在后台任务里；快照也保证一轮对话里模型看到的数据前后一致。
+                let toolContext = AgentDataSnapshot.capture(from: dataStore)
                 for try await chunk in service.stream(
                     messages: requestMessages,
                     reasoningLevel: workspace.reasoningLevel,
                     providerID: runtimeIdentity.providerID,
                     modelOverride: runtimeIdentity.model,
-                    usageConversationID: conversationID
+                    usageConversationID: conversationID,
+                    agentTools: Self.agentToolExecutor(
+                        snapshot: toolContext,
+                        dataStore: dataStore,
+                        conversationID: conversationID
+                    )
                 ) {
                     try Task.checkCancellation()
                     guard workspace.conversationGeneration?.conversationID == conversationID,
@@ -373,9 +435,21 @@ struct ConversationWorkspaceView: View {
         continuityPrompt: String?,
         runtimeIdentity: ConversationRuntimeIdentity
     ) -> [ChatRequestMessage] {
+        // 工具是"能力"，不是"义务"：不把它写成必须调用，否则问"快排怎么写"
+        // 也会先去翻一遍题库，白花时间和 token。
         let system = ChatRequestMessage(
             role: "system",
-            content: "你是一位资深算法工程师和 LeetCode 解题助手。始终使用中文，结论准确、清晰、可执行。算法题需给出思路、复杂度、完整代码和关键边界。只有用户明确要求时才生成 SVG 或 Mermaid 图解。"
+            content: """
+            你是一位资深算法工程师和 LeetCode 解题助手。始终使用中文，结论准确、清晰、可执行。            算法题需给出思路、复杂度、完整代码和关键边界。只有用户明确要求时才生成 SVG 或 Mermaid 图解。
+
+            你可以调用工具读取这位用户的本地学习档案——他的学习题库、力扣提交轨迹、            复习排期，以及力扣社区的题解。用与不用由你判断：
+            - 问题牵涉到"我"（我以前怎么错的、我掌握得怎么样、我今天该做什么）时先查，不要凭空猜。
+            - 讲一道具体题目前，先看他在这道题上的提交轨迹，针对他真实犯过的错来讲。
+            - 纯知识性问题（"快排怎么写"）直接回答，不必调用工具。
+            - 需要别人的解法时，先 search_leetcode_solutions 拿到 slug，再 read_leetcode_solution 读正文，            不要只看标题就下结论。
+
+            工具返回的是事实数据，据此作答；查不到就直说查不到，不要编造他的学习记录。
+            """
         )
         guard let conversation = dataStore.conversations.first(where: { $0.id == conversationID }) else {
             return [system]
@@ -391,6 +465,83 @@ struct ConversationWorkspaceView: View {
             settings: dataStore.settings
         )
         return [system, identity] + memory + continuity + managed
+    }
+
+    /// 工具卡片上的跳转。`kind` 决定落到哪个页面，`id` 是那个页面要选中的东西。
+    private func handleAgentJump(kind: String, id: String) {
+        switch kind {
+        case "learning":
+            if !id.isEmpty { workspace.selectedLearningRecordID = id }
+            workspace.selectedSection = .library
+        case "graph":
+            if !id.isEmpty { workspace.selectedLearningRecordID = id }
+            workspace.selectedSection = .knowledge
+        case "leetcode":
+            if !id.isEmpty { workspace.pendingLeetCodeSlug = id }
+            workspace.selectedSection = .leetCode
+        case "conversation":
+            if !id.isEmpty { workspace.selectedConversationID = id }
+            workspace.selectedSection = .conversation
+        case "plan":
+            workspace.selectedSection = .plan
+        case "review":
+            workspace.selectedSection = .review
+        case "url":
+            if let url = URL(string: id) { workspace.openURL(url) }
+        default:
+            break
+        }
+    }
+
+    /// ReAct 工具执行器。把 `LearningAgentTools` 需要的三条外部能力接上：
+    /// 跨会话检索、题解列表、题解正文。前者走本地 RAG，后两者走力扣公开接口。
+    @MainActor
+    private static func agentToolExecutor(
+        snapshot: AgentDataSnapshot,
+        dataStore: LegacyDataStore,
+        conversationID: String
+    ) -> AgentToolExecutor {
+        { name, arguments in
+            await LearningAgentTools.run(
+                name: name,
+                arguments: arguments,
+                snapshot: snapshot,
+                memorySearch: { query in
+                    let matches = await dataStore.searchMemory(
+                        query: query,
+                        currentConversationID: conversationID
+                    )
+                    return matches.prefix(4).map { match in
+                        AgentDataSnapshot.MemoryMatch(
+                            conversationID: match.conversationID,
+                            title: match.title,
+                            dateCaption: "相关度 \(match.score)",
+                            excerpt: String(match.content.prefix(400))
+                        )
+                    }
+                },
+                solutionSearch: { slug in
+                    guard let page = try? await LeetCodeAPIClient.shared.fetchSolutions(titleSlug: slug, first: 20)
+                    else { return [] }
+                    return page.items.map { item in
+                        LearningAgentTools.SolutionHit(
+                            slug: item.slug,
+                            title: item.title,
+                            author: item.authorName,
+                            summary: String(item.summary.prefix(240)),
+                            views: item.views,
+                            isOfficial: item.isOfficial
+                        )
+                    }
+                },
+                solutionRead: { slug in
+                    try? await LeetCodeAPIClient.shared.fetchSolutionArticle(slug: slug).markdown
+                },
+                videoSearch: { query in
+                    await BilibiliAPIClient.search(query: query)
+                }
+            ).json
+        }
     }
 
     private struct MemoryInjection {
@@ -451,6 +602,7 @@ struct ConversationWorkspaceView: View {
                 content: current.storedContent,
                 createdAt: .now,
                 toolCalls: current.toolCalls,
+                agentRuns: current.agentRuns,
                 providerID: current.providerID,
                 model: current.model
             ),
@@ -471,6 +623,7 @@ struct ConversationWorkspaceView: View {
                     content: snapshot.storedContent,
                     createdAt: .now,
                     toolCalls: snapshot.toolCalls,
+                    agentRuns: snapshot.agentRuns,
                     providerID: snapshot.providerID,
                     model: snapshot.model
                 ),
@@ -495,6 +648,7 @@ struct ConversationWorkspaceView: View {
                     content: snapshot.storedContent,
                     createdAt: .now,
                     toolCalls: snapshot.toolCalls,
+                    agentRuns: snapshot.agentRuns,
                     providerID: snapshot.providerID,
                     model: snapshot.model
                 ),

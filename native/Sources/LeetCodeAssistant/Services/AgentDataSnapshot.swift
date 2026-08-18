@@ -84,6 +84,11 @@ struct AgentDataSnapshot: Sendable {
         let isCompleted: Bool
     }
 
+    struct SlugTitle: Sendable {
+        let slug: String
+        let title: String
+    }
+
     struct MemoryMatch: Sendable {
         let conversationID: String
         let title: String
@@ -98,6 +103,8 @@ struct AgentDataSnapshot: Sendable {
     var weakCount = 0
     var planSummaryLine = ""
     var progressSummaryLine = ""
+    /// 题单里的 (slug, 标题)，只用来把模型给的中文题名解析成 slug。
+    var questionIndex: [SlugTitle] = []
     var progressMetrics: [Metric] = []
     var planProgress: [PlanProgress] = []
     private var problemsBySlug: [String: Problem] = [:]
@@ -138,6 +145,21 @@ struct AgentDataSnapshot: Sendable {
         Array(records.sorted { $0.effectiveMastery < $1.effectiveMastery }.prefix(limit))
     }
 
+    /// 把「和为 K 的子数组」「subarray-sum-equals-k」这类输入解析成 titleSlug。
+    /// 模型给的多半是中文题名，力扣接口只认 slug。
+    func resolveSlug(_ query: String) -> String? {
+        let needle = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return nil }
+        if problemsBySlug[needle] != nil { return needle }
+        if let exact = questionIndex.first(where: { $0.slug == needle || $0.title.lowercased() == needle }) {
+            return exact.slug
+        }
+        if let partial = questionIndex.first(where: { $0.title.lowercased().contains(needle) }) {
+            return partial.slug
+        }
+        return problem(matching: query)?.slug
+    }
+
     func problem(matching query: String) -> Problem? {
         let needle = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return nil }
@@ -168,6 +190,9 @@ struct AgentDataSnapshot: Sendable {
             .map(Self.task(from:))
 
         snapshot.problemsBySlug = Self.problems(from: dataStore)
+        snapshot.questionIndex = dataStore.leetCodeQuestions.map {
+            SlugTitle(slug: $0.titleSlug, title: $0.title)
+        }
         snapshot.progressMetrics = Self.metrics(from: dataStore)
         snapshot.progressSummaryLine = Self.progressSummary(from: dataStore)
         snapshot.planProgress = dataStore.leetCodePlans.prefix(6).map { plan in

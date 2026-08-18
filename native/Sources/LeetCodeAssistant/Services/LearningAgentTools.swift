@@ -4,8 +4,8 @@ import Foundation
 ///
 /// 和 `ProviderBuiltInTools` 是两回事——那边是供应商后端自己跑的联网搜索，
 /// 我们只声明、不执行；这边的每一个工具都由客户端读本地数据现算，模型拿到
-/// 结果后再决定要不要接着查。所以它走 Chat Completions 的 `tools`，
-/// 而不是 Responses 那条只有少数型号支持的链路。
+/// 结果后再决定要不要接着查。Chat Completions 与 Responses 两种函数调用协议
+/// 都支持；供应商内置的联网工具仍由后端执行，和这些本地函数互不替代。
 ///
 /// **只读**。写学习档案的路径一律不放进来：`learning.json` / `study-plan.json`
 /// 与 Electron 版共用同一份文件且没有文件锁，让模型无确认地写进去，
@@ -28,8 +28,8 @@ enum LearningAgentTools {
         }
     }
 
-    /// 卡片布局提示。六个工具共用一套 item 结构，靠这个字段挑渲染方式，
-    /// 比六套各写一遍好维护，也保证新增工具时界面不用跟着改。
+    /// 卡片布局提示。所有工具共用一套 item 结构，靠这个字段挑渲染方式，
+    /// 比每个工具各写一套好维护，也保证新增工具时界面不用跟着改。
     enum Layout: String, Sendable {
         /// 逐条列表：标题 + 副标题 + 正文 + 徽章 + 跳转
         case list
@@ -39,6 +39,8 @@ enum LearningAgentTools {
         case metrics
         /// 计划清单：带完成状态的勾选行
         case checklist
+        /// 视频结果：封面 + 元信息 + 打开链接
+        case video
     }
 
     // MARK: - 定义
@@ -136,6 +138,51 @@ enum LearningAgentTools {
             )
         ),
         Definition(
+            name: "search_leetcode_solutions",
+            title: "题解检索",
+            description: """
+            检索某道 LeetCode 题在力扣社区的题解列表，官方题解排在最前，其余按浏览量排序。\
+            返回每篇题解的 slug、标题、作者与摘要。用户问"这题有什么解法""看看别人怎么写的"时调用。\
+            拿到 slug 后可以再调用 read_leetcode_solution 读正文。problem 传题目名或 slug；\
+            keyword 可选，用来在标题和摘要里进一步筛（如"前缀和""双指针"）。
+            """,
+            parametersJSON: schema(
+                [
+                    "problem": ["type": "string", "description": "题目标题或 titleSlug"],
+                    "keyword": ["type": "string", "description": "可选，按解法关键词筛选"],
+                    "limit": ["type": "integer", "description": "最多返回几篇，默认 5，上限 10"]
+                ],
+                required: ["problem"]
+            )
+        ),
+        Definition(
+            name: "read_leetcode_solution",
+            title: "题解正文",
+            description: """
+            读取一篇力扣题解的正文（Markdown）。slug 来自 search_leetcode_solutions 的结果。\
+            正文可能很长，只会返回前一段。要给用户讲清楚某个解法时先读它，不要凭标题猜内容。
+            """,
+            parametersJSON: schema(
+                ["slug": ["type": "string", "description": "题解 slug，来自 search_leetcode_solutions"]],
+                required: ["slug"]
+            )
+        ),
+        Definition(
+            name: "search_bilibili_videos",
+            title: "B 站视频",
+            description: """
+            检索 B 站公开视频，按相关度返回算法、数据结构或题目讲解。用户问"找个视频讲讲"、"有没有 B 站教程"时调用；
+            返回标题、作者、时长、播放量和可直接打开的链接。只读取公开搜索结果，不登录、不点赞、不上传。
+            """,
+            parametersJSON: schema(
+                [
+                    "query": ["type": "string", "description": "题目名、知识点或解法关键词"],
+                    "limit": ["type": "integer", "description": "最多返回几条，默认 5，上限 10"]
+                ],
+                required: ["query"]
+            )
+        ),
+        Definition(
             name: "get_leetcode_progress",
             title: "刷题进度",
             description: """
@@ -152,16 +199,102 @@ enum LearningAgentTools {
         definitions.first { $0.name == name }
     }
 
+    // MARK: - 主动简报
+
+    /// 每天第一次进入对话页时展示的本地简报。不发模型请求：计划和薄弱点已经是
+    /// 确定性的本地事实，直接复用工具结果既更快，也避免仅仅打开页面就消耗额度。
+    struct DailyBrief: Sendable {
+        let dayKey: String
+        let title: String
+        let messageID: String
+        let content: String
+        let runs: [AgentToolRun]
+    }
+
+    static func dailyBrief(
+        snapshot: AgentDataSnapshot,
+        now: Date = .now,
+        calendar: Calendar = .current
+    ) -> DailyBrief {
+        let components = calendar.dateComponents([.year, .month, .day], from: now)
+        let year = components.year ?? 0
+        let month = components.month ?? 0
+        let day = components.day ?? 0
+        let dayKey = String(format: "%04d-%02d-%02d", year, month, day)
+        let plan = todayPlan(snapshot: snapshot)
+        let weak = weakPoints(limit: 3, snapshot: snapshot)
+
+        var paragraphs: [String] = []
+        if !snapshot.planSummaryLine.isEmpty {
+            paragraphs.append(snapshot.planSummaryLine + "。")
+        } else {
+            paragraphs.append("今天还没有排定的复习或学习任务。")
+        }
+        if snapshot.overdueCount > 0 {
+            paragraphs.append("其中有 **\(snapshot.overdueCount)** 项已经逾期，建议先清掉最早到期的内容。")
+        }
+        if let focus = snapshot.todayReviews.first ?? snapshot.weakest(limit: 1).first {
+            paragraphs.append("建议先从「**\(focus.title)**」开始；当前掌握度约为 **\(Int(focus.effectiveMastery))%**。")
+        } else {
+            paragraphs.append("当前没有待巩固项，可以直接告诉我今天想练的知识点。")
+        }
+        paragraphs.append("今日安排和最需要巩固的知识点已经整理在下面，卡片里的按钮可以直接打开对应页面。")
+
+        let planRun = AgentToolRun(
+            id: "daily_plan_\(dayKey)",
+            name: "get_today_plan",
+            arguments: "{}",
+            resultJSON: plan.json
+        )
+        let weakRun = AgentToolRun(
+            id: "daily_weak_\(dayKey)",
+            name: "get_weak_points",
+            arguments: #"{"limit":3}"#,
+            resultJSON: weak.json
+        )
+        return DailyBrief(
+            dayKey: dayKey,
+            title: "今日学习简报 · \(month)月\(day)日",
+            messageID: "m_daily_brief_\(dayKey)",
+            content: "## 今日学习简报\n\n" + paragraphs.joined(separator: "\n\n"),
+            runs: [planRun, weakRun]
+        )
+    }
+
     // MARK: - 执行
 
     /// 工具跑在数据快照上，不碰 `LegacyDataStore`。
     /// 快照在主线程构造一次，之后整个 ReAct 循环都用它——
     /// 中途数据变了也不要紧，一轮对话里模型看到的世界应当是一致的。
+    /// 题解检索命中的一篇。网络请求由调用方注入，工具层不直接依赖 `LeetCodeAPIClient`。
+    struct SolutionHit: Sendable {
+        let slug: String
+        let title: String
+        let author: String
+        let summary: String
+        let views: Int
+        let isOfficial: Bool
+    }
+
+    struct VideoHit: Sendable {
+        let bvid: String
+        let title: String
+        let description: String
+        let author: String
+        let coverURL: String
+        let duration: String
+        let playCount: Int
+        let publishedAt: String
+    }
+
     static func run(
         name: String,
         arguments: String,
         snapshot: AgentDataSnapshot,
-        memorySearch: @Sendable (String) async -> [AgentDataSnapshot.MemoryMatch]
+        memorySearch: @Sendable (String) async -> [AgentDataSnapshot.MemoryMatch],
+        solutionSearch: @Sendable (String) async -> [SolutionHit],
+        solutionRead: @Sendable (String) async -> String?,
+        videoSearch: @Sendable (String) async -> [VideoHit]
     ) async -> Output {
         let parsed = parseArguments(arguments)
         switch name {
@@ -178,6 +311,24 @@ enum LearningAgentTools {
             return pastConversations(query: parsed.string("query"), matches: matches)
         case "get_leetcode_progress":
             return leetCodeProgress(snapshot: snapshot)
+        case "search_leetcode_solutions":
+            let problem = parsed.string("problem")
+            guard let slug = snapshot.resolveSlug(problem) else {
+                return notFound(tool: name, title: "题解检索", query: problem, reason: "题单里没有找到「\(problem)」")
+            }
+            return solutions(
+                slug: slug,
+                problem: problem,
+                keyword: parsed.string("keyword"),
+                limit: parsed.limit,
+                hits: await solutionSearch(slug)
+            )
+        case "read_leetcode_solution":
+            let slug = parsed.string("slug")
+            return solutionArticle(slug: slug, markdown: await solutionRead(slug))
+        case "search_bilibili_videos":
+            let query = parsed.string("query")
+            return bilibiliVideos(query: query, limit: parsed.limit, hits: await videoSearch(query))
         default:
             return Output(payload: [
                 "tool": name,
@@ -388,6 +539,109 @@ enum LearningAgentTools {
                 ]
             },
             "jumps": [["kind": "leetcode", "id": "", "label": "打开刷题页"]]
+        ])
+    }
+
+    private static func notFound(tool: String, title: String, query: String, reason: String) -> Output {
+        Output(payload: [
+            "tool": tool,
+            "title": title,
+            "layout": Layout.list.rawValue,
+            "query": query,
+            "summary": reason,
+            "items": []
+        ])
+    }
+
+    /// 官方题解永远排最前——它是最该先看的那一篇；其余按浏览量。
+    private static func solutions(
+        slug: String,
+        problem: String,
+        keyword: String,
+        limit: Int,
+        hits: [SolutionHit]
+    ) -> Output {
+        let needle = keyword.lowercased()
+        let filtered = needle.isEmpty ? hits : hits.filter {
+            $0.title.lowercased().contains(needle) || $0.summary.lowercased().contains(needle)
+        }
+        // 关键词筛空了就退回全部，总比告诉用户"没有题解"强。
+        let pool = filtered.isEmpty ? hits : filtered
+        let ranked = pool.sorted { lhs, rhs in
+            lhs.isOfficial == rhs.isOfficial ? lhs.views > rhs.views : lhs.isOfficial
+        }
+        let items = ranked.prefix(limit).map { hit -> [String: Any] in
+            var badges: [[String: Any]] = []
+            if hit.isOfficial { badges.append(badge("官方题解", tone: "good")) }
+            if hit.views > 0 { badges.append(badge("\(hit.views) 次浏览", tone: "plain")) }
+            return [
+                "title": hit.title,
+                "subtitle": hit.author,
+                "detail": hit.summary,
+                "slug": hit.slug,
+                "badges": badges,
+                "jumps": [
+                    ["kind": "url", "id": "https://leetcode.cn/problems/\(slug)/solutions/\(hit.slug)/", "label": "在力扣打开"],
+                    ["kind": "leetcode", "id": slug, "label": "去做这道题"]
+                ]
+            ]
+        }
+        return Output(payload: [
+            "tool": "search_leetcode_solutions",
+            "title": "题解检索",
+            "layout": Layout.list.rawValue,
+            "query": problem,
+            "summary": items.isEmpty
+                ? "「\(problem)」暂时读不到题解"
+                : "「\(problem)」找到 \(items.count) 篇题解"
+                    + (keyword.isEmpty ? "" : "（关键词：\(keyword)）"),
+            "items": Array(items)
+        ])
+    }
+
+    private static func bilibiliVideos(query: String, limit: Int, hits: [VideoHit]) -> Output {
+        let items = hits.prefix(limit).map { hit -> [String: Any] in
+            var badges: [[String: Any]] = []
+            if hit.playCount > 0 { badges.append(badge("播放 \(hit.playCount)", tone: "plain")) }
+            if !hit.duration.isEmpty { badges.append(badge(hit.duration, tone: "plain")) }
+            return [
+                "title": hit.title,
+                "subtitle": hit.author,
+                "detail": hit.description,
+                "badges": badges,
+                "thumbnail": hit.coverURL,
+                "jumps": [
+                    ["kind": "url", "id": "https://www.bilibili.com/video/\(hit.bvid)", "label": "打开 B 站视频"]
+                ]
+            ]
+        }
+        return Output(payload: [
+            "tool": "search_bilibili_videos",
+            "title": "B 站视频",
+            "layout": Layout.video.rawValue,
+            "query": query,
+            "summary": items.isEmpty ? "没有找到「\(query)」的公开视频" : "找到 \(items.count) 个相关视频",
+            "items": Array(items)
+        ])
+    }
+
+    /// 正文按 6000 字截断：一篇长题解能轻松吃掉几千 token，
+    /// 而模型要的是解法本身，不是把整篇原样搬回来。
+    private static func solutionArticle(slug: String, markdown: String?) -> Output {
+        guard let markdown, !markdown.isEmpty else {
+            return notFound(tool: "read_leetcode_solution", title: "题解正文", query: slug, reason: "这篇题解读不到正文")
+        }
+        let limit = 6_000
+        let truncated = markdown.count > limit
+        let body = truncated ? String(markdown.prefix(limit)) : markdown
+        return Output(payload: [
+            "tool": "read_leetcode_solution",
+            "title": "题解正文",
+            "layout": Layout.list.rawValue,
+            "query": slug,
+            "summary": truncated ? "正文较长，只读了前 \(limit) 字" : "已读取全文",
+            "markdown": body,
+            "items": []
         ])
     }
 

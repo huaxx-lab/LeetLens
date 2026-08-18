@@ -114,6 +114,13 @@ struct LeetCodeWorkspaceView: View {
         }
         .onChange(of: dataStore.leetCodeActivity) { _, _ in rebuildActivityBoardCache() }
         .onChange(of: dataStore.activeLeetCodePlanID) { _, _ in rebuildActivityBoardCache() }
+        // 工具卡片里的「去做这道题」落在这里。取用后清空，
+        // 否则用户在页内换了题、再切回来又会被拽回去。
+        .task(id: workspace.pendingLeetCodeSlug) {
+            guard let slug = workspace.pendingLeetCodeSlug, !slug.isEmpty else { return }
+            selectedQuestionSlug = slug
+            workspace.pendingLeetCodeSlug = nil
+        }
         .onChange(of: selectedQuestionSlug) { _, _ in
             prepareEditor()
             // 换题就把提示清空，否则按钮上还挂着上一题的 "提示 2/3"。

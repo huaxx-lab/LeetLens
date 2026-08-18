@@ -16,7 +16,24 @@ enum ChatStreamChunk: Sendable, Equatable {
     case text(String)
     case reasoning(String)
     case toolCall(String)
+    /// 客户端函数调用开始（本地工具，界面据此立刻画一张"正在查…"的卡）
+    case agentToolStarted(AgentToolRun)
+    /// 客户端函数调用完成，`resultJSON` 同时喂给模型和界面
+    case agentToolFinished(AgentToolRun)
 }
+
+/// 一次客户端函数调用。`resultJSON` 是 `LearningAgentTools.Output.json`——
+/// 同一份数据既是回给模型的 tool 消息体，也是界面渲染卡片的数据源，
+/// 不存在"界面好看但模型看到的是另一套"。
+struct AgentToolRun: Sendable, Equatable, Hashable {
+    let id: String
+    let name: String
+    let arguments: String
+    var resultJSON = ""
+}
+
+/// 由调用方注入的工具执行器。ChatService 只管协议往返，不知道工具做什么。
+typealias AgentToolExecutor = @Sendable (_ name: String, _ arguments: String) async -> String
 
 enum ChatServiceError: LocalizedError {
     case missingSettings
@@ -68,7 +85,8 @@ final class ChatService: @unchecked Sendable {
         modelOverride: String? = nil,
         taskRoute: AITaskRoute = .conversation,
         usageConversationID: String? = nil,
-        deferredUsage: DeferredAIUsageAccounting? = nil
+        deferredUsage: DeferredAIUsageAccounting? = nil,
+        agentTools: AgentToolExecutor? = nil
     ) -> AsyncThrowingStream<ChatStreamChunk, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -87,56 +105,170 @@ final class ChatService: @unchecked Sendable {
                         taskRoute: taskRoute
                     )
                     configuration = loadedConfiguration
-                    var request = try makeRequest(
-                        configuration: loadedConfiguration,
-                        messages: messages,
-                        reasoningLevel: reasoningLevel
+                    let mode = Self.resolvedMode(
+                        declared: loadedConfiguration.mode,
+                        apiBase: loadedConfiguration.apiBase,
+                        model: loadedConfiguration.model
                     )
-                    request.timeoutInterval = 180
-                    requestStarted = true
-                    let (bytes, response) = try await session.bytes(for: request)
-                    guard let http = response as? HTTPURLResponse else {
-                        throw ChatServiceError.invalidResponse
+                    // Chat 与 Responses 都支持自定义函数，只是形状不同。必须两条都做：
+                    // 用户的默认供应商（deepseek-v4-flash）会解析成 responses，
+                    // 只做 chat 的话 agent 在最常用的那条链路上完全不工作。
+                    // Responses 侧我们的函数和供应商内置工具（联网搜索）同放在 tools 里，互不影响。
+                    let toolsEnabled = agentTools != nil && (mode == "chat" || mode == "responses")
+                    let usesResponsesProtocol = mode == "responses"
+                    var wireMessages = messages.map {
+                        ["role": $0.role, "content": $0.content] as [String: Any]
                     }
-                    guard (200..<300).contains(http.statusCode) else {
-                        var payload = ""
-                        for try await line in bytes.lines { payload += line }
-                        throw ChatServiceError.server(Self.serverMessage(from: payload, status: http.statusCode))
-                    }
-
                     var didYieldText = false
-                    var eventName = ""
-                    for try await line in bytes.lines {
-                        try Task.checkCancellation()
-                        if line.isEmpty {
-                            eventName = ""
-                            continue
+                    /// Responses 终止事件里带回的完整 output 条目（含 reasoning）。
+                    /// 下一轮要把它们原样回灌——不少供应商拒绝「上一轮思考丢了」的续写，
+                    /// 只送 function_call / function_call_output 会直接报错。
+                    var lastResponsesOutput: [[String: Any]]?
+
+                    // ReAct：模型要工具 → 本地跑 → 结果回灌 → 再问一轮。
+                    // 轮数封顶，免得模型自己和自己聊到天荒地老。
+                    for round in 0...(toolsEnabled ? Self.maximumAgentRounds : 0) {
+                        // 本轮的思考内容要单独留一份：Chat 协议续写时它得跟着
+                        // assistant 的 tool_calls 消息一起回传（reasoning_content）。
+                        var roundReasoning = ""
+                        lastResponsesOutput = nil
+                        var request = try makeRequest(
+                            configuration: loadedConfiguration,
+                            messages: messages,
+                            wireMessages: wireMessages,
+                            reasoningLevel: reasoningLevel,
+                            includesAgentTools: toolsEnabled
+                        )
+                        request.timeoutInterval = 180
+                        requestStarted = true
+                        let (bytes, response) = try await session.bytes(for: request)
+                        guard let http = response as? HTTPURLResponse else {
+                            throw ChatServiceError.invalidResponse
                         }
-                        if line.hasPrefix("event:") {
-                            eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-                            continue
+                        guard (200..<300).contains(http.statusCode) else {
+                            var payload = ""
+                            for try await line in bytes.lines { payload += line }
+                            throw ChatServiceError.server(Self.serverMessage(from: payload, status: http.statusCode))
                         }
-                        guard line.hasPrefix("data:") else { continue }
-                        let dataLine = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-                        if dataLine == "[DONE]" { break }
-                        guard let data = dataLine.data(using: .utf8),
-                              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                        else { continue }
-                        if let error = Self.streamError(from: object) { throw ChatServiceError.server(error) }
-                        if let usage = Self.usage(from: object) { usageAccumulator.merge(usage) }
-                        let isTerminal = Self.isTerminalStreamEvent(eventName: eventName, object: object)
-                        for chunk in Self.chunks(from: object, eventName: eventName) {
-                            switch chunk {
-                            case .text(let text):
-                                if !text.isEmpty { didYieldText = true; outputText += text }
-                            case .reasoning(let text):
-                                reasoningText += text
-                            case .toolCall(let name):
-                                observedTools[name, default: 0] += 1
+
+                        var pendingCalls: [Int: AgentToolCallDraft] = [:]
+                        var eventName = ""
+                        for try await line in bytes.lines {
+                            try Task.checkCancellation()
+                            if line.isEmpty {
+                                eventName = ""
+                                continue
                             }
-                            continuation.yield(chunk)
+                            if line.hasPrefix("event:") {
+                                eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                                continue
+                            }
+                            guard line.hasPrefix("data:") else { continue }
+                            let dataLine = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                            if dataLine == "[DONE]" { break }
+                            guard let data = dataLine.data(using: .utf8),
+                                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                            else { continue }
+                            if let error = Self.streamError(from: object) { throw ChatServiceError.server(error) }
+                            if let usage = Self.usage(from: object) { usageAccumulator.merge(usage) }
+                            let isTerminal = Self.isTerminalStreamEvent(eventName: eventName, object: object)
+                            if isTerminal, usesResponsesProtocol,
+                               let responseObject = object["response"] as? [String: Any],
+                               let output = responseObject["output"] as? [[String: Any]], !output.isEmpty {
+                                lastResponsesOutput = output
+                            }
+                            if toolsEnabled {
+                                if usesResponsesProtocol {
+                                    Self.mergeResponsesToolCalls(from: object, into: &pendingCalls)
+                                } else {
+                                    Self.mergeToolCallDeltas(from: object, into: &pendingCalls)
+                                }
+                            }
+                            for chunk in Self.chunks(from: object, eventName: eventName) {
+                                switch chunk {
+                                case .text(let text):
+                                    if !text.isEmpty { didYieldText = true; outputText += text }
+                                case .reasoning(let text):
+                                    reasoningText += text
+                                    roundReasoning += text
+                                case .toolCall(let name):
+                                    // 自定义函数由下面那段单独记账，这里只认供应商内置工具，
+                                    // 否则同一次调用会被数两遍。
+                                    if !toolsEnabled { observedTools[name, default: 0] += 1 }
+                                case .agentToolStarted, .agentToolFinished:
+                                    break
+                                }
+                                if toolsEnabled, case .toolCall = chunk { continue }
+                                continuation.yield(chunk)
+                            }
+                            if isTerminal { break }
                         }
-                        if isTerminal { break }
+
+                        let calls = pendingCalls
+                            .sorted { $0.key < $1.key }
+                            .map(\.value)
+                            .filter { !$0.name.isEmpty }
+                        guard toolsEnabled, !calls.isEmpty, round < Self.maximumAgentRounds else { break }
+
+                        // Chat 把调用挂在一条 assistant 消息的 `tool_calls` 上；
+                        // Responses 则是把每次调用与它的结果各自作为一个 input item 平铺。
+                        if usesResponsesProtocol {
+                            // 优先回放终止事件里的完整 output（reasoning + function_call）；
+                            // 拿不到时才退回手工拼的 function_call 条目。
+                            if let replay = lastResponsesOutput {
+                                wireMessages.append(contentsOf: replay)
+                            } else {
+                                for call in calls {
+                                    wireMessages.append([
+                                        "type": "function_call",
+                                        "call_id": call.id,
+                                        "name": call.name,
+                                        "arguments": call.arguments
+                                    ])
+                                }
+                            }
+                        } else {
+                            var assistantMessage: [String: Any] = [
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": calls.map { call -> [String: Any] in
+                                    [
+                                        "id": call.id,
+                                        "type": "function",
+                                        "function": ["name": call.name, "arguments": call.arguments]
+                                    ]
+                                }
+                            ]
+                            // DeepSeek 系开启思考后，多轮续写必须把上一轮的思考一并带回，
+                            // 否则供应商以「思考链断裂」拒收。空思考就不画蛇添足了。
+                            if !roundReasoning.isEmpty {
+                                assistantMessage["reasoning_content"] = roundReasoning
+                            }
+                            wireMessages.append(assistantMessage)
+                        }
+                        for call in calls {
+                            try Task.checkCancellation()
+                            let run = AgentToolRun(id: call.id, name: call.name, arguments: call.arguments)
+                            continuation.yield(.agentToolStarted(run))
+                            let result = await agentTools?(call.name, call.arguments) ?? "{}"
+                            observedTools[call.name, default: 0] += 1
+                            var finished = run
+                            finished.resultJSON = result
+                            continuation.yield(.agentToolFinished(finished))
+                            if usesResponsesProtocol {
+                                wireMessages.append([
+                                    "type": "function_call_output",
+                                    "call_id": call.id,
+                                    "output": result
+                                ])
+                            } else {
+                                wireMessages.append([
+                                    "role": "tool",
+                                    "tool_call_id": call.id,
+                                    "content": result
+                                ])
+                            }
+                        }
                     }
                     guard didYieldText else { throw ChatServiceError.emptyResponse }
                     let pendingUsage = Self.usageEntry(
@@ -805,10 +937,24 @@ final class ChatService: @unchecked Sendable {
         )
     }
 
+    /// ReAct 每一轮最多再问几次。4 轮足够「查题库 → 查提交 → 读题解 → 回答」，
+    /// 再多基本是模型在原地打转，白烧 token。
+    static let maximumAgentRounds = 4
+
+    /// 流式增量里攒出来的一次函数调用。名字和参数都是分片到达的，
+    /// 按 `index` 归并，`id` 只在第一片里出现。
+    struct AgentToolCallDraft {
+        var id = ""
+        var name = ""
+        var arguments = ""
+    }
+
     private func makeRequest(
         configuration: Configuration,
         messages: [ChatRequestMessage],
-        reasoningLevel: ReasoningLevel
+        wireMessages: [[String: Any]]? = nil,
+        reasoningLevel: ReasoningLevel,
+        includesAgentTools: Bool = false
     ) throws -> URLRequest {
         let mode = Self.resolvedMode(
             declared: configuration.mode,
@@ -829,13 +975,35 @@ final class ChatService: @unchecked Sendable {
             request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
         }
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: Self.requestBody(
+        var body = Self.requestBody(
             mode: mode,
             model: configuration.model,
             apiBase: configuration.apiBase,
             messages: messages,
             reasoningLevel: reasoningLevel
-        ))
+        )
+        // 第二轮起消息里带着 tool_calls / tool 结果，`ChatRequestMessage` 表达不了，
+        // 所以直接用调用方攒好的原始字典覆盖。
+        if let wireMessages {
+            body[mode == "responses" ? "input" : "messages"] = wireMessages
+        }
+        if includesAgentTools {
+            if mode == "responses" {
+                // Responses 的函数是**扁平**的（type/name/description/parameters 同级），
+                // 不像 Chat 那样再套一层 `function`。和供应商内置工具并存在同一个数组里。
+                let functions = LearningAgentTools.definitions.map { definition -> [String: Any] in
+                    var item = definition.wireFormat["function"] as? [String: Any] ?? [:]
+                    item["type"] = "function"
+                    return item
+                }
+                body["tools"] = ((body["tools"] as? [[String: Any]]) ?? []) + functions
+            } else {
+                body["tools"] = LearningAgentTools.wireDefinitions
+                body["tool_choice"] = "auto"
+                body["parallel_tool_calls"] = true
+            }
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
 
@@ -1046,6 +1214,58 @@ final class ChatService: @unchecked Sendable {
     /// 从各类 SSE 数据包中拆出正文 / 思考 / 工具调用事件。
     /// 覆盖：OpenAI 兼容（阿里云、DeepSeek 的 reasoning_content）、
     /// Responses API、Anthropic（thinking_delta、tool_use）。
+    /// 从 Chat Completions 的增量里攒 `tool_calls`。
+    ///
+    /// 一次调用会被拆成很多片：第一片给 `id` 和 `function.name`，
+    /// 后续片只给 `function.arguments` 的一小段 JSON 文本，靠 `index` 认亲。
+    /// 少数中转不发 `index`，只好退回按已有条数顺序补。
+    static func mergeToolCallDeltas(from object: [String: Any], into drafts: inout [Int: AgentToolCallDraft]) {
+        guard let choices = object["choices"] as? [[String: Any]],
+              let delta = choices.first?["delta"] as? [String: Any],
+              let calls = delta["tool_calls"] as? [[String: Any]]
+        else { return }
+        for call in calls {
+            let index = (call["index"] as? Int) ?? drafts.count
+            var draft = drafts[index] ?? AgentToolCallDraft()
+            if let id = call["id"] as? String, !id.isEmpty { draft.id = id }
+            if let function = call["function"] as? [String: Any] {
+                if let name = function["name"] as? String, !name.isEmpty { draft.name = name }
+                if let arguments = function["arguments"] as? String { draft.arguments += arguments }
+            }
+            // 有的中转不给 id，但 tool 结果必须带 tool_call_id 才能配对上。
+            if draft.id.isEmpty { draft.id = "call_\(index)" }
+            drafts[index] = draft
+        }
+    }
+
+    /// 从 Responses 协议的事件里攒函数调用。
+    ///
+    /// 三类事件配合使用：`response.output_item.added` 带 `call_id` 和 `name`；
+    /// `response.function_call_arguments.delta` 只带 `item_id` 和一小段参数文本；
+    /// `response.output_item.done` 里 `arguments` 通常已经是完整的，直接覆盖更稳。
+    /// 这里按 `output_index` 归并——`item_id` 和 `call_id` 不是一个东西，不能混用。
+    static func mergeResponsesToolCalls(from object: [String: Any], into drafts: inout [Int: AgentToolCallDraft]) {
+        let type = (object["type"] as? String) ?? ""
+        let index = (object["output_index"] as? Int) ?? drafts.count
+        if type == "response.function_call_arguments.delta" {
+            guard let fragment = object["delta"] as? String else { return }
+            var draft = drafts[index] ?? AgentToolCallDraft()
+            draft.arguments += fragment
+            drafts[index] = draft
+            return
+        }
+        guard type == "response.output_item.added" || type == "response.output_item.done",
+              let item = object["item"] as? [String: Any],
+              (item["type"] as? String) == "function_call"
+        else { return }
+        var draft = drafts[index] ?? AgentToolCallDraft()
+        if let callID = (item["call_id"] ?? item["id"]) as? String, !callID.isEmpty { draft.id = callID }
+        if let name = item["name"] as? String, !name.isEmpty { draft.name = name }
+        if let arguments = item["arguments"] as? String, !arguments.isEmpty { draft.arguments = arguments }
+        if draft.id.isEmpty { draft.id = "call_\(index)" }
+        drafts[index] = draft
+    }
+
     static func chunks(from object: [String: Any], eventName: String) -> [ChatStreamChunk] {
         var result: [ChatStreamChunk] = []
 
