@@ -33,6 +33,8 @@ struct RichConversationWebView: NSViewRepresentable {
     /// 工具卡片上的跳转：(kind, id)，由上层决定落到哪个页面。
     let onAgentJump: (String, String) -> Void
     let contentTrailingInset: CGFloat
+    /// 左侧问题刻度条占掉的一条，作为正文左内缩的下限下发给页面。
+    var contentLeadingInset: CGFloat = 0
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -46,6 +48,8 @@ struct RichConversationWebView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "conversationAction")
         configuration.userContentController.add(context.coordinator, name: "copyCode")
         configuration.userContentController.add(context.coordinator, name: "agentJump")
+        configuration.userContentController.add(context.coordinator, name: "bilibiliView")
+        configuration.userContentController.add(context.coordinator, name: "leetcodeSolution")
         WebViewPresentation.applyFloatingScrollbars(in: configuration)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -63,6 +67,7 @@ struct RichConversationWebView: NSViewRepresentable {
         context.coordinator.onRetry = onRetry
         context.coordinator.onAgentJump = onAgentJump
         context.coordinator.contentTrailingInset = contentTrailingInset
+        context.coordinator.contentLeadingInset = contentLeadingInset
         context.coordinator.loadTemplate()
         return webView
     }
@@ -76,6 +81,7 @@ struct RichConversationWebView: NSViewRepresentable {
         context.coordinator.onRetry = onRetry
         context.coordinator.onAgentJump = onAgentJump
         context.coordinator.updateContentTrailingInset(contentTrailingInset)
+        context.coordinator.updateContentLeadingInset(contentLeadingInset)
         context.coordinator.renderIfNeeded()
         context.coordinator.scrollToQuestionIfNeeded(scrollTargetID, revision: scrollTargetRevision)
     }
@@ -90,6 +96,8 @@ struct RichConversationWebView: NSViewRepresentable {
         var onRetry: (() -> Void)?
         var onAgentJump: ((String, String) -> Void)?
         var contentTrailingInset: CGFloat = 0
+        var contentLeadingInset: CGFloat = 0
+        private var appliedContentLeadingInset: CGFloat?
         private var isReady = false
         private var appliedContentTrailingInset: CGFloat?
         private var renderedRevision: ConversationRevision?
@@ -118,6 +126,7 @@ struct RichConversationWebView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isReady = true
             updateContentTrailingInset(contentTrailingInset, force: true)
+            updateContentLeadingInset(contentLeadingInset, force: true)
             renderIfNeeded(force: true)
         }
 
@@ -134,6 +143,25 @@ struct RichConversationWebView: NSViewRepresentable {
             Task { @MainActor in
                 _ = try? await webView.callAsyncJavaScript(
                     "document.documentElement.style.setProperty('--context-panel-inset', `${pixels}px`)",
+                    arguments: ["pixels": Double(inset)],
+                    in: nil,
+                    contentWorld: .page
+                )
+            }
+        }
+
+        /// 刻度条的让位。和 trailing 一样是 CSS 变量，同样要防抖——
+        /// 它只有"有/没有"两种值，但列宽逐帧变化时上层可能反复下发同一个数。
+        func updateContentLeadingInset(_ inset: CGFloat, force: Bool = false) {
+            contentLeadingInset = inset
+            guard isReady,
+                  force || appliedContentLeadingInset.map({ abs($0 - inset) > 0.5 }) != false,
+                  let webView
+            else { return }
+            appliedContentLeadingInset = inset
+            Task { @MainActor in
+                _ = try? await webView.callAsyncJavaScript(
+                    "document.documentElement.style.setProperty('--conversation-rail-inset', `${pixels}px`)",
                     arguments: ["pixels": Double(inset)],
                     in: nil,
                     contentWorld: .page
@@ -185,6 +213,40 @@ struct RichConversationWebView: NSViewRepresentable {
                let payload = message.body as? [String: Any],
                let kind = payload["kind"] as? String, !kind.isEmpty {
                 onAgentJump?(kind, payload["id"] as? String ?? "")
+                return
+            }
+            if message.name == "bilibiliView",
+               let payload = message.body as? [String: Any],
+               let bvid = payload["bvid"] as? String {
+                let webView = self.webView
+                Task { @MainActor in
+                    guard let info = await BilibiliAPIClient.view(bvid: bvid) else { return }
+                    _ = try? await webView?.callAsyncJavaScript(
+                        "window.__applyBilibiliView(info)",
+                        arguments: ["info": info.bridgePayload],
+                        in: nil,
+                        contentWorld: .page
+                    )
+                }
+                return
+            }
+            if message.name == "leetcodeSolution",
+               let payload = message.body as? [String: Any],
+               let problemSlug = payload["problemSlug"] as? String,
+               let articleSlug = payload["articleSlug"] as? String {
+                let webView = self.webView
+                Task { @MainActor in
+                    guard let info = await LeetCodeAPIClient.shared.solutionCard(
+                        problemSlug: problemSlug,
+                        articleSlug: articleSlug
+                    ) else { return }
+                    _ = try? await webView?.callAsyncJavaScript(
+                        "window.__applyLeetCodeSolution(info)",
+                        arguments: ["info": info],
+                        in: nil,
+                        contentWorld: .page
+                    )
+                }
                 return
             }
             guard

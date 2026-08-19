@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 struct ToolWorkspaceView: View {
@@ -19,13 +20,13 @@ struct ToolWorkspaceView: View {
         VStack(spacing: 0) {
             // 占满模式仍然是浏览器，不是纯网页预览：标签栏与地址栏不能消失。
             toolColumnHeader
-                .padding(.top, toolHeaderTopInset)
             Divider()
 
             toolContents
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .background(AppDesign.ColorToken.canvas)
         .onChange(of: workspace.activeTool) { oldValue, newValue in
             if oldValue == .browser, newValue != .browser {
@@ -136,6 +137,7 @@ struct ToolWorkspaceView: View {
         .padding(.leading, showsFocusedWorkspaceChrome ? workspace.headerLeadingInset : AppDesign.Spacing.xs)
         .padding(.trailing, AppDesign.Spacing.xs)
         .frame(height: AppDesign.Size.columnHeader)
+        .padding(.top, toolHeaderTopInset)
     }
 
     private var showsFocusedWorkspaceChrome: Bool {
@@ -167,8 +169,6 @@ struct ToolWorkspaceView: View {
             }
         }
         .fixedSize()
-        // 标签胶囊需要离开窗口顶边，但左上导航仍应和红绿灯同一中线。
-        .offset(y: -toolHeaderTopInset)
     }
 
     private var toolHeaderTopInset: CGFloat {
@@ -502,7 +502,7 @@ private struct SourcesToolView: View {
             }
             .padding(.vertical, AppDesign.Spacing.md)
         }
-        .scrollIndicators(.hidden)
+        .floatingScrollIndicators()
         .overlay {
             if groups.isEmpty {
                 ContentUnavailableView("暂无来源", systemImage: "link", description: Text("联网搜索或引用网页后会在这里分类显示"))
@@ -517,6 +517,11 @@ private struct BrowserToolView: View {
     /// 只是地址栏的编辑副本；页面与历史由 BrowserSession 的每个标签持有。
     @State private var address: String
     @FocusState private var isAddressFocused: Bool
+    @State private var isFindPresented = false
+    @State private var findQuery = ""
+    @FocusState private var isFindFieldFocused: Bool
+    @State private var showsHistory = false
+    @State private var confirmsClearingData = false
 
     init(workspace: WorkspaceState) {
         self.workspace = workspace
@@ -527,6 +532,9 @@ private struct BrowserToolView: View {
     var body: some View {
         VStack(spacing: 0) {
             browserNavigationBar
+            if isFindPresented {
+                browserFindBar
+            }
             Divider()
 
             if !session.hasActivePage {
@@ -564,6 +572,9 @@ private struct BrowserToolView: View {
             guard !isAddressFocused, value != address else { return }
             address = value
         }
+        .onChange(of: session.hasActivePage) { _, hasPage in
+            if !hasPage { dismissFindBar() }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
@@ -595,33 +606,97 @@ private struct BrowserToolView: View {
                     address = session.currentAddress
                 }
 
-            Menu {
-                Button("新标签页", systemImage: "plus", action: openNewTab)
-                Button("重新加载", systemImage: "arrow.clockwise") { session.reload() }
-                    .disabled(!session.hasActivePage)
-                Button("复制地址", systemImage: "doc.on.doc") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(address, forType: .string)
-                }
-                .disabled(address.isEmpty)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(AppDesign.Typography.iconCompact)
-                    .frame(
-                        width: AppDesign.Size.toolbarControl,
-                        height: AppDesign.Size.toolbarControl
-                    )
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: AppDesign.Size.toolbarControl)
-            .help("浏览器菜单")
+            browserOverflowMenu
         }
         .buttonStyle(.plain)
         .padding(.horizontal, AppDesign.Spacing.sm)
         .padding(.vertical, AppDesign.Spacing.xs)
         .background(AppDesign.ColorToken.canvas)
+        .sheet(isPresented: $showsHistory) {
+            BrowserHistorySheet(workspace: workspace)
+        }
+        .confirmationDialog("清除所有浏览数据？", isPresented: $confirmsClearingData, titleVisibility: .visible) {
+            Button("清除历史、Cookie 与缓存", role: .destructive) {
+                Task { await session.clearBrowsingData() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("所有网站会退出登录，已打开的标签和浏览历史也会被移除。")
+        }
+    }
+
+    @ViewBuilder
+    private var browserOverflowMenu: some View {
+        Menu {
+            // 不绑 ⌘F：BrowserToolView 在其它工具页里只是透明，快捷键仍会活着，
+            // 会把侧栏「搜索会话」的 ⌘F 抢走。
+            Button(isFindPresented ? "查找下一个" : "在页面中查找", systemImage: "magnifyingglass") {
+                presentFindBar()
+            }
+            .disabled(!session.hasActivePage)
+
+            ControlGroup("缩放") {
+                Button("缩小") { session.adjustPageZoom(-BrowserPageZoomPolicy.step) }
+                    .disabled(!BrowserPageZoomPolicy.canDecrease(session.pageZoom))
+                Text(BrowserPageZoomPolicy.percentLabel(session.pageZoom))
+                Button("放大") { session.adjustPageZoom(BrowserPageZoomPolicy.step) }
+                    .disabled(!BrowserPageZoomPolicy.canIncrease(session.pageZoom))
+            }
+            Button("重置缩放") { session.resetPageZoom() }
+                .disabled(!BrowserPageZoomPolicy.canReset(session.pageZoom))
+
+            Button(
+                session.showsDeviceToolbar ? "隐藏设备工具栏" : "显示设备工具栏",
+                systemImage: "iphone"
+            ) {
+                session.toggleDeviceToolbar()
+            }
+            .disabled(!session.hasActivePage)
+
+            Button("截取屏幕截图", systemImage: "camera.viewfinder") {
+                session.takeVisibleScreenshot()
+            }
+            .disabled(!session.hasActivePage)
+
+            Divider()
+
+            Button("导入 Cookie…", systemImage: "square.and.arrow.down") {
+                DispatchQueue.main.async { importCookies() }
+            }
+            Button("密码和自动填充", systemImage: "key.fill") {
+                workspace.presentSettings(section: "browser")
+            }
+
+            Divider()
+
+            Button("下载", systemImage: "arrow.down.circle") {
+                session.revealDownloadsFolder()
+            }
+            Button("历史记录", systemImage: "clock") {
+                showsHistory = true
+            }
+            Button("清除浏览数据", systemImage: "trash", role: .destructive) {
+                confirmsClearingData = true
+            }
+
+            Divider()
+
+            Button("浏览器设置", systemImage: "gearshape") {
+                workspace.presentSettings(section: "browser")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(AppDesign.Typography.iconCompact)
+                .frame(
+                    width: AppDesign.Size.toolbarControl,
+                    height: AppDesign.Size.toolbarControl
+                )
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: AppDesign.Size.toolbarControl)
+        .help("浏览器菜单")
     }
 
     private func browserCommand(
@@ -654,12 +729,72 @@ private struct BrowserToolView: View {
         address = ""
     }
 
+    private var browserFindBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("在页面中查找", text: $findQuery)
+                .textFieldStyle(.plain)
+                .focused($isFindFieldFocused)
+                .onSubmit { session.find(findQuery, forwards: true) }
+            Button("上一个") { session.find(findQuery, forwards: false) }
+                .disabled(findQuery.isEmpty)
+            Button("下一个") { session.find(findQuery, forwards: true) }
+                .disabled(findQuery.isEmpty)
+            Button(action: dismissFindBar) {
+                Image(systemName: "xmark")
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("关闭查找")
+        }
+        .font(AppDesign.Typography.aux)
+        .padding(.horizontal, AppDesign.Spacing.sm)
+        .padding(.vertical, 7)
+        .background(AppDesign.ColorToken.canvas)
+        .onExitCommand(perform: dismissFindBar)
+        .onAppear { isFindFieldFocused = true }
+    }
+
+    private func presentFindBar() {
+        guard session.hasActivePage else { return }
+        if isFindPresented {
+            if findQuery.isEmpty {
+                isFindFieldFocused = true
+            } else {
+                session.find(findQuery, forwards: true)
+            }
+            return
+        }
+        isFindPresented = true
+        isFindFieldFocused = true
+    }
+
+    private func dismissFindBar() {
+        isFindPresented = false
+        isFindFieldFocused = false
+        findQuery = ""
+    }
+
+    private func importCookies() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.json, .plainText, .commaSeparatedText]
+        panel.message = "选择 Cookie 文件（Netscape cookies.txt 或 JSON）"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await session.importCookies(from: url) }
+    }
+
 }
 
 /// 地址栏输入与导航判定。抽成纯函数以便测试。
 enum BrowserAddressPolicy {
     static let desktopSafariUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+    static let mobileSafariUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
+        + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
     /// 地址栏输入规范化：缺协议时补 https，空串返回 nil。
     static func normalize(_ raw: String) -> String? {
@@ -700,6 +835,67 @@ enum BrowserAddressPolicy {
               requestedHost == current?.host?.lowercased()
         else { return false }
         return true
+    }
+}
+
+enum BrowserPageZoomPolicy {
+    static let defaultZoom = 1.0
+    static let step = 0.1
+    static let minimum = 0.5
+    static let maximum = 3.0
+
+    static func clamp(_ value: Double) -> Double {
+        min(max((value * 10).rounded() / 10, minimum), maximum)
+    }
+
+    static func percentLabel(_ value: Double) -> String {
+        "\(Int((clamp(value) * 100).rounded()))%"
+    }
+
+    static func canDecrease(_ value: Double) -> Bool { clamp(value) > minimum }
+    static func canIncrease(_ value: Double) -> Bool { clamp(value) < maximum }
+    static func canReset(_ value: Double) -> Bool { clamp(value) != defaultZoom }
+}
+
+enum BrowserCookieImportPolicy {
+    static func cookies(from data: Data) -> [HTTPCookie]? {
+        if let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            let parsed = objects.compactMap(cookie(fromJSON:))
+            return parsed.isEmpty ? nil : parsed
+        }
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        let parsed = text.split(whereSeparator: \.isNewline).compactMap(cookie(fromNetscape:))
+        return parsed.isEmpty ? nil : parsed
+    }
+
+    private static func cookie(fromJSON object: [String: Any]) -> HTTPCookie? {
+        let name = object["name"] as? String ?? ""
+        let value = object["value"] as? String ?? ""
+        let domain = object["domain"] as? String ?? ""
+        guard !name.isEmpty, !domain.isEmpty else { return nil }
+        var properties: [HTTPCookiePropertyKey: Any] = [
+            .name: name,
+            .value: value,
+            .domain: domain,
+            .path: object["path"] as? String ?? "/"
+        ]
+        if object["secure"] as? Bool == true { properties[.secure] = "TRUE" }
+        return HTTPCookie(properties: properties)
+    }
+
+    private static func cookie(fromNetscape line: Substring) -> HTTPCookie? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { return nil }
+        let columns = trimmed.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard columns.count >= 7 else { return nil }
+        var properties: [HTTPCookiePropertyKey: Any] = [
+            .domain: columns[0],
+            .path: columns[2],
+            .name: columns[5],
+            .value: columns[6]
+        ]
+        if columns[3].uppercased() == "TRUE" { properties[.secure] = "TRUE" }
+        return HTTPCookie(properties: properties)
     }
 }
 
@@ -825,11 +1021,23 @@ private struct NonWindowDragging<Content: View>: View {
 }
 
 enum ToolHeaderLayoutPolicy {
-    /// 第三列列头的纵向对齐。三列共用一条中线：侧栏和中间列都是往上提
-    /// （`-16` / `-6`，各自对齐红绿灯），这一列原来反而往下推 `Spacing.xs`，
-    /// 于是标签条明显低于左边两列。窗口态改成与中间列同一口径的上提量。
+    /// 三列列头统一的顶部留白。窗口态留一口气（红绿灯由 `WindowTitlebarLayout`
+    /// 挪到同一条中线上来）；全屏没有红绿灯也没有标题栏，列头贴顶排。
+    ///
+    /// 是 `padding` 不是 `offset`：offset 只挪画面不占位，往下挪就会压住列头下面那一行。
     static func topInset(isFullScreen: Bool) -> CGFloat {
-        isFullScreen ? 0 : -6
+        isFullScreen ? 0 : AppDesign.Size.headerTopMargin
+    }
+
+    /// 列头中线到窗口顶边的距离。红绿灯按这个值重新落位。
+    static func headerCenterY(isFullScreen: Bool) -> CGFloat {
+        topInset(isFullScreen: isFullScreen) + AppDesign.Size.columnHeader / 2
+    }
+
+    /// 标题栏容器要盖住的高度（留白 + 列头）。红绿灯落到容器 bounds 之外就点不动了，
+    /// 所以挪按钮之前必须先把容器加高到这里。
+    static func titlebarBandHeight(isFullScreen: Bool) -> CGFloat {
+        topInset(isFullScreen: isFullScreen) + AppDesign.Size.columnHeader
     }
 }
 
@@ -955,10 +1163,9 @@ enum BrowserTabStripSizingPolicy {
 
 /// 浏览器会话：每个标签持有自己的 WKWebView，并在分栏 / 占满视图之间移动当前标签。
 ///
-/// 第三列现在只有一棵视图树（`PrimaryWorkspaceView.inspector`），放大只改宽度，
-/// SwiftUI 切换时会把 `NSViewRepresentable` 整个拆掉重建。若 WKWebView 由视图持有，
-/// 切到全屏就等于换了一个空白 webView——页面直接消失。这里把它提到视图之外，
-/// 视图重建时只是把同一个 NSView 换个父视图。
+/// 第三列挂在 `PrimaryWorkspaceView.inspector` 上。SwiftUI 切换时会把
+/// `NSViewRepresentable` 拆掉重建。若 WKWebView 由视图持有，切到全屏就等于
+/// 换了一个空白 webView。这里把它提到视图之外，重建时只换父视图。
 struct BrowserTabSnapshot: Identifiable, Equatable {
     let id: UUID
     let title: String
@@ -1286,6 +1493,102 @@ final class BrowserSession: ObservableObject {
     func goForward() { activeTab.webView.goForward() }
     func reload() { activeTab.webView.reload() }
 
+    @Published private(set) var pageZoom = BrowserPageZoomPolicy.defaultZoom
+    @Published private(set) var showsDeviceToolbar = false
+
+    func adjustPageZoom(_ delta: Double) {
+        setPageZoom(pageZoom + delta)
+    }
+
+    func resetPageZoom() {
+        setPageZoom(BrowserPageZoomPolicy.defaultZoom)
+    }
+
+    func setPageZoom(_ value: Double) {
+        let clamped = BrowserPageZoomPolicy.clamp(value)
+        pageZoom = clamped
+        for tab in tabStorage {
+            tab.webView.pageZoom = clamped
+        }
+    }
+
+    func toggleDeviceToolbar() {
+        showsDeviceToolbar.toggle()
+        applyUserAgent()
+        if hasActivePage { reload() }
+    }
+
+    func find(_ query: String, forwards: Bool) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let configuration = WKFindConfiguration()
+        configuration.backwards = !forwards
+        configuration.wraps = true
+        activeTab.webView.find(trimmed, configuration: configuration) { _ in }
+    }
+
+    func takeVisibleScreenshot() {
+        let configuration = WKSnapshotConfiguration()
+        activeTab.webView.takeSnapshot(with: configuration) { [weak self] image, _ in
+            guard let self, let image else { return }
+            Task { @MainActor in
+                self.saveScreenshot(image)
+            }
+        }
+    }
+
+    func revealDownloadsFolder() {
+        NSWorkspace.shared.open(BrowserPreferences.shared.downloadDirectory)
+    }
+
+    func importCookies(from url: URL) async {
+        guard let data = try? Data(contentsOf: url),
+              let cookies = BrowserCookieImportPolicy.cookies(from: data)
+        else {
+            downloadStatus = "无法读取这个 Cookie 文件"
+            return
+        }
+        let store = WKWebsiteDataStore.default().httpCookieStore
+        for cookie in cookies {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                store.setCookie(cookie) { continuation.resume() }
+            }
+        }
+        downloadStatus = "已导入 \(cookies.count) 条 Cookie"
+        if hasActivePage { reload() }
+    }
+
+    private func applyUserAgent() {
+        let agent = showsDeviceToolbar
+            ? BrowserAddressPolicy.mobileSafariUserAgent
+            : BrowserAddressPolicy.desktopSafariUserAgent
+        for tab in tabStorage {
+            tab.webView.customUserAgent = agent
+        }
+    }
+
+    private func saveScreenshot(_ image: NSImage) {
+        let directory = BrowserPreferences.shared.downloadDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        let url = directory.appending(path: "截图-\(formatter.string(from: .now)).png")
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:])
+        else {
+            downloadStatus = "截图失败"
+            return
+        }
+        do {
+            try png.write(to: url)
+            downloadStatus = "已保存截图 \(url.lastPathComponent)"
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            downloadStatus = "截图保存失败：\(error.localizedDescription)"
+        }
+    }
+
     func setRestoresSession(_ enabled: Bool) {
         if enabled {
             persistSession()
@@ -1337,6 +1640,7 @@ final class BrowserSession: ObservableObject {
             return value
         }()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        WebViewPresentation.applyFloatingScrollbars(in: configuration)
         // 页面一律不许自己开始播放，必须用户点过才行。
         // 两个原因：一是恢复上次会话时那个 B 站视频会在看不见的地方就出声；
         // 二是"播放中"正是布局变化把 WebKit 合成层弄崩的前提，能不播就少一类崩溃。
@@ -1344,7 +1648,10 @@ final class BrowserSession: ObservableObject {
 
         let tab = Tab(configuration: configuration)
         // WKWebView 默认 UA 没有 Safari 产品标识，百度会把它当成受限内嵌页。
-        tab.webView.customUserAgent = BrowserAddressPolicy.desktopSafariUserAgent
+        tab.webView.customUserAgent = showsDeviceToolbar
+            ? BrowserAddressPolicy.mobileSafariUserAgent
+            : BrowserAddressPolicy.desktopSafariUserAgent
+        tab.webView.pageZoom = pageZoom
         tab.webView.allowsMagnification = true
         tab.webView.allowsBackForwardNavigationGestures = true
         tab.webView.navigationDelegate = tab.navigationDelegate
@@ -1424,6 +1731,10 @@ final class BrowserSession: ObservableObject {
         browserConstraints.removeAll(keepingCapacity: true)
         webView.removeFromSuperview()
         webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.setContentHuggingPriority(.fittingSizeCompression, for: .horizontal)
+        webView.setContentHuggingPriority(.fittingSizeCompression, for: .vertical)
+        webView.setContentCompressionResistancePriority(.fittingSizeCompression, for: .horizontal)
+        webView.setContentCompressionResistancePriority(.fittingSizeCompression, for: .vertical)
         container.addSubview(webView)
         browserConstraints = [
             webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -1763,6 +2074,10 @@ private final class BrowserContainerView: NSView {
     weak var session: BrowserSession?
     var owner = UUID()
     var generation: UInt64 = 0
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()

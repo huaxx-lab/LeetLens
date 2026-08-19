@@ -9,13 +9,7 @@ struct RootWorkspaceView: View {
     var body: some View {
         @Bindable var workspace = workspace
 
-        Group {
-            if workspace.isSettingsPresented {
-                settingsColumn
-            } else {
-                workspaceNavigation
-            }
-        }
+        workspaceNavigation
         .onReceive(NotificationCenter.default.publisher(for: .openInAppSettings)) { _ in
             workspace.presentSettings()
         }
@@ -75,7 +69,7 @@ struct RootWorkspaceView: View {
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
         } action: { width in
-            workspace.handleWindowWidth(width)
+            workspace.scheduleHandleWindowWidth(width)
         }
         // 窗口不挂 NSToolbar。两个原因：
         // 1) unified 工具栏会画自己的系统材质（实测 230,231,232 灰），`.toolbarBackground` 压不住，
@@ -111,26 +105,6 @@ struct RootWorkspaceView: View {
         .background(Color(nsColor: .textBackgroundColor).ignoresSafeArea())
     }
 
-    private var settingsColumn: some View {
-        SettingsView(
-            workspace: workspace,
-            dataStore: dataStore,
-            onDismiss: { workspace.dismissSettings() },
-            openInBrowser: { url in
-                workspace.openURL(url)
-            }
-        )
-        .inspector(isPresented: toolWorkspaceVisibility) {
-            ToolWorkspaceView(workspace: workspace, dataStore: dataStore)
-                .background(AppDesign.ColorToken.canvas.ignoresSafeArea())
-                .inspectorColumnWidth(
-                    min: AppDesign.Size.inspectorMin,
-                    ideal: AppDesign.Size.inspectorIdeal,
-                    max: AppDesign.Size.inspectorMax
-                )
-        }
-    }
-
     private var preferredColorScheme: ColorScheme? {
         switch dataStore.settings.appearance {
         case "light": .light
@@ -156,40 +130,38 @@ struct RootWorkspaceView: View {
     }
 
     private var workspaceNavigation: some View {
-        NavigationSplitView(columnVisibility: sidebarVisibility) {
-            GlobalSidebarView(workspace: workspace, dataStore: dataStore)
-                .navigationSplitViewColumnWidth(
-                    min: AppDesign.Size.sidebarMin,
-                    ideal: AppDesign.Size.sidebarIdeal,
-                    max: AppDesign.Size.sidebarMax
-                )
-        } detail: {
-            Group {
-                if workspace.isToolWorkspaceFocused {
-                    FocusedToolWorkspaceView(workspace: workspace, dataStore: dataStore)
+        WorkspaceColumnShell(
+            sidebarVisible: !workspace.isSettingsPresented && workspace.isSidebarPresented,
+            inspectorVisible: workspace.isToolWorkspacePresented,
+            inspectorExpanded: workspace.isToolWorkspaceFocused,
+            sidebarWidth: workspace.sidebarColumnWidth,
+            inspectorWidth: workspace.inspectorColumnWidth,
+            onSidebarWidth: { workspace.setSidebarColumnWidth($0) },
+            onInspectorWidth: { workspace.setInspectorColumnWidth($0) },
+            sidebar: {
+                GlobalSidebarView(workspace: workspace, dataStore: dataStore)
+            },
+            detail: {
+                if workspace.isSettingsPresented {
+                    SettingsView(
+                        workspace: workspace,
+                        dataStore: dataStore,
+                        onDismiss: { workspace.dismissSettings() },
+                        openInBrowser: { url in
+                            workspace.openURL(url)
+                        }
+                    )
                 } else {
                     detailColumn
                 }
+            },
+            inspector: {
+                ToolWorkspaceView(workspace: workspace, dataStore: dataStore)
+                    .background(AppDesign.ColorToken.canvas.ignoresSafeArea())
             }
-        }
-        // 用 prominentDetail 而不是 balanced。
-        //
-        // 第三列是挂在 detail 内部的 `.inspector`，于是有两套宽度分配器：
-        // 外层分「侧栏 ↔ detail」，内层分「中间内容 ↔ 第三列」。balanced 会在
-        // detail 变窄时回头找外层重新分摊，于是拖第三列左边界时侧栏跟着被压缩，
-        // 两套分配器互相追着调整——就是那种"一拉一弹"的弹簧感。
-        // prominentDetail 让 detail 保持自己的宽度，拖动只影响你正在拖的那一条。
-        .navigationSplitViewStyle(.prominentDetail)
-        // hiddenTitleBar 仍会为红绿灯保留一段标题栏安全区。把整个分栏内容仅在窗口态
-        // 上移这一段：各列头与红绿灯合并为一行，正文也紧接在同一条分隔线下。
-        // 全屏时该安全区不存在，不能继续上移。
-        .padding(
-            .top,
-            workspace.isWindowFullScreen ? 0 : -AppDesign.Size.windowTitlebarInset
         )
-        // 系统红绿灯中心比列头中心略高；只在窗口态做 2pt 校正。
-        // 此前 -4pt 会让 28pt 的玻璃胶囊顶缘贴到窗口顶边，故收敛到 -2pt。
-        .offset(y: workspace.isWindowFullScreen ? 0 : -2)
+        // 背景铺进标题栏；列头自己用 windowTitlebarInset 让出顶边，不和红绿灯挤一行。
+        .ignoresSafeArea(.container, edges: .top)
     }
 
     /// 中间列：列头（导航 + 标题 + 右侧操作）压在最上，内容在下，第三列挂在整列右侧。
@@ -205,42 +177,6 @@ struct RootWorkspaceView: View {
             PrimaryWorkspaceView(workspace: workspace, dataStore: dataStore)
         }
         .background(AppDesign.ColorToken.canvas)
-        .inspector(isPresented: toolWorkspaceVisibility) {
-            ToolWorkspaceView(workspace: workspace, dataStore: dataStore)
-                .background(AppDesign.ColorToken.canvas.ignoresSafeArea())
-                .inspectorColumnWidth(
-                    min: AppDesign.Size.inspectorMin,
-                    ideal: AppDesign.Size.inspectorIdeal,
-                    max: AppDesign.Size.inspectorMax
-                )
-        }
-    }
-
-    private var sidebarVisibility: Binding<NavigationSplitViewVisibility> {
-        Binding(
-            get: { workspace.isSidebarPresented ? .all : .detailOnly },
-            set: { visibility in
-                workspace.updateSidebarVisibilityFromContainer(visibility != .detailOnly)
-            }
-        )
-    }
-
-    private var toolWorkspaceVisibility: Binding<Bool> {
-        Binding(
-            // 全屏（focused）时 inspector 必须让位：两棵树同时挂着
-            // ToolWorkspaceView 会争抢同一个 WKWebView，加载被打断、全屏白屏。
-            get: { workspace.isToolWorkspacePresented && !workspace.isToolWorkspaceExpanded },
-            set: { isVisible in
-                // inspector 在普通页、设置页和聚焦视图之间迁移时会回写 false，
-                // 这是宿主拆卸，不是用户关闭。真正关闭统一走列头的幂等命令。
-                guard isVisible else { return }
-                // `.inspector` 提供系统过渡，但某些调用路径会直接写 binding；
-                // 统一补一段无回弹的短动画，避免瞬间出现/消失。
-                withAnimation(AppDesign.Motion.panelTransition) {
-                    workspace.updateToolVisibilityFromContainer(isVisible)
-                }
-            }
-        )
     }
 
     private var workspaceTitle: String {
@@ -268,45 +204,82 @@ private struct DetailColumnHeader: View {
     let showsNavigationChrome: Bool
     let title: String
     let conversation: ConversationSummary?
+    @State private var columnWidth: CGFloat = 0
+    @State private var navigationWidth: CGFloat = 0
 
     var body: some View {
         HStack(spacing: AppDesign.Spacing.xxs) {
-            HStack(spacing: AppDesign.Spacing.xxs) {
-                if !workspace.isSidebarPresented {
-                    headerButton("sidebar.left", help: "显示侧栏") {
-                        workspace.toggleSidebar()
-                    }
-                }
+            navigationCluster
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { navigationWidth = $0 }
 
-                if showsNavigationChrome {
-                    // 全屏且侧栏展开时，前进/后退已经并到侧栏列头那一组里了。
-                    if !(workspace.isWindowFullScreen && workspace.isSidebarPresented) {
-                        historyChrome
-                    }
-                    newConversationButton
-                    titleChrome
-                }
+            Color.clear
+                .frame(width: titleLeadingGap, height: 1)
+
+            if showsNavigationChrome {
+                titleChrome
             }
-            // 本列是最左列时，左侧控件再上移 2pt 与红绿灯中心对齐；
-            // 右侧胶囊保持全局 -2pt 的顶部间隙，不受影响。
-            .offset(y: leadingAlignmentOffset)
 
             Spacer(minLength: AppDesign.Spacing.xs)
 
             TrailingWindowChrome(workspace: workspace, dataStore: dataStore)
         }
-        // 侧栏收起时本列就是最左列，红绿灯浮在它左上角，控件要给它让位。
-        .padding(.leading, workspace.isSidebarPresented ? AppDesign.Spacing.xs : workspace.headerLeadingInset)
+        .padding(.leading, headerLeadingPadding)
         .padding(.trailing, AppDesign.Spacing.xs)
         .frame(height: AppDesign.Size.columnHeader)
-        // 窗口态和红绿灯同一条中线：实测本行控件未偏移时中心 55、红绿灯 49。
-        // 全屏没有红绿灯，不偏移（侧栏那一组会来对齐本行）。
-        .offset(y: workspace.isWindowFullScreen ? 0 : -6)
+        .padding(.top, ToolHeaderLayoutPolicy.topInset(isFullScreen: workspace.isWindowFullScreen))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { columnWidth = $0 }
     }
 
-    /// 整行的对齐统一由列头末尾那个 offset 负责，这里不再按侧栏状态另外偏移——
-    /// 否则展开/收起侧栏时，同一行控件会在 49 和 51 两个中线之间跳。
-    private var leadingAlignmentOffset: CGFloat { 0 }
+    private var headerLeadingPadding: CGFloat {
+        workspace.isSidebarPresented ? AppDesign.Spacing.xs : workspace.headerLeadingInset
+    }
+
+    private var titleLeadingGap: CGFloat {
+        ConversationColumnLayout.titleGapAfterNavigation(
+            columnWidth: columnWidth,
+            trailingInset: contentTrailingInset,
+            headerLeadingPadding: headerLeadingPadding,
+            navigationWidth: navigationWidth,
+            railInset: questionRailContentInset
+        )
+    }
+
+    /// 标题和正文共用一条左缘：正文给刻度条让了位，标题也得跟着让。
+    private var questionRailContentInset: CGFloat {
+        let questions = conversation.map { workspace.questionRailItems(for: $0) } ?? []
+        return QuestionRailPresentationPolicy.isVisible(
+            section: workspace.selectedSection,
+            questionCount: questions.count,
+            columnWidth: columnWidth
+        ) ? QuestionRailPresentationPolicy.contentInset : 0
+    }
+
+    private var contentTrailingInset: CGFloat {
+        guard workspace.selectedSection == .conversation, workspace.isContextPanelPresented else { return 0 }
+        let panelWidth = min(
+            max(workspace.windowWidth * 0.18, AppDesign.Size.contextPanelMinimum),
+            AppDesign.Size.contextPanelMaximum
+        )
+        return ContextPanelOverlayPolicy.contentTrailingInset(isVisible: true, panelWidth: panelWidth)
+    }
+
+    @ViewBuilder
+    private var navigationCluster: some View {
+        HStack(spacing: AppDesign.Spacing.xxs) {
+            if !workspace.isSidebarPresented {
+                headerButton("sidebar.left", help: "显示侧栏") {
+                    workspace.toggleSidebar()
+                }
+            }
+
+            if showsNavigationChrome {
+                if !(workspace.isWindowFullScreen && workspace.isSidebarPresented) {
+                    historyChrome
+                }
+                newConversationButton
+            }
+        }
+    }
 
     @ViewBuilder
     private var historyChrome: some View {
@@ -513,6 +486,8 @@ private struct WindowChromeConfiguration: NSViewRepresentable {
         /// 只看 styleMask 会在那一帧漏判，照样把它拆掉。
         private var isFullScreen = false
         private var fullScreenObservers: [NSObjectProtocol] = []
+        /// 红绿灯要和列头同一条中线，系统不给接口，只能盯着 frame 补写。
+        private let trafficLights = WindowTrafficLightPositioner()
 
         func attach(to newWindow: NSWindow?) {
             guard window !== newWindow else { return }
@@ -580,6 +555,8 @@ private struct WindowChromeConfiguration: NSViewRepresentable {
         func apply() {
             guard let window else { return }
             AppKitScrollNormalizer.normalize(window: window)
+            trafficLights.attach(to: window)
+            trafficLights.apply()
             let level: NSWindow.Level = alwaysOnTop ? .floating : .normal
             if window.level != level { window.level = level }
             if !window.styleMask.contains(.fullSizeContentView) {
@@ -601,6 +578,7 @@ private struct WindowChromeConfiguration: NSViewRepresentable {
             toolbarObservation = nil
             fullScreenObservers.forEach(NotificationCenter.default.removeObserver)
             fullScreenObservers = []
+            trafficLights.detach()
             window = nil
         }
 
@@ -664,9 +642,6 @@ private struct TrailingWindowChrome: View {
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
                     .background { Color.clear.titlebarControlGroup() }
-                    // 整行为对齐红绿灯上提了 6pt，胶囊跟着上去就贴到窗口圆角上了。
-                    // 这里把它单独压回来，让它与窗口顶边留出与右边缘一致的呼吸。
-                    .offset(y: workspace.isWindowFullScreen ? 0 : 4)
             }
         }
         .opacity(workspace.isSettingsPresented && !workspace.isToolWorkspacePresented ? 0 : 1)
@@ -781,6 +756,8 @@ private struct FocusedToolWorkspaceView: View {
 private struct PrimaryWorkspaceView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
+    /// 中间列的实测宽度。问题刻度条按它决定位置与显隐。
+    @State private var columnWidth: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -790,7 +767,8 @@ private struct PrimaryWorkspaceView: View {
                     ConversationWorkspaceView(
                         workspace: workspace,
                         dataStore: dataStore,
-                        contentTrailingInset: contextContentTrailingInset
+                        contentTrailingInset: contextContentTrailingInset,
+                        contentLeadingInset: questionRailContentInset
                     )
                 case .leetCode:
                     LeetCodeWorkspaceView(workspace: workspace, dataStore: dataStore)
@@ -839,6 +817,7 @@ private struct PrimaryWorkspaceView: View {
             }
         }
         .background(AppDesign.ColorToken.canvas.ignoresSafeArea(.container, edges: .top))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { columnWidth = $0 }
         .onChange(of: currentContextSources) { _, updated in
             // 只要「来源」标签还开着就跟着换会话更新。以前只在它是当前标签时同步，
             // 于是切了会话再点回来，看到的还是上一场对话的来源。
@@ -846,7 +825,7 @@ private struct PrimaryWorkspaceView: View {
                 workspace.presentedSources = updated
             }
         }
-        .animation(AppDesign.Motion.panel, value: shouldShowContextPanel)
+        .animation(AppDesign.Motion.fade, value: shouldShowContextPanel)
         .overlay {
             if workspace.conversationGeneration?.phase == .generating {
                 Button("停止生成") {
@@ -912,9 +891,14 @@ private struct PrimaryWorkspaceView: View {
     private var shouldShowQuestionRail: Bool {
         QuestionRailPresentationPolicy.isVisible(
             section: workspace.selectedSection,
-            windowWidth: workspace.windowWidth,
-            questionCount: questionRailItems.count
+            questionCount: questionRailItems.count,
+            columnWidth: columnWidth
         )
+    }
+
+    /// 刻度条在时正文要给它让出这一条，不让刻度压在字上。
+    private var questionRailContentInset: CGFloat {
+        shouldShowQuestionRail ? QuestionRailPresentationPolicy.contentInset : 0
     }
 
     private var questionRailItems: [QuestionRailItem] {
@@ -937,15 +921,69 @@ enum ContextPanelOverlayPolicy {
     }
 }
 
+/// 对话列头标题与正文 / 输入框共用的中轴：列宽减去右侧浮层后，在 820 内容宽上居中。
+enum ConversationColumnLayout {
+    static var contentMaximum: CGFloat { AppDesign.Size.contentColumnMaximum }
+    static var minimumInset: CGFloat { AppDesign.Spacing.lg }
+
+    /// 正文照旧在列里居中——列宽了就该有留白，不封顶。
+    /// `railInset` 是问题刻度条占掉的那一条：列被压窄时正文左缘不能越过它，
+    /// 否则刻度直接压在字上（侧栏 + 上下文面板都开着时就是这种局面）。
+    static func contentLeadingInset(
+        columnWidth: CGFloat,
+        trailingInset: CGFloat,
+        railInset: CGFloat = 0
+    ) -> CGFloat {
+        let available = max(0, columnWidth - trailingInset)
+        let centered = ((available - contentMaximum) / 2).rounded()
+        return max(max(minimumInset, centered), railInset)
+    }
+
+    static func titleGapAfterNavigation(
+        columnWidth: CGFloat,
+        trailingInset: CGFloat,
+        headerLeadingPadding: CGFloat,
+        navigationWidth: CGFloat,
+        railInset: CGFloat = 0
+    ) -> CGFloat {
+        let leading = contentLeadingInset(
+            columnWidth: columnWidth,
+            trailingInset: trailingInset,
+            railInset: railInset
+        )
+        return max(0, leading - headerLeadingPadding - navigationWidth)
+    }
+}
+
 enum QuestionRailPresentationPolicy {
     static let minimumQuestionCount = 6
     static let tickStride: CGFloat = 15
     static let verticalInset: CGFloat = 12
+    /// 刻度最长的一档（hover 时的波峰）。排版按它留位，免得展开时顶到正文。
+    static let tickMaximumWidth: CGFloat = 32
+    /// 刻度条贴着列的左缘——它是"这一列的目录"，不跟着正文跑。
+    static let leading: CGFloat = 8
+    /// 刻度右缘到正文左缘至少要留的空。
+    static let minimumContentGap: CGFloat = 12
 
-    static func isVisible(section: WorkspaceSection, windowWidth: CGFloat, questionCount: Int) -> Bool {
+    /// 刻度条整体占掉的一条。正文左缘顶多让到这里，再窄就压上刻度了。
+    static var contentInset: CGFloat { leading + tickMaximumWidth + minimumContentGap }
+
+    /// 显示刻度所需的最小列宽：正文列 + 刻度那一条，两样都放得下才显示。
+    /// 按「有没有地方放」判断，而不是盯着某一列开没开——第三列一展开中间列
+    /// 掉到这条线以下自然消失，窗口拉大到三列都够宽时它也该留着。
+    static var minimumColumnWidth: CGFloat {
+        ConversationColumnLayout.contentMaximum + contentInset
+    }
+
+    static func isVisible(
+        section: WorkspaceSection,
+        questionCount: Int,
+        columnWidth: CGFloat
+    ) -> Bool {
         section == .conversation
-            && windowWidth >= 1_250
             && questionCount >= minimumQuestionCount
+            && columnWidth >= minimumColumnWidth
     }
 
     static func railHeight(questionCount: Int, availableHeight: CGFloat) -> CGFloat {
@@ -1009,12 +1047,12 @@ private struct QuestionRailView: View {
                         Capsule()
                             .fill(tickColor(index))
                             .frame(width: tickWidth(index), height: 3)
-                            .frame(width: 48, height: 16, alignment: .leading)
+                            .frame(width: QuestionRailPresentationPolicy.tickMaximumWidth, height: 16, alignment: .leading)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .position(
-                        x: 28,
+                        x: QuestionRailPresentationPolicy.tickMaximumWidth / 2,
                         y: railTop + stablePosition(index: index, height: railHeight)
                     )
                     .accessibilityLabel("跳转到：\(question.question)")
@@ -1023,7 +1061,7 @@ private struct QuestionRailView: View {
                 if let hoveredIndex, questions.indices.contains(hoveredIndex) {
                     railPreview(question: questions[hoveredIndex], index: hoveredIndex)
                         .position(
-                            x: 202,
+                            x: QuestionRailPresentationPolicy.tickMaximumWidth + 8 + 130,
                             y: previewPosition(
                                 index: hoveredIndex,
                                 railTop: railTop,
@@ -1058,7 +1096,7 @@ private struct QuestionRailView: View {
                 }
             }
         }
-        .frame(width: 68)
+        .frame(width: QuestionRailPresentationPolicy.tickMaximumWidth)
         .onChange(of: workspace.activeQuestionID) { _, _ in
             if let matched = questions.firstIndex(where: { $0.id == workspace.activeQuestionID }) {
                 lastResolvedIndex = matched
@@ -1067,7 +1105,7 @@ private struct QuestionRailView: View {
         .animation(.easeOut(duration: 0.15), value: activeIndex)
         .accessibilityLabel("问题导航")
         .frame(maxHeight: .infinity, alignment: .center)
-        .padding(.leading, 8)
+        .padding(.leading, QuestionRailPresentationPolicy.leading)
     }
 
     private func tickWidth(_ index: Int) -> CGFloat {

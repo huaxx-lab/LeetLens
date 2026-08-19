@@ -24,6 +24,88 @@ enum BilibiliAPIClient {
         22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52
     ]
 
+    private static var viewCache: [String: VideoView] = [:]
+
+    struct VideoView: Sendable {
+        let bvid: String
+        let title: String
+        let coverURL: String
+        let author: String
+        let duration: String
+        let playCountLabel: String
+
+        var bridgePayload: [String: String] {
+            [
+                "bvid": bvid,
+                "title": title,
+                "coverURL": coverURL,
+                "author": author,
+                "duration": duration,
+                "playCountLabel": playCountLabel
+            ]
+        }
+    }
+
+    /// 按 bvid 取一条公开视频的标题、封面、UP 与时长。对话里的裸链卡片用它。
+    static func view(bvid: String) async -> VideoView? {
+        let key = bvid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard key.range(of: #"^BV[0-9A-Za-z]+$"#, options: .regularExpression) != nil else { return nil }
+        if let cached = viewCache[key] { return cached }
+        do {
+            let cookies = await WebsiteSessionStore.cookies(for: .bilibili)
+            guard let url = URL(string: "https://api.bilibili.com/x/web-interface/view?bvid=\(key)") else { return nil }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 12
+            request.setValue(referer, forHTTPHeaderField: "Referer")
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            if let cookieHeader = HTTPCookie.requestHeaderFields(with: cookies)["Cookie"] {
+                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            }
+            let (payload, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let root = try JSONSerialization.jsonObject(with: payload) as? [String: Any],
+                  (root["code"] as? Int) == 0,
+                  let data = root["data"] as? [String: Any]
+            else { return nil }
+            let title = stripHTML(data["title"] as? String ?? "")
+            guard !title.isEmpty else { return nil }
+            var cover = data["pic"] as? String ?? ""
+            if cover.hasPrefix("//") { cover = "https:\(cover)" }
+            if cover.hasPrefix("http://") { cover = "https://" + cover.dropFirst(7) }
+            let owner = data["owner"] as? [String: Any]
+            let seconds = data["duration"] as? Int ?? 0
+            let views = (data["stat"] as? [String: Any])?["view"] as? Int ?? 0
+            let info = VideoView(
+                bvid: key,
+                title: title,
+                coverURL: cover,
+                author: owner?["name"] as? String ?? "",
+                duration: durationLabel(seconds: seconds),
+                playCountLabel: views > 0 ? "播放 \(playCountLabel(views))" : ""
+            )
+            viewCache[key] = info
+            return info
+        } catch {
+            NSLog("Bilibili video view failed: %@", error.localizedDescription)
+            return nil
+        }
+    }
+
+    nonisolated static func durationLabel(seconds: Int) -> String {
+        let value = max(0, seconds)
+        let hours = value / 3600
+        let minutes = (value % 3600) / 60
+        let remainder = value % 60
+        if hours > 0 { return String(format: "%d:%02d:%02d", hours, minutes, remainder) }
+        return String(format: "%d:%02d", minutes, remainder)
+    }
+
+    nonisolated static func playCountLabel(_ count: Int) -> String {
+        if count >= 100_000_000 { return String(format: "%.1f亿", Double(count) / 100_000_000) }
+        if count >= 10_000 { return String(format: "%.1f万", Double(count) / 10_000) }
+        return "\(count)"
+    }
+
     /// 检索公开视频。任何失败都返回空数组——工具层会把空当成"没搜到"，
     /// 检索这种锦上添花的能力不该把整个 ReAct 循环打崩。
     static func search(query: String) async -> [LearningAgentTools.VideoHit] {

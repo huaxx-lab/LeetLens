@@ -12,13 +12,14 @@
   <img src="https://img.shields.io/badge/macOS-15%2B-292E33?logo=apple&logoColor=white" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
   <img src="https://img.shields.io/badge/SwiftUI-native-0B84FF?logo=swift&logoColor=white" alt="SwiftUI">
-  <img src="https://img.shields.io/badge/version-v2.0.0-2563EB" alt="Version 2.0.0">
+  <img src="https://img.shields.io/badge/version-v2.1.0-2563EB" alt="Version 2.1.0">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F766E" alt="MIT License"></a>
 </p>
 
 <p align="center">
   <a href="#how-it-differs">How it differs</a> ·
   <a href="#it-mines-your-own-questions">Mining your questions</a> ·
+  <a href="#it-looks-things-up">It looks things up</a> ·
   <a href="#at-a-glance">At a glance</a> ·
   <a href="#the-app">The app</a> ·
   <a href="#what-it-can-do">What it can do</a> ·
@@ -57,6 +58,7 @@ The blunt part first: **this is a real native macOS app**, not a wrapped web pag
 | --- | --- | --- |
 | Form factor | Web app or wrapper, often 100MB+ | Native macOS app, 9MB |
 | What you get | The answer, the editorial | Direction and sticking points; you still write the code |
+| How it answers | From the model's impression | It looks up your records, your submissions, community editorials, and video walkthroughs first |
 | What counts as "learned" | Streaks and problem counts | Your questions, submissions, and answers — minus what you've forgotten |
 | How review is ordered | Fixed reminders | FSRS interval + forgetting curve + weakness, reordered every day |
 | Who keeps the notes | You | AI grows the tree from real problems; you only add what you want to write |
@@ -87,6 +89,28 @@ A real example: you ask "can a Java stack or queue hold arrays, and how do I bui
 </p>
 
 The percentage on each branch is how much you still remember, not the score you had the day you learned it. Delete a concept and the notes and links hanging off it are cleaned up with it — no wires pointing at nothing.
+
+<a id="it-looks-things-up"></a>
+
+## It looks things up — it isn't just a chat window
+
+Ask something and the model doesn't answer from memory. It decides what to look up first: your learning records, your real submission history for that problem, today's review queue, LeetCode community editorials, Bilibili walkthroughs. Then it answers — and if one round isn't enough it goes again, up to four, which is enough for the whole chain: *check the records → check the submissions → read the editorial → answer*.
+
+Every call leaves a receipt in the transcript: which tool, how many results, how long it took — open it and you see the raw payload. Editorials and videos it cites are not bare links but cards with title, author, view count, duration, and thumbnail; click one and it opens in the third column. Everything cited also collects into the **Sources** panel in the top right.
+
+| Tool | What it fetches |
+| --- | --- |
+| `search_learning_records` | Mastery, the current diagnosis (what exactly you got wrong here), tags, review due dates |
+| `get_problem_history` | How many times you submitted a problem, each verdict and runtime, plus the per-attempt analysis |
+| `get_today_plan` | Today's review queue (already FSRS-ordered) and study-plan tasks |
+| `get_weak_points` | The topics with the lowest mastery after forgetting is discounted, with diagnosis and due state |
+| `search_past_conversations` | Semantic search over past conversations — "what did we conclude last time" |
+| `search_leetcode_solutions` | The community editorial list, official first, the rest by views |
+| `read_leetcode_solution` | The editorial body, so it explains what the article says instead of guessing from the title |
+| `search_bilibili_videos` | Public search results: title, author, duration, play count, an openable link |
+| `get_leetcode_progress` | Study-plan progress, solved / attempted counts, recent submissions, difficulty spread |
+
+Everything except the three editorial/video tools reads your own local data; those three read public content only — no login, no likes, no uploads. Picking videos and editorials isn't keyword matching either: it reads where you actually went wrong on that problem first, then picks the two that address it, and tells you why those two.
 
 <a id="at-a-glance"></a>
 
@@ -158,6 +182,15 @@ Data stays on your machine; add Redis and pgvector only when you want to share i
 </tr>
 </table>
 
+### Looking things up: editorials and videos
+
+<table>
+<tr>
+<td width="50%" align="center"><img src="docs/screenshots/agent-solution-cards.png" alt="Editorial search"><br><sub><b>Look up, then answer</b>: official editorial first, the rest by views; open a card to read it in the third column, and it lands in Sources</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/agent-video-cards.png" alt="Bilibili search"><br><sub><b>Videos picked against your bug</b>: it reads how you failed this problem first, then picks the two that address it and says why</sub></td>
+</tr>
+</table>
+
 ### Conversation, browser, and models
 
 <table>
@@ -203,6 +236,8 @@ Data stays on your machine; add Redis and pgvector only when you want to share i
 
 | | |
 | --- | --- |
+| **It looks things up** | Learning records, submissions, today's plan, community editorials, Bilibili — up to four tool rounds before it answers |
+| **Citations become cards** | Editorials and videos render as cards in the body and open in the third column; every citation collects into Sources |
 | **Streaming answers** | Watch them arrive, stop them any time; reasoning effort off / low / high / maximum |
 | **Context you can see** | How much is used, what's left, how many tokens until compaction — all on screen |
 | **Rolling summary** | Summaries pre-warm before the limit; system instructions and the current problem are always kept |
@@ -242,7 +277,7 @@ Data stays on your machine; add Redis and pgvector only when you want to share i
 | **Motion with a reason** | Separate timings for selection, panels, and fades; drags are tweened so wires and cards move in the same frame |
 | **Windows** | Always on top, full screen, cross-display position memory, single-instance guard |
 | **Appearance** | System / light / dark, text scaling with the system size |
-| **Tests** | 216 XCTest + 100 Swift Testing on the native side, 103 on the Electron side, green before anything ships |
+| **Tests** | 238 XCTest + 116 Swift Testing on the native side, 103 on the Electron side, green before anything ships |
 
 ## How the loop turns
 

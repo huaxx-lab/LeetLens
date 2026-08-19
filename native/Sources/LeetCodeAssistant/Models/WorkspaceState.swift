@@ -129,6 +129,8 @@ final class WorkspaceState {
     var toolRequested = true {
         didSet { preferences.set(toolRequested, forKey: Keys.toolRequested) }
     }
+    private(set) var sidebarColumnWidth = AppDesign.Size.sidebarIdeal
+    private(set) var inspectorColumnWidth = AppDesign.Size.inspectorIdeal
     var compactSidebar = false
     var compactTool = false
     var compactContext = false
@@ -170,6 +172,8 @@ final class WorkspaceState {
     var isGeneratingStudyPlan = false
     var studyPlanError = ""
     @ObservationIgnored var studyPlanGenerationTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingWindowWidth: CGFloat?
+    @ObservationIgnored private var windowWidthFlushScheduled = false
     private(set) var windowWidth: CGFloat = 1_700
     /// 窗口标题是否显示：带迟滞，避免在阈值附近拖动窗口时标题闪烁。
     private(set) var showsWindowTitle = true
@@ -272,6 +276,30 @@ final class WorkspaceState {
         if preferences.object(forKey: Keys.toolRequested) != nil {
             toolRequested = preferences.bool(forKey: Keys.toolRequested)
         }
+        if preferences.object(forKey: Keys.sidebarColumnWidth) != nil {
+            sidebarColumnWidth = WorkspaceSplitLayoutPolicy.sidebarDividerLimit(
+                proposed: CGFloat(preferences.double(forKey: Keys.sidebarColumnWidth))
+            )
+        }
+        if preferences.object(forKey: Keys.inspectorColumnWidth) != nil {
+            inspectorColumnWidth = WorkspaceSplitLayoutPolicy.clampInspectorWidth(
+                CGFloat(preferences.double(forKey: Keys.inspectorColumnWidth))
+            )
+        }
+    }
+
+    func setSidebarColumnWidth(_ width: CGFloat) {
+        let clamped = WorkspaceSplitLayoutPolicy.sidebarDividerLimit(proposed: width)
+        guard clamped != sidebarColumnWidth else { return }
+        sidebarColumnWidth = clamped
+        preferences.set(Double(clamped), forKey: Keys.sidebarColumnWidth)
+    }
+
+    func setInspectorColumnWidth(_ width: CGFloat) {
+        let clamped = WorkspaceSplitLayoutPolicy.clampInspectorWidth(width)
+        guard clamped != inspectorColumnWidth else { return }
+        inspectorColumnWidth = clamped
+        preferences.set(Double(clamped), forKey: Keys.inspectorColumnWidth)
     }
 
     func toggleSidebar() {
@@ -326,14 +354,22 @@ final class WorkspaceState {
 
     func focusToolWorkspace() {
         guard isToolWorkspacePresented else { return }
-        // 这里会更换承载 WKWebView 的视图树，spring 期间旧、新容器会同时竞争页面。
-        isToolWorkspaceExpanded = true
         compactTool = false
+        // 和收起第三列一样：列宽补间会露出标题栏底色，看起来就是一条大黑缝。
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isToolWorkspaceExpanded = true
+        }
     }
 
     func restoreToolWorkspace() {
         let wasExpanded = isToolWorkspaceExpanded
-        isToolWorkspaceExpanded = false
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isToolWorkspaceExpanded = false
+        }
         guard wasExpanded else { return }
         // 还原用的断点是「中间列 + 第三列放得下吗」，不是「三列全开放得下吗」。
         //
@@ -491,8 +527,28 @@ final class WorkspaceState {
         presentTool(.browser, preservingContextPanel: preservingContextPanel)
     }
 
+    /// `onGeometryChange` runs inside `NSHostingView.layout` / the display-cycle
+    /// layout pass. Writing `@Observable` state there makes SwiftUI call
+    /// `setNeedsUpdateConstraints` while the window is already updating
+    /// constraints, and AppKit aborts (`_postWindowNeedsUpdateConstraints`).
+    /// Coalesce to the next runloop; tests still call `handleWindowWidth` directly.
+    func scheduleHandleWindowWidth(_ width: CGFloat) {
+        pendingWindowWidth = width
+        guard !windowWidthFlushScheduled else { return }
+        windowWidthFlushScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.windowWidthFlushScheduled = false
+            guard let pending = self.pendingWindowWidth else { return }
+            self.pendingWindowWidth = nil
+            self.handleWindowWidth(pending)
+        }
+    }
+
     func handleWindowWidth(_ width: CGFloat) {
-        windowWidth = width
+        if windowWidth != width {
+            windowWidth = width
+        }
         let newShowsTitle = WindowChromePolicy.showsTitle(current: showsWindowTitle, width: width)
         if newShowsTitle != showsWindowTitle {
             withAnimation(AppDesign.Motion.fade) { showsWindowTitle = newShowsTitle }
@@ -589,9 +645,13 @@ final class WorkspaceState {
         return value
     }
 
-    func presentSettings() {
+    /// 打开设置时可选定位到某一页，例如浏览器菜单里的「浏览器设置」。
+    var settingsSectionHint: String?
+
+    func presentSettings(section: String? = nil) {
         // 从工具聚焦态进入设置时，先回到稳定的分栏承载；否则设置页会被
         // 已聚焦的工具覆盖，用户看不到刚打开的页面。
+        settingsSectionHint = section
         restoreToolWorkspace()
         isSettingsPresented = true
     }
@@ -628,12 +688,18 @@ final class WorkspaceState {
     private enum Keys {
         static let sidebarRequested = "native.workspace.sidebarRequested"
         static let toolRequested = "native.workspace.toolRequested"
+        static let sidebarColumnWidth = "native.workspace.sidebarColumnWidth"
+        static let inspectorColumnWidth = "native.workspace.inspectorColumnWidth"
     }
 
     private enum LayoutBreakpoints {
         static let sidebar: CGFloat = 900
         static let context: CGFloat = 1_180
-        static let toolWithSidebar: CGFloat = 1_280
+        /// True three-column floor: sidebar min + primary min + inspector min.
+        /// The old 1280 cutoff compacted the sidebar while all three still fit.
+        static let toolWithSidebar: CGFloat = AppDesign.Size.sidebarMin
+            + AppDesign.Size.primaryMinimum
+            + AppDesign.Size.inspectorMin
         static let contextWithToolAndSidebar: CGFloat = 1_600
         static let fullWorkspace: CGFloat = 1_850
     }

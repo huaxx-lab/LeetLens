@@ -83,19 +83,16 @@ struct GlobalSidebarView: View {
         }
     }
 
-    /// 侧栏列头。它是最左一列，窗口态下红绿灯就浮在这一行左侧，
-    /// 控件从 `headerLeadingInset` 之后开始排，两者同处一行（对齐 Codex）。
+    /// 侧栏列头。窗口态排在标题栏下面，不再和红绿灯挤同一行。
     private var columnHeader: some View {
         HStack(spacing: 0) {
             // 收起动画期间这一列还在（宽度渐变到 0），但详情列头的 ⧉ 已经出现了。
             // 不加这道判断就会同时看到两颗，其中一颗跟着变窄的侧栏往左滑。
             if workspace.isSidebarPresented {
                 if workspace.isWindowFullScreen {
-                    // 全屏没有红绿灯占位，⧉ 和前进后退并成一组顶到最左。
                     WorkspaceHistoryChrome(workspace: workspace)
                     Spacer(minLength: 0)
                 } else {
-                    // 窗口态保持原样：最左是红绿灯，这颗按钮靠右贴住列尾。
                     Spacer(minLength: 0)
                     sidebarIconButton("sidebar.left", help: "收起侧栏") {
                         workspace.toggleSidebar()
@@ -103,13 +100,10 @@ struct GlobalSidebarView: View {
                 }
             }
         }
-        // 窗口态要把这一行提上去和红绿灯同处一条中线（实测红绿灯中心 49、本行 65）。
-        // 全屏没有红绿灯要让位，三列列头都不偏移——中间列和第三列全屏也都是 0，
-        // 这里再单独提 10pt 就会比另外两列高出一截。
-        .offset(y: workspace.isWindowFullScreen ? 0 : -16)
         .padding(.leading, workspace.headerLeadingInset)
         .padding(.trailing, AppDesign.Spacing.xs)
         .frame(height: AppDesign.Size.columnHeader)
+        .padding(.top, ToolHeaderLayoutPolicy.topInset(isFullScreen: workspace.isWindowFullScreen))
     }
 
     private var sidebarHeader: some View {

@@ -43,6 +43,8 @@ struct ContextPanelView: View {
     let sources: [ContextItem]
     @State private var hoveredItemID: String?
     @State private var expandedSections: Set<String> = []
+    /// 内容实测高度；首帧还没量到时退回 `ContextPanelSizingPolicy` 的估值。
+    @State private var contentHeight: CGFloat?
 
     var body: some View {
         ScrollView {
@@ -57,8 +59,11 @@ struct ContextPanelView: View {
                     contextSection("来源", items: sources)
                 }
             }
+            // 面板高度按实测内容走：`ContextPanelSizingPolicy` 那套行高常量
+            // 只能算个估值，差几点就会让内容"明明放得下"却还多出一条滚动条。
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         }
-        .scrollIndicators(.hidden)
+        .floatingScrollIndicators()
         .frame(height: preferredHeight)
         .navigationGlass(cornerRadius: AppDesign.Radius.floating, interactive: true)
         .accessibilityElement(children: .contain)
@@ -66,11 +71,13 @@ struct ContextPanelView: View {
     }
 
     private var preferredHeight: CGFloat {
-        ContextPanelSizingPolicy.height(
+        let estimate = ContextPanelSizingPolicy.height(
             outputCount: outputs.count,
             sourceCount: sources.count,
             expandedOutputCount: expandedSections.contains("输出") ? outputs.count : 0
         )
+        guard let contentHeight, contentHeight > 0 else { return estimate }
+        return min(ContextPanelSizingPolicy.maximumHeight, contentHeight)
     }
 
     private func contextSection(_ title: String, items: [ContextItem]) -> some View {

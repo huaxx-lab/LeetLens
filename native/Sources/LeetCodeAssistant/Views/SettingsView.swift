@@ -100,6 +100,12 @@ struct SettingsView: View {
             .background(AppDesign.ColorToken.canvas)
         }
         .navigationSplitViewStyle(.balanced)
+        .onAppear {
+            if workspace.settingsSectionHint == "browser" {
+                selection = .browser
+            }
+            workspace.settingsSectionHint = nil
+        }
     }
 
     private var header: some View {
@@ -561,7 +567,7 @@ private struct BrowserSettingsPage: View {
     }
 }
 
-private struct BrowserHistorySheet: View {
+struct BrowserHistorySheet: View {
     @Bindable var workspace: WorkspaceState
     @ObservedObject private var session = BrowserSession.shared
     @Environment(\.dismiss) private var dismiss

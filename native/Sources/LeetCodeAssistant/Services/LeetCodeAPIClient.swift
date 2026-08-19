@@ -162,6 +162,37 @@ final class LeetCodeAPIClient {
         return LeetCodeSolutionPage(total: root["totalNum"] as? Int ?? items.count, items: items)
     }
 
+    private var solutionListCache: [String: [LeetCodeSolutionSummary]] = [:]
+
+    /// 对话里的题解链接卡片：按题目列表命中一篇，补标题、作者、浏览量和头像。
+    func solutionCard(problemSlug: String, articleSlug: String) async -> [String: Any]? {
+        let problem = problemSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+        let article = articleSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !problem.isEmpty, !article.isEmpty else { return nil }
+        if solutionListCache[problem] == nil {
+            if let items = try? await fetchSolutions(titleSlug: problem, first: 30).items {
+                solutionListCache[problem] = items
+            }
+        }
+        guard let hit = solutionListCache[problem]?.first(where: { $0.slug == article }) else { return nil }
+        return [
+            "problemSlug": problem,
+            "articleSlug": article,
+            "title": hit.title,
+            "author": hit.authorName,
+            "viewsLabel": Self.viewsLabel(hit.views),
+            "isOfficial": hit.isOfficial,
+            "avatarURL": hit.authorAvatar
+        ]
+    }
+
+    nonisolated static func viewsLabel(_ count: Int) -> String {
+        if count <= 0 { return "" }
+        if count >= 100_000_000 { return String(format: "%.1f亿浏览", Double(count) / 100_000_000) }
+        if count >= 10_000 { return String(format: "%.1f万浏览", Double(count) / 10_000) }
+        return "\(count)浏览"
+    }
+
     func fetchSolutionArticle(slug: String) async throws -> LeetCodeSolutionArticle {
         let data = try await graphQL(
             query: Self.solutionArticleQuery,

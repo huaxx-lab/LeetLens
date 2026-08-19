@@ -2,6 +2,33 @@ import XCTest
 @testable import LeetCodeAssistant
 
 final class WorkspaceStateTests: XCTestCase {
+    func testConversationTitleUsesTheSameLeadingInsetAsTheComposer() {
+        // 1200 宽：正文列 1100，两边各让 50。
+        XCTAssertEqual(
+            ConversationColumnLayout.contentLeadingInset(columnWidth: 1_200, trailingInset: 0),
+            50
+        )
+        // 列比正文还窄时退到最小留白。
+        XCTAssertEqual(
+            ConversationColumnLayout.contentLeadingInset(columnWidth: 820, trailingInset: 0),
+            AppDesign.Spacing.lg
+        )
+        // 列越宽留白越大，正文照旧居中。
+        XCTAssertEqual(
+            ConversationColumnLayout.contentLeadingInset(columnWidth: 1_920, trailingInset: 0),
+            410
+        )
+        XCTAssertEqual(
+            ConversationColumnLayout.titleGapAfterNavigation(
+                columnWidth: 1_600,
+                trailingInset: 0,
+                headerLeadingPadding: 8,
+                navigationWidth: 60
+            ),
+            250 - 68
+        )
+    }
+
     func testFloatingContextPanelDoesNotInsetPrimaryWorkspace() {
         XCTAssertEqual(
             ContextPanelOverlayPolicy.primaryTrailingInset(isVisible: true),
@@ -105,11 +132,115 @@ final class WorkspaceStateTests: XCTestCase {
     }
 
     func testToolTabsShareTheSameHeaderBaselineAsTheOtherColumns() {
-        // 三列列头共用一条中线。侧栏和中间列都往上提去对齐红绿灯，
-        // 这一列原来反而下推 8pt，于是标签条明显低于左边两列。
-        XCTAssertEqual(ToolHeaderLayoutPolicy.topInset(isFullScreen: false), -6)
-        // 全屏没有红绿灯要让位，三列都不偏移。
+        XCTAssertEqual(AppDesign.Size.columnHeader, 40)
+        XCTAssertEqual(ToolHeaderLayoutPolicy.topInset(isFullScreen: false), AppDesign.Size.headerTopMargin)
         XCTAssertEqual(ToolHeaderLayoutPolicy.topInset(isFullScreen: true), 0)
+    }
+
+    /// 窗口态谁都不许贴着顶边框：列头留白 > 0，红绿灯落在列头中线上。
+    func testWindowedHeaderKeepsTheTopEdgeClearAndCentersTheTrafficLights() {
+        XCTAssertGreaterThan(ToolHeaderLayoutPolicy.topInset(isFullScreen: false), 0)
+        let center = ToolHeaderLayoutPolicy.headerCenterY(isFullScreen: false)
+        XCTAssertEqual(center, AppDesign.Size.headerTopMargin + AppDesign.Size.columnHeader / 2)
+
+        let band = ToolHeaderLayoutPolicy.titlebarBandHeight(isFullScreen: false)
+        XCTAssertEqual(band, AppDesign.Size.headerTopMargin + AppDesign.Size.columnHeader)
+
+        // 14pt 是系统红绿灯的直径；按钮中线必须正好落在列头中线上。
+        let originY = WindowTitlebarLayout.buttonOriginY(bandHeight: band, buttonHeight: 14, centerFromTop: center)
+        XCTAssertEqual(band - (originY + 7), center, accuracy: 0.01)
+        XCTAssertGreaterThan(originY, 0, "按钮不能掉到标题栏容器外面，否则点不动")
+    }
+
+    func testTitlebarContainerCoversTheWholeHeaderBand() {
+        let band = ToolHeaderLayoutPolicy.titlebarBandHeight(isFullScreen: false)
+        let frame = WindowTitlebarLayout.containerFrame(
+            themeFrame: CGRect(x: 0, y: 0, width: 1_200, height: 800),
+            bandHeight: band
+        )
+        XCTAssertEqual(frame, CGRect(x: 0, y: 800 - band, width: 1_200, height: band))
+    }
+
+    @MainActor
+    func testColumnWidthSettersClampToPinnedRanges() {
+        let (preferences, suiteName) = makePreferences()
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let state = WorkspaceState(preferences: preferences)
+
+        state.setSidebarColumnWidth(100)
+        XCTAssertEqual(state.sidebarColumnWidth, AppDesign.Size.sidebarMin)
+        state.setSidebarColumnWidth(400)
+        XCTAssertEqual(state.sidebarColumnWidth, AppDesign.Size.sidebarMax)
+        state.setInspectorColumnWidth(200)
+        XCTAssertEqual(state.inspectorColumnWidth, AppDesign.Size.inspectorMin)
+        state.setInspectorColumnWidth(900)
+        XCTAssertEqual(state.inspectorColumnWidth, AppDesign.Size.inspectorMax)
+    }
+
+    func testThreeColumnMinimumIsTheSumOfPinnedColumnFloors() {
+        XCTAssertEqual(
+            WorkspaceSplitLayoutPolicy.threeColumnMinimum,
+            AppDesign.Size.sidebarMin + AppDesign.Size.primaryMinimum + AppDesign.Size.inspectorMin
+        )
+        XCTAssertEqual(WorkspaceSplitLayoutPolicy.threeColumnMinimum, 1_218)
+        XCTAssertGreaterThan(WorkspaceSplitLayoutPolicy.sidebarHoldingPriority, WorkspaceSplitLayoutPolicy.inspectorHoldingPriority)
+        XCTAssertGreaterThan(WorkspaceSplitLayoutPolicy.inspectorHoldingPriority, WorkspaceSplitLayoutPolicy.detailHoldingPriority)
+    }
+
+    func testInspectorDividerDragDoesNotCrossPinnedWidth() {
+        let splitWidth: CGFloat = 1_700
+        let divider: CGFloat = 1
+        let minPosition = WorkspaceSplitLayoutPolicy.inspectorDividerPosition(
+            splitWidth: splitWidth,
+            proposed: 900,
+            dividerThickness: divider
+        )
+        let maxPosition = WorkspaceSplitLayoutPolicy.inspectorDividerPosition(
+            splitWidth: splitWidth,
+            proposed: 1_500,
+            dividerThickness: divider
+        )
+        let midPosition = WorkspaceSplitLayoutPolicy.inspectorDividerPosition(
+            splitWidth: splitWidth,
+            proposed: 1_200,
+            dividerThickness: divider
+        )
+
+        XCTAssertEqual(minPosition, splitWidth - AppDesign.Size.inspectorMax - divider)
+        XCTAssertEqual(maxPosition, splitWidth - AppDesign.Size.inspectorMin - divider)
+        XCTAssertEqual(midPosition, 1_200)
+        XCTAssertEqual(WorkspaceSplitLayoutPolicy.sidebarDividerLimit(proposed: 180), AppDesign.Size.sidebarMin)
+        XCTAssertEqual(WorkspaceSplitLayoutPolicy.sidebarDividerLimit(proposed: 400), AppDesign.Size.sidebarMax)
+        XCTAssertEqual(WorkspaceSplitLayoutPolicy.sidebarDividerLimit(proposed: 256), 256)
+    }
+
+    @MainActor
+    func testScheduledWindowWidthFlushAppliesTheLatestValue() async {
+        let (preferences, suiteName) = makePreferences()
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let state = WorkspaceState(preferences: preferences)
+
+        state.scheduleHandleWindowWidth(1_400)
+        state.scheduleHandleWindowWidth(840)
+        XCTAssertEqual(state.windowWidth, 1_700, "布局回调不得同步改 Observable 状态")
+
+        await settleMainQueue()
+        XCTAssertEqual(state.windowWidth, 840)
+        XCTAssertFalse(state.isSidebarPresented)
+    }
+
+    @MainActor
+    func testOpeningToolAtTypicalWidthKeepsSidebar() async {
+        let (preferences, suiteName) = makePreferences()
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let state = WorkspaceState(preferences: preferences)
+        state.handleWindowWidth(1_280)
+
+        state.isToolWorkspacePresented = true
+
+        XCTAssertTrue(state.isSidebarPresented)
+        await settleMainQueue()
+        XCTAssertTrue(state.isSidebarPresented, "1280 已能放下三列最小值，不应再自动收起侧栏")
     }
 
     func testContextCapsuleKeepsShortSourceListsCompact() {
@@ -129,35 +260,84 @@ final class WorkspaceStateTests: XCTestCase {
         XCTAssertLessThanOrEqual(long, ContextPanelSizingPolicy.maximumHeight)
     }
 
-    func testQuestionRailRequiresSixQuestionsAndWideConversationWorkspace() {
+    func testQuestionRailRequiresSixQuestionsInTheConversationWorkspace() {
         XCTAssertFalse(
             QuestionRailPresentationPolicy.isVisible(
                 section: .conversation,
-                windowWidth: 1_500,
-                questionCount: 5
+                questionCount: 5,
+                columnWidth: 1_500
             )
         )
         XCTAssertTrue(
             QuestionRailPresentationPolicy.isVisible(
                 section: .conversation,
-                windowWidth: 1_500,
-                questionCount: 6
-            )
-        )
-        XCTAssertFalse(
-            QuestionRailPresentationPolicy.isVisible(
-                section: .conversation,
-                windowWidth: 1_100,
-                questionCount: 8
+                questionCount: 6,
+                columnWidth: 1_500
             )
         )
         XCTAssertFalse(
             QuestionRailPresentationPolicy.isVisible(
                 section: .knowledge,
-                windowWidth: 1_500,
-                questionCount: 8
+                questionCount: 8,
+                columnWidth: 1_500
             )
         )
+    }
+
+    /// 显隐只看中间列还剩多宽：1470 的窗口开侧栏（1214）留着，
+    /// 开第三列（≤1050）自己消失，两列都开更不用说。
+    func testQuestionRailHidesOnceTheColumnDropsBelowTheThreshold() {
+        XCTAssertEqual(
+            QuestionRailPresentationPolicy.minimumColumnWidth,
+            ConversationColumnLayout.contentMaximum + QuestionRailPresentationPolicy.contentInset
+        )
+        for width in [1_214.0, 1_380.0] as [CGFloat] {
+            XCTAssertTrue(
+                QuestionRailPresentationPolicy.isVisible(
+                    section: .conversation,
+                    questionCount: 12,
+                    columnWidth: width
+                ),
+                "\(width) 宽的中间列放得下刻度"
+            )
+        }
+        for width in [1_050.0, 794.0] as [CGFloat] {
+            XCTAssertFalse(
+                QuestionRailPresentationPolicy.isVisible(
+                    section: .conversation,
+                    questionCount: 12,
+                    columnWidth: width
+                ),
+                "\(width) 宽的中间列放不下，刻度要自己收掉"
+            )
+        }
+    }
+
+    /// 刻度条留在列左缘，正文往它那边延展，但必须给它让出固定的一条。
+    func testConversationContentLeavesRoomForTheQuestionRail() {
+        let railInset = QuestionRailPresentationPolicy.contentInset
+        XCTAssertEqual(
+            railInset,
+            QuestionRailPresentationPolicy.leading
+                + QuestionRailPresentationPolicy.tickMaximumWidth
+                + QuestionRailPresentationPolicy.minimumContentGap
+        )
+
+        // 侧栏 + 上下文面板都开着：正文本来只剩 24pt 内缩，会压到刻度上。
+        let squeezed = ConversationColumnLayout.contentLeadingInset(
+            columnWidth: 1_214,
+            trailingInset: 316,
+            railInset: railInset
+        )
+        XCTAssertEqual(squeezed, railInset)
+
+        // 列很宽时正文照旧居中，不会因为刻度再往右挪。
+        let roomy = ConversationColumnLayout.contentLeadingInset(
+            columnWidth: 1_470,
+            trailingInset: 0,
+            railInset: railInset
+        )
+        XCTAssertEqual(roomy, 185)
     }
 
     func testQuestionRailUsesCompactFixedDensity() {
@@ -648,11 +828,9 @@ final class WorkspaceStateTests: XCTestCase {
         defer { preferences.removePersistentDomain(forName: suiteName) }
         let state = WorkspaceState(preferences: preferences)
 
-        // 窗口态：最左一列的列头要给红绿灯让位，控件才能与它同处一行
         XCTAssertFalse(state.isWindowFullScreen)
         XCTAssertEqual(state.headerLeadingInset, AppDesign.Size.trafficLightInset)
 
-        // 全屏态：系统收起红绿灯，再留 78pt 就是列头左边一块空洞
         state.handleFullScreenChange(true)
         XCTAssertEqual(state.headerLeadingInset, AppDesign.Spacing.xs)
 

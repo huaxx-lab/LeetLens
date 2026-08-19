@@ -115,6 +115,37 @@ final class BrowserAddressPolicyTests: XCTestCase {
         XCTAssertEqual(BrowserAddressPolicy.normalize("  baidu.com  "), "https://baidu.com")
     }
 
+    func testPageZoomClampsToReadableSteps() {
+        XCTAssertEqual(BrowserPageZoomPolicy.clamp(0.11), 0.5)
+        XCTAssertEqual(BrowserPageZoomPolicy.clamp(3.4), 3.0)
+        XCTAssertEqual(BrowserPageZoomPolicy.clamp(1.24), 1.2)
+        XCTAssertEqual(BrowserPageZoomPolicy.percentLabel(1), "100%")
+        XCTAssertEqual(BrowserPageZoomPolicy.percentLabel(1.5), "150%")
+        XCTAssertFalse(BrowserPageZoomPolicy.canDecrease(0.5))
+        XCTAssertTrue(BrowserPageZoomPolicy.canDecrease(1))
+        XCTAssertFalse(BrowserPageZoomPolicy.canIncrease(3))
+        XCTAssertTrue(BrowserPageZoomPolicy.canIncrease(1))
+        XCTAssertFalse(BrowserPageZoomPolicy.canReset(1))
+        XCTAssertTrue(BrowserPageZoomPolicy.canReset(1.2))
+    }
+
+    func testCookieImportReadsNetscapeAndJSON() throws {
+        let netscape = """
+        # Netscape HTTP Cookie File
+        .example.com	TRUE	/	TRUE	0	sid	abc
+        """.data(using: .utf8)!
+        let netscapeCookies = try XCTUnwrap(BrowserCookieImportPolicy.cookies(from: netscape))
+        XCTAssertEqual(netscapeCookies.count, 1)
+        XCTAssertEqual(netscapeCookies[0].name, "sid")
+        XCTAssertEqual(netscapeCookies[0].domain, ".example.com")
+
+        let json = """
+        [{"name":"token","value":"xyz","domain":"leetcode.cn","path":"/","secure":true}]
+        """.data(using: .utf8)!
+        let jsonCookies = try XCTUnwrap(BrowserCookieImportPolicy.cookies(from: json))
+        XCTAssertEqual(jsonCookies.map(\.name), ["token"])
+    }
+
     func testNormalizeKeepsExplicitScheme() {
         XCTAssertEqual(BrowserAddressPolicy.normalize("http://baidu.com"), "http://baidu.com")
         XCTAssertEqual(BrowserAddressPolicy.normalize("https://www.baidu.com/"), "https://www.baidu.com/")

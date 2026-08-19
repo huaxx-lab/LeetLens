@@ -12,13 +12,14 @@
   <img src="https://img.shields.io/badge/macOS-15%2B-292E33?logo=apple&logoColor=white" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
   <img src="https://img.shields.io/badge/SwiftUI-native-0B84FF?logo=swift&logoColor=white" alt="SwiftUI">
-  <img src="https://img.shields.io/badge/version-v2.0.0-2563EB" alt="Version 2.0.0">
+  <img src="https://img.shields.io/badge/version-v2.1.0-2563EB" alt="Version 2.1.0">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F766E" alt="MIT License"></a>
 </p>
 
 <p align="center">
   <a href="#跟别的刷题工具不一样在哪">不一样在哪</a> ·
   <a href="#从你的提问里挖出你不会的东西">从提问里挖知识</a> ·
+  <a href="#它会自己去查">它会自己去查</a> ·
   <a href="#一眼看完">一眼看完</a> ·
   <a href="#界面">界面</a> ·
   <a href="#能做的事">能做的事</a> ·
@@ -57,6 +58,7 @@
 | --- | --- | --- |
 | 形态 | 网页或套壳客户端，动辄一百多 MB | 原生 macOS 应用，9MB |
 | 你得到什么 | 答案、题解 | 方向和卡点，代码还是你自己写 |
+| 怎么答的 | 凭模型印象答 | 先查你的题库、提交轨迹、社区题解、B 站讲解，再答 |
 | 怎么算「学会了」 | 打卡数、刷题数 | 看你的提问、提交和作答，还要减去忘掉的部分 |
 | 复习怎么排 | 固定间隔提醒 | FSRS 间隔 + 遗忘曲线 + 薄弱度，天天重排 |
 | 笔记谁维护 | 你自己 | AI 从真实题目长出知识树，你只补自己想写的 |
@@ -86,6 +88,28 @@
 </p>
 
 图里每个分支的百分比是「你现在还记得多少」，不是当初学会时的分数。删掉一个知识点，挂在它上面的笔记和链接会一起清掉，不会留下指向空气的虚线。
+
+<a id="它会自己去查"></a>
+
+## 它会自己去查，不是只会聊天
+
+问题抛过去，模型不先答，先决定该查什么：你的学习题库、这道题的真实提交轨迹、今天的复习队列、力扣社区题解、B 站讲解视频。查完再回答，一轮不够就再查一轮，最多四轮——「查题库 → 查提交 → 读题解 → 回答」这条链走得完。
+
+每次调用都在对话里留一行凭据：调了哪个工具、拿回几条、花了多久，点开能看到原始结果。答案里引用到的题解和视频不是裸链接，是带标题、作者、浏览量、时长和封面的卡片，点一下在第三列打开；所有引用同时归进右上角的「来源」面板。
+
+| 工具 | 它去拿什么 |
+| --- | --- |
+| `search_learning_records` 学习题库 | 掌握度、当前诊断（你在这个知识点上具体犯过什么错）、标签、复习到期时间 |
+| `get_problem_history` 刷题历史 | 某道题提交了几次、每次判定与运行数据，以及逐次的轨迹分析 |
+| `get_today_plan` 今日安排 | 今天的复习队列（FSRS 排好序）与学习计划任务 |
+| `get_weak_points` 薄弱点 | 按遗忘曲线折算后掌握度最低的知识点，附诊断与到期情况 |
+| `search_past_conversations` 历史对话 | 在过往对话里做语义检索，确认"上次说过什么" |
+| `search_leetcode_solutions` 题解检索 | 社区题解列表，官方排最前，其余按浏览量 |
+| `read_leetcode_solution` 题解正文 | 读正文再讲，不靠标题猜内容 |
+| `search_bilibili_videos` B 站视频 | 公开搜索结果：标题、作者、时长、播放量、可直接打开的链接 |
+| `get_leetcode_progress` 刷题进度 | 题单进度、通过 / 尝试数、最近提交与难度分布 |
+
+除了题解与视频那三个，其余查的全是你自己的本地数据；那三个只读公开内容——不登录、不点赞、不上传。挑视频和题解也不是关键词匹配：它先看你在这道题上栽在哪，再从结果里选对症的那两条，并说清为什么是这两条。
 
 <a id="一眼看完"></a>
 
@@ -157,6 +181,15 @@ SwiftUI + Swift 6，9MB 安装包，启动快、滚动不掉帧。
 </tr>
 </table>
 
+### 它自己去查：题解与视频
+
+<table>
+<tr>
+<td width="50%" align="center"><img src="docs/screenshots/agent-solution-cards.png" alt="题解检索"><br><sub><b>先查再答</b>：官方题解排最前，其余按浏览量；卡片点开在第三列读正文，同时归进「来源」</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/agent-video-cards.png" alt="B 站视频检索"><br><sub><b>带着你的错因去挑视频</b>：先看你这题栽在哪，再从搜索结果里挑对症的两个，并说清为什么是这两个</sub></td>
+</tr>
+</table>
+
 ### 对话、浏览器与模型
 
 <table>
@@ -202,6 +235,8 @@ SwiftUI + Swift 6，9MB 安装包，启动快、滚动不掉帧。
 
 | | |
 | --- | --- |
+| **会自己查** | 学习题库、提交轨迹、今日安排、社区题解、B 站视频，最多四轮工具调用后再回答 |
+| **引用成卡片** | 题解和视频在正文里渲染成卡片，点开进第三列；所有引用归进「来源」面板 |
 | **流式回答** | 边生成边看，随时打断；推理档位关 / 低 / 高 / 最高 |
 | **上下文看得见** | 占了多少、还剩多少、离压缩还有多少 Token，都写在界面上 |
 | **滚动摘要** | 快到上限时后台先把摘要备好，系统指令和当前题目一定保住 |
@@ -241,7 +276,7 @@ SwiftUI + Swift 6，9MB 安装包，启动快、滚动不掉帧。
 | **动效有出处** | 选择、面板、淡入各有时序；拖拽用补间，连线和卡片同一帧动 |
 | **窗口** | 置顶、全屏、跨屏位置记忆、单实例守卫 |
 | **外观** | 跟随系统 / 浅色 / 深色，字号随系统文字大小走 |
-| **测试** | 原生侧 216 项 XCTest + 100 项 Swift Testing，Electron 侧 103 项，全绿才发 |
+| **测试** | 原生侧 238 项 XCTest + 116 项 Swift Testing，Electron 侧 103 项，全绿才发 |
 
 ## 它是怎么转起来的
 

@@ -174,7 +174,7 @@ enum WebViewPresentation {
           display: none;
         }
         .__lc-sb.__lc-on { opacity: 1; }
-        .__lc-sb.__lc-drag { transition: opacity .3s ease; }
+        .__lc-sb.__lc-drag, .__lc-sb.__lc-jump { transition: opacity .3s ease; }
       `;
       (document.head || document.documentElement).appendChild(style);
 
@@ -350,8 +350,32 @@ enum WebViewPresentation {
       vertical.addEventListener('mousedown', startDrag(vertical, true));
       horizontal.addEventListener('mousedown', startDrag(horizontal, false));
 
+      // resize 只重排、不淡入。展开/收起列、拖分栏、缩窗口都会打到这里；
+      // 走 reveal 的话用户根本没滚动，却凭空多出一条滚动条、0.9s 后才消失。
+      // `__lc-jump` 期间关掉 top/left 过渡，否则视口一变 thumb 会横穿页面滑过去。
+      const relayout = () => {
+        const target = activeTarget || document;
+        const s = stretchFor(target);
+        s.v = 0;
+        s.h = 0;
+        vertical.classList.add('__lc-jump');
+        horizontal.classList.add('__lc-jump');
+        layout(target, s);
+        requestAnimationFrame(() => {
+          vertical.classList.remove('__lc-jump');
+          horizontal.classList.remove('__lc-jump');
+        });
+      };
+      let resizeFrame = 0;
+
       document.addEventListener('scroll', (event) => schedule(event.target), true);
-      window.addEventListener('resize', () => schedule(document), true);
+      window.addEventListener('resize', () => {
+        if (resizeFrame) return;
+        resizeFrame = requestAnimationFrame(() => {
+          resizeFrame = 0;
+          relayout();
+        });
+      }, true);
       document.addEventListener('DOMContentLoaded', mount);
       mount();
     })();

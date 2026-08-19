@@ -14,4 +14,10 @@ final class LeetCodeSolutionMediaTests: XCTestCase {
             ["4547de8a-5963-4caf-9281-c22ee751ab12"]
         )
     }
+
+    func testSolutionCardViewsLabelUsesChineseUnits() {
+        XCTAssertEqual(LeetCodeAPIClient.viewsLabel(0), "")
+        XCTAssertEqual(LeetCodeAPIClient.viewsLabel(860), "860浏览")
+        XCTAssertEqual(LeetCodeAPIClient.viewsLabel(71_000), "7.1万浏览")
+    }
 }
