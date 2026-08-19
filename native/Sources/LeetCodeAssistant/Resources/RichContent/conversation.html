@@ -133,7 +133,8 @@
     .agent-video .agent-title { margin-top: 1px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     /* 正文里裸露的长链接：换成一张可点的窄卡，替掉又长又难点的蓝色 URL。
        站点色只用在左侧色块和 hover 上，正文整体仍是中性配色。 */
-    .inline-link-card { display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 9px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, CanvasText 9%, transparent); background: color-mix(in srgb, CanvasText 2%, Canvas); cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+    /* 卡片替换的是行内的 <a>，所以要显式转成块级，才能在 <p>/<li> 里独占一行。 */
+    .inline-link-card { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; padding: 9px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, CanvasText 9%, transparent); background: color-mix(in srgb, CanvasText 2%, Canvas); cursor: pointer; transition: background .15s ease, border-color .15s ease; }
     .inline-link-card:hover { background: color-mix(in srgb, var(--link-tint, #6b7280) 7%, Canvas); border-color: color-mix(in srgb, var(--link-tint, #6b7280) 30%, transparent); }
     .inline-link-glyph { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 7px; font-size: 11px; color: #fff; background: var(--link-tint, #6b7280); }
     .inline-link-body { display: flex; flex-direction: column; min-width: 0; }
@@ -339,11 +340,11 @@
         if (anchor.textContent.trim() !== href) continue;
         const kind = INLINE_LINK_KINDS.find(item => item.pattern.test(href));
         if (!kind) continue;
-        const host = anchor.closest('li') || anchor.closest('p');
-        if (!host) continue;
-        // 宿主里除了「链接：」这类前缀外不该有别的实质内容，否则会吃掉正文。
-        const rest = host.textContent.trim().replace(href, '').trim();
-        if (rest && !/^[:：\-—\s]*(链接|地址|原文)?[:：\-—\s]*$/.test(rest)) continue;
+        // 只替换链接本身，**不动**同段落里的说明文字。
+        //
+        // 早先要求"宿主段落除了「链接：」外没有别的内容"才替换，结果模型最常写的
+        // 「官方题解：两次二分 …… <链接>」「Xyy丨一次二分：<链接>」全被跳过——
+        // 卡片等于没做。现在只把 <a> 换成卡片：说明文字留在原处，卡片跟在它下面。
         const id = kind.pattern.exec(href)[1];
         const card = document.createElement('div');
         card.className = 'inline-link-card';
@@ -354,7 +355,7 @@
           + `<span class="inline-link-body"><span class="inline-link-title">${escapeHtml(kind.title)}</span>`
           + `<span class="inline-link-sub">${escapeHtml(kind.subtitle(id))}</span></span>`
           + `<span class="inline-link-caret">›</span>`;
-        host.replaceWith(card);
+        anchor.replaceWith(card);
       }
     };
     const renderRichText = text => sanitizeRich(markdown.render(String(text||'')));

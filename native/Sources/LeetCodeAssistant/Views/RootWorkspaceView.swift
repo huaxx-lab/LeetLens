@@ -172,7 +172,14 @@ struct RootWorkspaceView: View {
                 }
             }
         }
-        .navigationSplitViewStyle(.balanced)
+        // 用 prominentDetail 而不是 balanced。
+        //
+        // 第三列是挂在 detail 内部的 `.inspector`，于是有两套宽度分配器：
+        // 外层分「侧栏 ↔ detail」，内层分「中间内容 ↔ 第三列」。balanced 会在
+        // detail 变窄时回头找外层重新分摊，于是拖第三列左边界时侧栏跟着被压缩，
+        // 两套分配器互相追着调整——就是那种"一拉一弹"的弹簧感。
+        // prominentDetail 让 detail 保持自己的宽度，拖动只影响你正在拖的那一条。
+        .navigationSplitViewStyle(.prominentDetail)
         // hiddenTitleBar 仍会为红绿灯保留一段标题栏安全区。把整个分栏内容仅在窗口态
         // 上移这一段：各列头与红绿灯合并为一行，正文也紧接在同一条分隔线下。
         // 全屏时该安全区不存在，不能继续上移。

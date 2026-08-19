@@ -103,10 +103,10 @@ struct GlobalSidebarView: View {
                 }
             }
         }
-        // 侧栏这一列天生比详情列低一截，两种状态都要往回提：
-        // 窗口态对齐红绿灯（实测红绿灯中心 49，本行未提时 61）→ -12；
-        // 全屏没有红绿灯，改为对齐详情列头（实测详情 ✎ 中心 53，本行 63）→ -10。
-        .offset(y: workspace.isWindowFullScreen ? -10 : -16)
+        // 窗口态要把这一行提上去和红绿灯同处一条中线（实测红绿灯中心 49、本行 65）。
+        // 全屏没有红绿灯要让位，三列列头都不偏移——中间列和第三列全屏也都是 0，
+        // 这里再单独提 10pt 就会比另外两列高出一截。
+        .offset(y: workspace.isWindowFullScreen ? 0 : -16)
         .padding(.leading, workspace.headerLeadingInset)
         .padding(.trailing, AppDesign.Spacing.xs)
         .frame(height: AppDesign.Size.columnHeader)

@@ -335,10 +335,16 @@ final class WorkspaceState {
         let wasExpanded = isToolWorkspaceExpanded
         isToolWorkspaceExpanded = false
         guard wasExpanded else { return }
+        // 还原用的断点是「中间列 + 第三列放得下吗」，不是「三列全开放得下吗」。
+        //
+        // 原来这里按 `fullWorkspace`(1850) 判：1470 这种常见窗口一还原就把第三列
+        // 整个收掉——用户点的是"还原"，得到的却是"关闭"。真正的下限是这两列自身
+        // 的最小宽度之和；窄到连两列都放不下（比如 800）才该收起，那条路径由
+        // `testRestoringFocusedToolAtCompactWidthRecomputesPanelVisibility` 守着。
         compactTool = Self.compactFlag(
             current: false,
             width: windowWidth,
-            breakpoint: LayoutBreakpoints.fullWorkspace
+            breakpoint: LayoutBreakpoints.toolWithSidebar
         )
         compactSidebar = Self.compactFlag(
             current: compactSidebar,

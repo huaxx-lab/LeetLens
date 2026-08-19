@@ -764,21 +764,28 @@ enum BrowserTabOrderPolicy {
 ///    命中的是最深的那个，它照样说 true。
 ///
 /// 所以改成鼠标进入这块区域时直接把窗口标成"不可拖"，离开再还回去。
-private struct NonWindowDragging<Content: View>: NSViewRepresentable {
-    private final class Host: NSHostingView<Content> {
+private struct NonWindowDragging<Content: View>: View {
+    /// 纯事件层：一个**不承载任何 SwiftUI 内容**的透明 NSView，铺在内容背后。
+    ///
+    /// 早先这里是 `NSHostingView<Content>`（内容嵌在里面）。那样做会崩：
+    /// 嵌套的 hosting view 被父布局改尺寸时，它在 `setFrameSize` 里发起
+    /// KVO → `setNeedsUpdateConstraints`，而此刻 AppKit 正在跑布局，
+    /// 于是 `_postWindowNeedsUpdateConstraints` 抛异常直接 abort——
+    /// 第三列展开、放大、全屏都会改它的尺寸，所以必崩。
+    ///
+    /// 现在它只做鼠标追踪，不参与布局、不持有内容，也就不可能触发约束更新。
+    private struct TrackingLayer: NSViewRepresentable {
+        func makeNSView(context: Context) -> NSView { Tracker() }
+        func updateNSView(_ nsView: NSView, context: Context) {}
+        static func dismantleNSView(_ nsView: NSView, coordinator: ()) {
+            nsView.window?.isMovable = true
+        }
+    }
+
+    private final class Tracker: NSView {
         private var hoverTracking: NSTrackingArea?
 
         override var mouseDownCanMoveWindow: Bool { false }
-
-        @MainActor @preconcurrency required init(rootView: Content) {
-            super.init(rootView: rootView)
-            // 尺寸完全听外面的 frame，别让内容的固有尺寸反过来撑这块地方。
-            sizingOptions = []
-        }
-
-        @MainActor @preconcurrency required dynamic init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
@@ -811,14 +818,9 @@ private struct NonWindowDragging<Content: View>: NSViewRepresentable {
 
     let content: Content
 
-    func makeNSView(context: Context) -> NSView { Host(rootView: content) }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView as? Host)?.rootView = content
-    }
-
-    static func dismantleNSView(_ nsView: NSView, coordinator: ()) {
-        nsView.window?.isMovable = true
+    var body: some View {
+        // 追踪层铺在背景，内容照常由 SwiftUI 自己布局——不再套进 hosting view。
+        content.background(TrackingLayer())
     }
 }
 
@@ -953,7 +955,7 @@ enum BrowserTabStripSizingPolicy {
 
 /// 浏览器会话：每个标签持有自己的 WKWebView，并在分栏 / 占满视图之间移动当前标签。
 ///
-/// 分栏与全屏是两棵不同的视图树（`PrimaryWorkspaceView.inspector` ⇄ `FocusedToolWorkspaceView`），
+/// 第三列现在只有一棵视图树（`PrimaryWorkspaceView.inspector`），放大只改宽度，
 /// SwiftUI 切换时会把 `NSViewRepresentable` 整个拆掉重建。若 WKWebView 由视图持有，
 /// 切到全屏就等于换了一个空白 webView——页面直接消失。这里把它提到视图之外，
 /// 视图重建时只是把同一个 NSView 换个父视图。
@@ -1253,18 +1255,12 @@ final class BrowserSession: ObservableObject {
         activeContainer = nil
         NSLayoutConstraint.deactivate(browserConstraints)
         browserConstraints.removeAll(keepingCapacity: true)
-        let webView = activeTab.webView
-        // 只是换个容器（放大 / 还原会把 webview 从 inspector 搬进独占列），
-        // 这种"搬家"下一拍就会 claim 回来，停播放会让视频莫名其妙断掉。
-        // 真正离场（收起第三列）才停——那条路径由 `.suspendToolMedia` 负责。
+        // 这里只做"松开所有权"，视图留在原处：下一次 `claim`/`attach` 会把
+        // webview 挂到新容器上（`attach` 已处理换容器与约束）。视图短暂留在
+        // 旧容器上是无害的——旧容器紧接着就会被移除。
         //
-        // 但摘视图这一步无论哪种情况都要等一拍：播放中同帧 removeFromSuperview，
-        // WebKit 的 GPU 进程会拿着已失效的合成层继续送帧，把整个 app 带崩。
-        DispatchQueue.main.async { [weak self] in
-            // 这一拍里已经被新宿主认领走了，就不该再摘——摘了会把画面弄没。
-            guard self?.activeContainer == nil || webView.superview !== self?.activeContainer else { return }
-            webView.removeFromSuperview()
-        }
+        // 不要在这里 `removeFromSuperview`：放大/还原只是换容器，下一拍就会挂回来，
+        // 中途摘掉会让画面白一下；播放中摘还会让 WebKit 的合成层失效。
     }
 
     /// 第三列首次真正可见时才把上次的页面加载回来。
@@ -1341,6 +1337,10 @@ final class BrowserSession: ObservableObject {
             return value
         }()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        // 页面一律不许自己开始播放，必须用户点过才行。
+        // 两个原因：一是恢复上次会话时那个 B 站视频会在看不见的地方就出声；
+        // 二是"播放中"正是布局变化把 WebKit 合成层弄崩的前提，能不播就少一类崩溃。
+        configuration.mediaTypesRequiringUserActionForPlayback = .all
 
         let tab = Tab(configuration: configuration)
         // WKWebView 默认 UA 没有 Safari 产品标识，百度会把它当成受限内嵌页。

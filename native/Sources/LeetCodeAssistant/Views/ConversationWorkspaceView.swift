@@ -39,7 +39,10 @@ struct ConversationWorkspaceView: View {
                     .padding(.bottom, AppDesign.Spacing.sm)
             }
         }
-        .animation(AppDesign.Motion.panelTransition, value: contentTrailingInset)
+        // 这里**不能**给 inset 变化加动画：它会传进 WKWebView 去改 CSS 变量，
+        // 每一帧补间都等于一次整页重排。第三列展开时列宽本来就在逐帧变，
+        // 叠上补间就是稳定卡死。位置跳变一次远比卡住半秒好。
+        .transaction(value: contentTrailingInset) { $0.animation = nil }
         .task(id: dataStore.isDataReady) {
             guard dataStore.isDataReady else { return }
             presentDailyBriefIfNeeded()

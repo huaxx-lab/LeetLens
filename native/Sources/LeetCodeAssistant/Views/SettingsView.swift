@@ -2277,6 +2277,10 @@ private struct EmbeddedLoginWebView: NSViewRepresentable {
         WebViewPresentation.applyFloatingScrollbars(in: configuration)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        // UA 必须和应用内浏览器一致。B 站按 UA 分发不同站点版本，登录态也跟着分家：
+        // 这里用默认 UA 登录、浏览器用桌面 Safari UA，结果就是"设置里已登录、
+        // 浏览器里还显示未登录"。共用同一个 UA 才是同一个会话。
+        webView.customUserAgent = BrowserAddressPolicy.desktopSafariUserAgent
         // 微信 / QQ / GitHub 登录都是 window.open 开弹窗，没有 uiDelegate 就是点了没反应。
         webView.uiDelegate = context.coordinator.popups
         context.coordinator.lastRevision = checkRevision

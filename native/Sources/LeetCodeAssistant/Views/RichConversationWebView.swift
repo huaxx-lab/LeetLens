@@ -123,8 +123,11 @@ struct RichConversationWebView: NSViewRepresentable {
 
         func updateContentTrailingInset(_ inset: CGFloat, force: Bool = false) {
             contentTrailingInset = inset
+            // 阈值取 8pt。这个值会写进 CSS 变量，每次下发都是一次整页重排；
+            // 第三列展开时列宽逐帧变化，0.5pt 的阈值等于每帧都重排一次。
+            // 8pt 以内的偏移肉眼看不出来，却能把重排次数压到个位数。
             guard isReady,
-                  force || appliedContentTrailingInset.map({ abs($0 - inset) > 0.5 }) != false,
+                  force || appliedContentTrailingInset.map({ abs($0 - inset) > 8 }) != false,
                   let webView
             else { return }
             appliedContentTrailingInset = inset

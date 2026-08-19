@@ -27,6 +27,35 @@ final class WorkspaceStateTests: XCTestCase {
         )
     }
 
+    /// 面板宽度必须按档位量化。它会一路传成 webview 的 CSS 变量，
+    /// 跟着窗口宽度连续变的话，第三列展开时每一帧都要整页重排（表现为卡死）。
+    func testContextPanelWidthIsQuantizedSoItDoesNotChurnEveryFrame() {
+        // 相邻若干像素的窗口宽度必须落在同一档，否则逐帧重排还会回来。
+        let widths: [CGFloat] = [1_400, 1_403, 1_407, 1_412]
+        let panels = widths.map { width -> CGFloat in
+            let raw = min(max(width * 0.18, AppDesign.Size.contextPanelMinimum), AppDesign.Size.contextPanelMaximum)
+            let quantized = (raw / 40).rounded(.down) * 40
+            return min(max(quantized, AppDesign.Size.contextPanelMinimum), AppDesign.Size.contextPanelMaximum)
+        }
+        XCTAssertEqual(Set(panels).count, 1, "相邻窗口宽度应落在同一档，避免逐帧重排")
+    }
+
+    /// 「按钮亮着」和「面板看得见」必须同进同退——否则会出现启动时按钮
+    /// 已是打开态、却根本没有悬浮窗。
+    func testContextButtonHighlightMatchesActualPanelVisibility() {
+        // 不在对话页：即使请求过、也有内容，面板不显示，按钮就不该亮。
+        XCTAssertFalse(ContextPanelPresentationPolicy.isVisible(
+            contextPresented: true, section: .leetCode, hasContext: true
+        ))
+        // 没有上下文内容时同理。
+        XCTAssertFalse(ContextPanelPresentationPolicy.isVisible(
+            contextPresented: true, section: .conversation, hasContext: false
+        ))
+        XCTAssertTrue(ContextPanelPresentationPolicy.isVisible(
+            contextPresented: true, section: .conversation, hasContext: true
+        ))
+    }
+
     /// 同一个链接点第二次要回到已开的那个标签，而不是一直堆新标签。
     func testSameDocumentMatchingIgnoresCosmeticURLDifferences() {
         func url(_ value: String) -> URL { URL(string: value)! }
@@ -56,6 +85,23 @@ final class WorkspaceStateTests: XCTestCase {
         XCTAssertTrue(script.contains("contentDocument"))
         XCTAssertTrue(script.contains("video,audio"))
         XCTAssertTrue(script.contains("pause()"))
+    }
+
+    /// 从放大还原后，第三列必须还在。原来会按 1850 断点重算可见性，
+    /// 于是 1470 这种常见窗口一还原就把第三列整个收掉——点"还原"却等于"关闭"。
+    @MainActor
+    func testRestoringFromFocusKeepsToolColumnVisible() {
+        let (preferences, suiteName) = makePreferences()
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let workspace = WorkspaceState(preferences: preferences)
+        workspace.handleWindowWidth(1_470)
+        workspace.isToolWorkspacePresented = true
+        workspace.focusToolWorkspace()
+        XCTAssertTrue(workspace.isToolWorkspaceFocused)
+
+        workspace.restoreToolWorkspace()
+        XCTAssertFalse(workspace.isToolWorkspaceFocused, "还原后不应再是放大态")
+        XCTAssertTrue(workspace.isToolWorkspacePresented, "还原是回到分栏，第三列不该消失")
     }
 
     func testToolTabsShareTheSameHeaderBaselineAsTheOtherColumns() {
