@@ -1,17 +1,17 @@
 {
-  "name": "leetcode-ai-helper",
-  "version": "2.0.0",
-  "description": "Evidence-driven LeetCode practice, AI submission review, and adaptive spaced repetition for macOS",
+  "name": "leetlens",
+  "version": "2.1.0",
+  "description": "A LeetCode practice client for learning algorithms. AI turns questions, chats, and submissions into a knowledge map and a review queue.",
   "private": true,
   "author": "huaxx-lab",
   "license": "MIT",
-  "homepage": "https://github.com/huaxx-lab/leetcode-ai-helper#readme",
+  "homepage": "https://github.com/huaxx-lab/LeetLens#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/huaxx-lab/leetcode-ai-helper.git"
+    "url": "git+https://github.com/huaxx-lab/LeetLens.git"
   },
   "bugs": {
-    "url": "https://github.com/huaxx-lab/leetcode-ai-helper/issues"
+    "url": "https://github.com/huaxx-lab/LeetLens/issues"
   },
   "main": "src/main/main.js",
   "scripts": {

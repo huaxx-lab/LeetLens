@@ -16,9 +16,9 @@ if [[ -z ${XCODE_PATH:-} ]]; then
     fi
 fi
 DEVELOPER_DIR=${XCODE_PATH}/Contents/Developer
-APP_PATH=${NATIVE_DIR}/.build/LeetCode\ AI\ 助手\ Preview.app
+APP_PATH=${NATIVE_DIR}/.build/LeetLens\ Preview.app
 STAGE_ROOT=${TMPDIR:-/tmp}/leetcode-ai-helper-preview-stage
-STAGE_APP=${STAGE_ROOT}/LeetCode\ AI\ 助手\ Preview.app
+STAGE_APP=${STAGE_ROOT}/LeetLens\ Preview.app
 CONTENTS_PATH=${STAGE_APP}/Contents
 SCRATCH_PATH=${TMPDIR:-/tmp}/leetcode-ai-helper-native-build
 ICONSET_PATH=${NATIVE_DIR}/IconSources/AppIcon.iconset
@@ -54,7 +54,7 @@ for RESOURCE_BUNDLE in ${SCRATCH_PATH}/out/Products/Debug/*.bundle; do
 done
 
 if [[ ! -d ${ICONSET_PATH} ]]; then
-    print -u2 "找不到 LeetCode 助手图标源：${ICONSET_PATH}"
+    print -u2 "找不到图标源：${ICONSET_PATH}"
     exit 1
 fi
 xcrun iconutil --convert icns --output ${CONTENTS_PATH}/Resources/AppIcon.icns ${ICONSET_PATH}

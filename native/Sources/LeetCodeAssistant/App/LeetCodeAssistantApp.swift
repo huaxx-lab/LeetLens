@@ -9,6 +9,7 @@ struct LeetCodeAssistantApp: App {
         SingleInstanceGuard.enforce()
         NSWindow.allowsAutomaticWindowTabbing = false
         WindowChromeDebugDump.startIfRequested()
+        ScrollerDebugDump.startIfRequested()
 
         // 窗口级滚动条兜底：覆盖主窗口、设置窗口、sheet 与延迟创建的
         // AppKit 滚动容器（List/TextEditor 等不走 .scrollIndicators(.hidden)）。
@@ -26,7 +27,7 @@ struct LeetCodeAssistantApp: App {
     }
 
     var body: some Scene {
-        Window("LeetCode AI 助手", id: "main") {
+        Window("LeetLens", id: "main") {
             RootWorkspaceView()
                 .frame(minWidth: 820, minHeight: 620)
         }

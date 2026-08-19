@@ -43,16 +43,20 @@ enum AppDesign {
     }
 
     enum Size {
-        /// 列头部高度。窗口不再挂 NSToolbar，红绿灯浮在内容之上，
-        /// 各列在自己顶部的这一条里排控件（见 `RootWorkspaceView`）。
-        /// 40pt 让右侧玻璃胶囊（28pt）在窗口态仍保有约 4pt 顶部间隙。
+        /// 列头部高度。红绿灯与列头同一条中线——但不是列头去迁就系统，
+        /// 而是 `WindowTitlebarLayout` 把红绿灯挪到列头这条线上来。
+        /// 不要用 AppKit accessory 加高标题栏：实测按钮纹丝不动，那一层还会吃掉整行点击。
         static let columnHeader: CGFloat = 40
-        /// 普通窗口的系统标题栏安全区。列头整体上移这一段后，才会与红绿灯同处一行；
-        /// 全屏没有标题栏安全区，不应用该偏移。
+        /// 列头到窗口顶边的留白。窗口态谁都不许贴着顶边框，红绿灯也一样。
+        /// 4pt：红绿灯中线落到 24pt（系统默认 16pt），比 Codex 略松一点点就够，
+        /// 再多整条列头就和窗口脱节了。
+        static let headerTopMargin: CGFloat = 4
+        /// 系统默认标题栏高度。
         static let windowTitlebarInset: CGFloat = 28
-        /// 红绿灯占位宽度：最左那一列的列头控件从这里之后开始排，
-        /// 让它们和红绿灯同处一行（对齐 Codex）。
-        static let trafficLightInset: CGFloat = 78
+        /// 红绿灯自己的左内缩。系统默认 9pt，贴边太紧，往右挪 3pt 和顶部留白配平。
+        static let trafficLightLeadingInset: CGFloat = 14
+        /// 红绿灯占位宽度：最左列头从这里之后开始排（三颗按钮 69pt + 一档间距）。
+        static let trafficLightInset: CGFloat = 81
         static let sidebarMin: CGFloat = 218
         static let sidebarIdeal: CGFloat = 256
         static let sidebarMax: CGFloat = 310
@@ -66,7 +70,10 @@ enum AppDesign {
         static let inspectorMax: CGFloat = 620
         static let primaryMinimum: CGFloat = 620
         static let contentReadable: CGFloat = 780
-        static let composerMaximum: CGFloat = 820
+        /// 对话正文 / 标题 / 输入框共用的内容列宽上限。
+        /// 1100 而不是原来的 820：820 时正文在宽列里居中，左边会空出一大条，
+        /// 和贴着列左缘的问题刻度条隔着一片空白。让正文往外延展，那条空白就没了。
+        static let contentColumnMaximum: CGFloat = 1_100
         static let composerMinimumHeight: CGFloat = 50
         static let toolbarControl: CGFloat = 28
         static let rail: CGFloat = 56

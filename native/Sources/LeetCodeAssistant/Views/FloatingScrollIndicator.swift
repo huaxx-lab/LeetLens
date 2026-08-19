@@ -24,7 +24,11 @@ struct FloatingScrollIndicatorModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             // 关掉系统指示器，避免和我们的胶囊叠在一起画两条。
-            .scrollIndicators(.hidden)
+            // 必须是 `.never`：`.hidden` 只是"这一轮别画"，SwiftUI 仍会在
+            // HostingScrollView 上把 hasVerticalScroller 打开——系统滚动条是
+            // legacy 样式（接了鼠标或设为"始终显示"）时，那就是一条 17pt 实心
+            // 滚动条盖在我们的胶囊上，直到窗口级兜底把它关掉才消失。
+            .scrollIndicators(.never)
             .scrollPosition($scrollPosition)
             .onScrollGeometryChange(for: ScrollMetrics.self) { geometry in
                 ScrollMetrics(

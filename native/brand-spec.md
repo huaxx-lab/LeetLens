@@ -1,4 +1,4 @@
-# LeetCode AI Assistant Native Brand Spec
+# LeetLens Native Brand Spec
 
 ## Direction
 

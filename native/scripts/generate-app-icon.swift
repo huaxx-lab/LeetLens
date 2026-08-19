@@ -137,4 +137,4 @@ for destination in destinations {
     try writePNG(renderIcon(pixels: destination.pixels), to: destination.directory.appending(path: destination.name))
 }
 
-print("Generated LeetCode AI Assistant icon assets.")
+print("Generated app icon assets.")

@@ -5,6 +5,8 @@ struct ConversationWorkspaceView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
     var contentTrailingInset: CGFloat = 0
+    /// 左侧问题刻度条占掉的一条：正文与输入框都从这里之后开始排。
+    var contentLeadingInset: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -22,7 +24,8 @@ struct ConversationWorkspaceView: View {
                 },
                 onRetry: retryGeneration,
                 onAgentJump: handleAgentJump,
-                contentTrailingInset: contentTrailingInset
+                contentTrailingInset: contentTrailingInset,
+                contentLeadingInset: contentLeadingInset
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .opacity(isEmptyConversation ? 0 : 1)
@@ -31,10 +34,12 @@ struct ConversationWorkspaceView: View {
             if isEmptyConversation {
                 ConversationEmptyStateView {
                     composer
+                        .padding(.leading, contentLeadingInset)
                         .padding(.trailing, contentTrailingInset)
                 }
             } else {
                 composer
+                    .padding(.leading, contentLeadingInset)
                     .padding(.trailing, contentTrailingInset)
                     .padding(.bottom, AppDesign.Spacing.sm)
             }
@@ -67,7 +72,7 @@ struct ConversationWorkspaceView: View {
             onCancel: cancelGeneration,
             onInterruptAndSendQueue: interruptAndSendQueue
         )
-        .frame(maxWidth: AppDesign.Size.composerMaximum)
+        .frame(maxWidth: AppDesign.Size.contentColumnMaximum)
         .padding(.horizontal, AppDesign.Spacing.lg)
         .frame(maxWidth: .infinity)
     }

@@ -7,13 +7,17 @@
   <link rel="stylesheet" href="katex.min.css">
   <link rel="stylesheet" href="code-block.css">
   <style>
-    :root { --context-panel-inset: 0px; --conversation-inline-inset: max(24px, calc((100vw - var(--context-panel-inset) - 820px) / 2)); color-scheme: light dark; font: 15.5px/1.68 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
+    :root { --context-panel-inset: 0px; --conversation-rail-inset: 0px; --conversation-inline-inset: max(24px, calc((100vw - var(--context-panel-inset) - 1100px) / 2), var(--conversation-rail-inset)); color-scheme: light dark; font: 15.5px/1.68 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
     * { box-sizing: border-box; }
     /* 滚动条由 WebViewPresentation 注入的悬浮 thumb 接管，这里不留任何原生滚动条样式 */
-    /* 回到底部：圆形箭头，停在中轴底部，只做淡入淡出——位置固定，不跟着内容跳 */
+    /* 回到底部：圆形箭头。槽位和 SwiftUI composer 同一条中轴：
+       左 0、右 context-panel-inset，不用 100vw（WKWebView 里 vw 经常比列宽更宽）。 */
+    #jump-latest-slot {
+      position: fixed; left: 0; right: var(--context-panel-inset); bottom: 106px; z-index: 40;
+      display: flex; justify-content: center; pointer-events: none;
+    }
     #jump-latest {
       /* body 底部留了 122px 给原生 composer，按钮要浮在它上面才看得见。 */
-      position: fixed; left: 50%; bottom: 106px; z-index: 40;
       display: grid; place-items: center;
       width: 32px; height: 32px; padding: 0; border: 0; border-radius: 999px;
       color: CanvasText;
@@ -21,7 +25,6 @@
       -webkit-backdrop-filter: blur(24px) saturate(1.7); backdrop-filter: blur(24px) saturate(1.7);
       box-shadow: 0 4px 16px rgba(0,0,0,.16), 0 0 0 .5px color-mix(in srgb, CanvasText 14%, transparent);
       cursor: pointer; opacity: 0; pointer-events: none;
-      transform: translateX(-50%);
       transition: opacity .18s ease;
     }
     #jump-latest.is-visible { opacity: 1; pointer-events: auto; }
@@ -131,6 +134,83 @@
     .agent-video-cover { width: 122px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 7px; background: color-mix(in srgb, CanvasText 8%, Canvas); align-self: start; display: block; }
     .agent-video-cover.is-placeholder { display: grid; place-items: center; color: color-mix(in srgb, CanvasText 35%, transparent); font-size: 18px; }
     .agent-video .agent-title { margin-top: 1px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .inline-bili-card {
+      display: grid;
+      grid-template-columns: 176px minmax(0, 1fr);
+      gap: 14px;
+      align-items: center;
+      margin: 10px 0 8px;
+      max-width: 560px;
+      padding: 10px;
+      border-radius: 14px;
+      border: 1px solid color-mix(in srgb, CanvasText 8%, transparent);
+      background: color-mix(in srgb, CanvasText 3.5%, Canvas);
+      box-shadow: 0 1px 0 color-mix(in srgb, CanvasText 4%, transparent);
+      transition: background .18s ease, border-color .18s ease, transform .18s ease;
+    }
+    .inline-bili-card:hover {
+      background: color-mix(in srgb, CanvasText 5.5%, Canvas);
+      border-color: color-mix(in srgb, #fb7299 28%, transparent);
+      transform: translateY(-1px);
+    }
+    .inline-bili-card .cover-wrap {
+      position: relative;
+      width: 176px;
+      aspect-ratio: 16 / 9;
+      border-radius: 10px;
+      overflow: hidden;
+      background: color-mix(in srgb, CanvasText 8%, Canvas);
+      flex: none;
+    }
+    .inline-bili-card .agent-video-cover {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 0;
+      display: block;
+    }
+    .inline-bili-card .cover-duration {
+      position: absolute;
+      right: 6px;
+      bottom: 6px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      color: #fff;
+      background: rgba(0, 0, 0, .72);
+    }
+    .inline-bili-card .cover-play {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 20px;
+      opacity: 0;
+      background: rgba(0, 0, 0, 0);
+      transition: opacity .18s ease, background .18s ease;
+    }
+    .inline-bili-card:hover .cover-play {
+      opacity: 1;
+      background: rgba(0, 0, 0, .22);
+    }
+    .inline-bili-card .bili-meta { min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; }
+    .inline-bili-card .agent-title { font-size: 14.5px; font-weight: 600; line-height: 1.35; }
+    .inline-bili-card .bili-byline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0 10px;
+      font-size: 12px;
+      color: color-mix(in srgb, CanvasText 52%, transparent);
+    }
+    .inline-bili-card .bili-byline span + span::before {
+      content: '·';
+      margin-right: 10px;
+      opacity: .4;
+    }
+    li:has(> .inline-bili-card) { list-style: none; padding-left: 0; margin-left: 0; }
     /* 正文里裸露的长链接：换成一张可点的窄卡，替掉又长又难点的蓝色 URL。
        站点色只用在左侧色块和 hover 上，正文整体仍是中性配色。 */
     /* 卡片替换的是行内的 <a>，所以要显式转成块级，才能在 <p>/<li> 里独占一行。 */
@@ -141,6 +221,81 @@
     .inline-link-title { font-size: 13px; font-weight: 500; }
     .inline-link-sub { font-size: 11.5px; color: color-mix(in srgb, CanvasText 52%, transparent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .inline-link-caret { margin-left: auto; opacity: .4; flex: none; }
+    .inline-solution-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 8px 0 6px;
+      max-width: 560px;
+      padding: 11px 12px 11px 11px;
+      border-radius: 14px;
+      border: 1px solid color-mix(in srgb, CanvasText 8%, transparent);
+      background: color-mix(in srgb, CanvasText 3.5%, Canvas);
+      box-shadow: 0 1px 0 color-mix(in srgb, CanvasText 4%, transparent);
+      cursor: pointer;
+      transition: background .18s ease, border-color .18s ease, transform .18s ease;
+    }
+    .inline-solution-card:hover {
+      background: color-mix(in srgb, var(--link-tint, #af52de) 7%, Canvas);
+      border-color: color-mix(in srgb, var(--link-tint, #af52de) 28%, transparent);
+      transform: translateY(-1px);
+    }
+    .inline-solution-card .solution-mark {
+      width: 36px;
+      height: 36px;
+      flex: none;
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--link-tint, #af52de);
+    }
+    .inline-solution-card .inline-link-glyph {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .inline-solution-card .solution-avatar {
+      width: 36px;
+      height: 36px;
+      object-fit: cover;
+      display: block;
+    }
+    .inline-solution-card .inline-link-title {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .inline-solution-card .bili-byline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0 10px;
+      margin-top: 4px;
+      font-size: 12px;
+      color: color-mix(in srgb, CanvasText 52%, transparent);
+    }
+    .inline-solution-card .bili-byline span + span::before {
+      content: '·';
+      margin-right: 10px;
+      opacity: .4;
+    }
+    .inline-solution-card .solution-official {
+      padding: 0 6px;
+      border-radius: 999px;
+      font-size: 10.5px;
+      line-height: 18px;
+      color: #1f7a37;
+      background: color-mix(in srgb, #34c759 16%, transparent);
+    }
+    .inline-solution-card .solution-official::before { content: none; }
+    .inline-solution-card .bili-byline .solution-official + span::before { margin-right: 10px; }
+    li:has(> .inline-solution-card),
+    li:has(> p > .inline-solution-card) { list-style: none; padding-left: 0; margin-left: 0; }
     .agent-running { display: inline-flex; gap: 3px; }
     .agent-running i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .35; animation: agentPulse 1s infinite; }
     .agent-running i:nth-child(2) { animation-delay: .15s; }
@@ -190,9 +345,11 @@
 </head>
 <body>
   <main id="messages" aria-live="polite"></main>
-  <button id="jump-latest" type="button" aria-label="回到最新消息" title="回到最新消息">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
-  </button>
+  <div id="jump-latest-slot">
+    <button id="jump-latest" type="button" aria-label="回到最新消息" title="回到最新消息">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+    </button>
+  </div>
   <aside class="lightbox" id="lightbox" aria-hidden="true">
     <header class="lightbox-toolbar"><output id="image-count"></output><button data-image-action="out" title="缩小">−</button><button data-image-action="in" title="放大">+</button><button data-image-action="close" title="关闭">×</button></header>
     <div class="lightbox-stage"><button data-image-action="previous" title="上一张">‹</button><img id="lightbox-image" alt=""><button data-image-action="next" title="下一张">›</button></div>
@@ -308,25 +465,227 @@
     /// 力扣题解链接尤其能占满两行。这里把**独占一行/一个列表项**的裸链换成一张窄卡：
     /// 左侧站点色块、中间标题与站点信息、右侧箭头，点击走 agentJump 的 url 分支。
     /// 句子中间的行内链接保持原样，避免打断行文。
+    const BILIBILI_VIDEO_PATTERN = /^https?:\/\/(?:www\.)?bilibili\.com\/video\/(BV[0-9A-Za-z]+)\/?(?:[?#].*)?$/;
+    const biliViewCache = {};
+    const requestedBiliViews = new Set();
+    const fillBilibiliCard = (card, info) => {
+      const cover = info && info.coverURL
+        ? `<img class="agent-video-cover" loading="lazy" src="${escapeHtml(info.coverURL)}" alt="">`
+        : `<span class="agent-video-cover is-placeholder">▶</span>`;
+      const duration = info && info.duration
+        ? `<span class="cover-duration">${escapeHtml(info.duration)}</span>` : '';
+      const byline = [];
+      if (info && info.author) byline.push(`<span>${escapeHtml(info.author)}</span>`);
+      if (info && info.playCountLabel) byline.push(`<span>${escapeHtml(info.playCountLabel)}</span>`);
+      card.innerHTML = `<div class="cover-wrap">${cover}<span class="cover-play">▶</span>${duration}</div>`
+        + `<div class="bili-meta">`
+        + `<div class="agent-title">${escapeHtml((info && info.title) || 'B 站视频')}</div>`
+        + (byline.length ? `<div class="bili-byline">${byline.join('')}</div>` : '')
+        + `</div>`;
+    };
+    window.__applyBilibiliView = info => {
+      if (!info || !info.bvid) return;
+      biliViewCache[info.bvid] = info;
+      document.querySelectorAll(`.inline-bili-card[data-bvid="${CSS.escape(info.bvid)}"]`).forEach(card => {
+        fillBilibiliCard(card, info);
+      });
+    };
+    const SOLUTION_URL_PATTERN = /^https?:\/\/(?:www\.)?leetcode\.cn\/problems\/([a-z0-9-]+)\/solutions\/([^/?#]+)\/?(?:[?#].*)?$/i;
+    const solutionCache = {};
+    const requestedSolutions = new Set();
+    const isGenericLinkLabel = text => {
+      const value = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!value || /^https?:\/\//i.test(value)) return true;
+      if (/^[🔗📎\uFE0F\s]*$/.test(value)) return true;
+      return /^(🔗|📎)?\s*(链接|视频|地址|官方题解|题解|查看|打开这篇力扣题解|打开这道题|在力扣打开)[:：]?$/.test(value);
+    };
+    const isReplaceableLink = (anchor, href) => {
+      const text = anchor.textContent.replace(/\s+/g, ' ').trim();
+      if (text === href || isGenericLinkLabel(text)) return true;
+      return false;
+    };
+    const parseArticleHeading = raw => {
+      let value = String(raw || '').replace(/\s+/g, ' ').trim();
+      value = value.replace(/^[🔗📎\uFE0F\s]+/, '').replace(/[🔗📎\uFE0F]+$/g, '').trim();
+      value = value.replace(/^\d+[\.、．]\s*/, '').trim();
+      if (!value || isGenericLinkLabel(value)) return { title: '', author: '', views: '', official: false };
+      const official = /官方题解/.test(value);
+      const viewsMatch = value.match(/[（(]\s*([\d.]+\s*万?)\s*浏览\s*[)）]/);
+      const views = viewsMatch ? `${viewsMatch[1].replace(/\s+/g, '')}浏览` : '';
+      value = value.replace(/[（(]\s*[\d.]+\s*万?\s*浏览\s*[)）]/g, '').replace(/[（(]\s*官方题解\s*[)）]/g, '').trim();
+      const parts = value.match(/^(.{1,24}?)[：:]\s*(.+)$/);
+      if (parts) return { title: parts[2].trim(), author: parts[1].trim(), views, official };
+      return { title: value, author: '', views, official };
+    };
+    const headingTextFrom = node => {
+      if (!node) return '';
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent.replace(/\s+/g, ' ').trim();
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      if (node.matches('.inline-link-card,.inline-bili-card,.inline-solution-card,.agent-card')) return '';
+      const clone = node.cloneNode(true);
+      clone.querySelectorAll('a,.inline-link-card,.inline-bili-card,.inline-solution-card').forEach(item => item.remove());
+      return (clone.textContent || '').replace(/\s+/g, ' ').trim();
+    };
+    const nearbyArticleTitle = fromNode => {
+      const empty = { title: '', author: '', views: '', official: false };
+      const parsedFrom = raw => {
+        const parsed = parseArticleHeading(raw);
+        return parsed.title ? parsed : null;
+      };
+      const item = fromNode.closest('li') || fromNode.parentElement;
+      if (item) {
+        for (const node of Array.from(item.childNodes)) {
+          if (node === fromNode || (node.contains && node.contains(fromNode))) break;
+          const parsed = parsedFrom(headingTextFrom(node));
+          if (parsed) return parsed;
+        }
+        const clone = item.cloneNode(true);
+        clone.querySelectorAll('.inline-link-card,.inline-bili-card,.inline-solution-card,a').forEach(node => node.remove());
+        const parsed = parsedFrom((clone.textContent || '').trim());
+        if (parsed) return parsed;
+      }
+      let block = fromNode.closest('li,p,h1,h2,h3,h4') || fromNode.parentElement;
+      let sibling = block && block.previousElementSibling;
+      let hops = 0;
+      while (sibling && hops < 3) {
+        hops += 1;
+        const parsed = parsedFrom(headingTextFrom(sibling));
+        if (parsed) return parsed;
+        sibling = sibling.previousElementSibling;
+      }
+      return empty;
+    };
+    const collectAgentSolutionHints = root => {
+      const hints = {};
+      root.querySelectorAll('[data-agent-jump="url"][data-agent-id]').forEach(node => {
+        const match = String(node.dataset.agentId || '').match(SOLUTION_URL_PATTERN);
+        if (!match) return;
+        const item = node.closest('.agent-item');
+        if (!item) return;
+        const title = (item.querySelector('.agent-title')?.textContent || '').replace(/\s+/g, ' ').trim();
+        const author = (item.querySelector('.agent-sub')?.textContent || '').replace(/\s+/g, ' ').trim();
+        const badges = [...item.querySelectorAll('.agent-badge')].map(badge => badge.textContent.trim());
+        const views = (badges.find(text => /浏览/.test(text)) || '').replace(/次\s*/g, '');
+        hints[decodeURIComponent(match[2])] = {
+          title,
+          author,
+          views,
+          official: badges.some(text => /官方/.test(text))
+        };
+      });
+      return hints;
+    };
+    const collapseDuplicateSolutionMarks = root => {
+      for (const anchor of Array.from(root.querySelectorAll('a[href]'))) {
+        const href = (anchor.getAttribute('href') || '').trim();
+        if (!SOLUTION_URL_PATTERN.test(href)) continue;
+        if (!/^[🔗📎\uFE0F\s]*$/.test(anchor.textContent.trim())) continue;
+        const scope = anchor.closest('li,p') || anchor.parentElement;
+        if (!scope) continue;
+        const others = [...scope.querySelectorAll('a[href]')].filter(node => node !== anchor && node.getAttribute('href') === href);
+        if (others.length) anchor.remove();
+      }
+    };
+    const pruneLinkLeadIn = (card, href) => {
+      const scope = card.closest('li') || card.parentElement;
+      if (!scope) return;
+      for (const node of Array.from(scope.querySelectorAll('a[href]'))) {
+        const same = node.getAttribute('href') === href;
+        const mark = /^[🔗📎\uFE0F\s]*$/.test(node.textContent.trim());
+        if (same && mark) node.remove();
+      }
+      const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+      const doomed = [];
+      while (walker.nextNode()) {
+        const current = walker.currentNode;
+        if (current.parentElement && current.parentElement.closest('.inline-link-card,.inline-bili-card,.inline-solution-card')) continue;
+        if (/^\s*(🔗|📎|链接|视频|地址)[:：]?\s*$/.test(current.textContent)) doomed.push(current);
+      }
+      doomed.forEach(node => node.remove());
+    };
+    const pruneAbsorbedHeading = (card, parsed) => {
+      if (!parsed || !parsed.title) return;
+      const leftoverNoise = raw => {
+        const value = String(raw || '').replace(/\s+/g, ' ').trim();
+        if (!value) return true;
+        if (/^[🔗📎\uFE0F·•、,，。.\-—–\s]*$/.test(value)) return true;
+        if (/^[（(]?\s*[\d.]+\s*万?\s*浏览\s*[)）]?$/.test(value)) return true;
+        const heading = parseArticleHeading(value);
+        return heading.title === parsed.title;
+      };
+      const sameTitle = node => leftoverNoise(headingTextFrom(node) || (node.textContent || ''));
+      const sweep = scope => {
+        if (!scope) return;
+        for (const node of Array.from(scope.childNodes)) {
+          if (node === card || (node.contains && node.contains(card))) continue;
+          if (node.nodeType === Node.TEXT_NODE && leftoverNoise(node.textContent)) node.remove();
+          else if (node.nodeType === Node.ELEMENT_NODE && (node.tagName === 'BR' || sameTitle(node))) node.remove();
+        }
+      };
+      sweep(card.parentElement);
+      const block = card.closest('li,p') || card.parentElement;
+      sweep(block);
+      const prev = block && block.previousElementSibling;
+      if (prev && sameTitle(prev)) prev.remove();
+      if (block && block !== card.parentElement && leftoverNoise(headingTextFrom(block)) && block.querySelector('.inline-solution-card') && !block.querySelector('a,.inline-bili-card')) {
+        [...block.children].forEach(child => block.before(child));
+        block.remove();
+      }
+    };
+    const fillSolutionCard = (card, info) => {
+      const title = (info && (info.title || '').trim()) || '力扣题解';
+      const author = (info && (info.author || info.authorName || '')).trim();
+      const views = (info && (info.views || info.viewsLabel || '')).trim();
+      const official = !!(info && (info.official || info.isOfficial));
+      const avatar = (info && (info.avatar || info.avatarURL || '')).trim();
+      const byline = [];
+      if (official) byline.push('<span class="solution-official">官方</span>');
+      if (author) byline.push(`<span>${escapeHtml(author)}</span>`);
+      if (views) byline.push(`<span>${escapeHtml(views)}</span>`);
+      if (!byline.length) byline.push('<span>力扣题解</span>');
+      const mark = avatar
+        ? `<img class="solution-avatar" loading="lazy" src="${escapeHtml(avatar)}" alt="">`
+        : `<span class="inline-link-glyph">解</span>`;
+      card.innerHTML = `<span class="solution-mark">${mark}</span>`
+        + `<span class="inline-link-body"><span class="inline-link-title">${escapeHtml(title)}</span>`
+        + `<span class="bili-byline">${byline.join('')}</span></span>`
+        + `<span class="inline-link-caret">›</span>`;
+    };
+    const requestLeetCodeSolution = (problemSlug, articleSlug) => {
+      const key = `${problemSlug}/${articleSlug}`;
+      if (!problemSlug || !articleSlug || requestedSolutions.has(key)) return;
+      requestedSolutions.add(key);
+      if (solutionCache[articleSlug]) {
+        document.querySelectorAll(`.inline-solution-card[data-article-slug="${CSS.escape(articleSlug)}"]`).forEach(card => {
+          fillSolutionCard(card, solutionCache[articleSlug]);
+        });
+        return;
+      }
+      window.webkit?.messageHandlers?.leetcodeSolution?.postMessage({ problemSlug, articleSlug });
+    };
+    window.__applyLeetCodeSolution = info => {
+      if (!info || !info.articleSlug) return;
+      solutionCache[info.articleSlug] = info;
+      document.querySelectorAll(`.inline-solution-card[data-article-slug="${CSS.escape(info.articleSlug)}"]`).forEach(card => {
+        fillSolutionCard(card, info);
+      });
+    };
+    const requestBilibiliView = bvid => {
+      if (!bvid || requestedBiliViews.has(bvid) || biliViewCache[bvid]) return;
+      requestedBiliViews.add(bvid);
+      window.webkit?.messageHandlers?.bilibiliView?.postMessage({ bvid });
+    };
     const INLINE_LINK_KINDS = [
       {
-        // B 站视频：卡上直接标出 bvid，一眼能认出是哪个视频。
-        pattern: /^https?:\/\/(?:www\.)?bilibili\.com\/video\/(BV[0-9A-Za-z]+)\/?(?:[?#].*)?$/,
-        glyph: '▶',
-        tint: '#fb7299',
-        title: '在 B 站打开视频',
-        subtitle: id => `bilibili.com · ${id}`
-      },
-      {
         // 力扣题解：URL 里的 slug 是拼音串，没有可读性，只标出题目 slug。
-        pattern: /^https?:\/\/leetcode\.cn\/problems\/([a-z0-9-]+)\/solutions\/[^?#]*\/?(?:[?#].*)?$/i,
+        pattern: /^https?:\/\/(?:www\.)?leetcode\.cn\/problems\/([a-z0-9-]+)\/solutions\/[^?#]*\/?(?:[?#].*)?$/i,
         glyph: '解',
         tint: '#af52de',
-        title: '打开这篇力扣题解',
+        title: '力扣题解',
         subtitle: id => `leetcode.cn · ${id}`
       },
       {
-        pattern: /^https?:\/\/leetcode\.cn\/problems\/([a-z0-9-]+)\/?(?:[?#].*)?$/i,
+        pattern: /^https?:\/\/(?:www\.)?leetcode\.cn\/problems\/([a-z0-9-]+)\/?(?:[?#].*)?$/i,
         glyph: '题',
         tint: '#ffa116',
         title: '打开这道题',
@@ -334,28 +693,58 @@
       }
     ];
     const decorateInlineLinks = root => {
+      const agentHints = collectAgentSolutionHints(root);
+      collapseDuplicateSolutionMarks(root);
       for (const anchor of Array.from(root.querySelectorAll('a[href]'))) {
+        if (!anchor.isConnected) continue;
         const href = anchor.getAttribute('href').trim();
-        // 链接文本必须就是 URL 本身（模型贴的裸链），否则说明作者是有意写成行内文字链。
-        if (anchor.textContent.trim() !== href) continue;
+        const bili = href.match(BILIBILI_VIDEO_PATTERN);
+        const solution = href.match(SOLUTION_URL_PATTERN);
         const kind = INLINE_LINK_KINDS.find(item => item.pattern.test(href));
-        if (!kind) continue;
-        // 只替换链接本身，**不动**同段落里的说明文字。
-        //
-        // 早先要求"宿主段落除了「链接：」外没有别的内容"才替换，结果模型最常写的
-        // 「官方题解：两次二分 …… <链接>」「Xyy丨一次二分：<链接>」全被跳过——
-        // 卡片等于没做。现在只把 <a> 换成卡片：说明文字留在原处，卡片跟在它下面。
-        const id = kind.pattern.exec(href)[1];
+        if (!bili && !kind && !solution) continue;
+        if (!bili && !solution && !isReplaceableLink(anchor, href)) continue;
         const card = document.createElement('div');
-        card.className = 'inline-link-card';
-        card.style.setProperty('--link-tint', kind.tint);
         card.dataset.agentJump = 'url';
         card.dataset.agentId = href;
-        card.innerHTML = `<span class="inline-link-glyph">${escapeHtml(kind.glyph)}</span>`
-          + `<span class="inline-link-body"><span class="inline-link-title">${escapeHtml(kind.title)}</span>`
-          + `<span class="inline-link-sub">${escapeHtml(kind.subtitle(id))}</span></span>`
-          + `<span class="inline-link-caret">›</span>`;
+        if (bili) {
+          card.className = 'agent-video inline-bili-card';
+          card.dataset.bvid = bili[1];
+          fillBilibiliCard(card, biliViewCache[bili[1]] || { title: 'B 站视频', author: '正在获取封面与时长…' });
+          requestBilibiliView(bili[1]);
+        } else if (solution) {
+          const problemSlug = solution[1];
+          const articleSlug = decodeURIComponent(solution[2]);
+          const nearby = nearbyArticleTitle(anchor);
+          const linkTitle = isGenericLinkLabel(anchor.textContent) ? '' : anchor.textContent.replace(/\s+/g, ' ').trim();
+          const hint = agentHints[articleSlug] || {};
+          const cached = solutionCache[articleSlug] || {};
+          card.className = 'inline-solution-card';
+          card.style.setProperty('--link-tint', (kind && kind.tint) || '#af52de');
+          card.dataset.problemSlug = problemSlug;
+          card.dataset.articleSlug = articleSlug;
+          fillSolutionCard(card, {
+            title: cached.title || hint.title || nearby.title || linkTitle || '力扣题解',
+            author: cached.author || hint.author || nearby.author || '',
+            views: cached.viewsLabel || cached.views || hint.views || nearby.views || '',
+            official: cached.isOfficial || cached.official || hint.official || nearby.official || false,
+            avatar: cached.avatarURL || cached.avatar || ''
+          });
+          anchor.replaceWith(card);
+          pruneLinkLeadIn(card, href);
+          pruneAbsorbedHeading(card, nearby.title ? nearby : null);
+          requestLeetCodeSolution(problemSlug, articleSlug);
+          continue;
+        } else {
+          const id = kind.pattern.exec(href)[1];
+          card.className = 'inline-link-card';
+          card.style.setProperty('--link-tint', kind.tint);
+          card.innerHTML = `<span class="inline-link-glyph">${escapeHtml(kind.glyph)}</span>`
+            + `<span class="inline-link-body"><span class="inline-link-title">${escapeHtml(kind.title)}</span>`
+            + `<span class="inline-link-sub">${escapeHtml(kind.subtitle(id))}</span></span>`
+            + `<span class="inline-link-caret">›</span>`;
+        }
         anchor.replaceWith(card);
+        pruneLinkLeadIn(card, href);
       }
     };
     const renderRichText = text => sanitizeRich(markdown.render(String(text||'')));

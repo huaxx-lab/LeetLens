@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve LeetCode AI Helper. Bug reports, focused feature
+Thank you for helping improve LeetLens. Bug reports, focused feature
 proposals, documentation fixes, and tested pull requests are welcome. Chinese
 and English are both accepted in issues and pull requests.
 
@@ -17,8 +17,8 @@ and English are both accepted in issues and pull requests.
 ## Development workflow
 
 ```bash
-git clone https://github.com/huaxx-lab/leetcode-ai-helper.git
-cd leetcode-ai-helper
+git clone https://github.com/huaxx-lab/LeetLens.git
+cd LeetLens
 npm install
 npm test
 npm start

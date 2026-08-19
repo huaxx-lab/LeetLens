@@ -3,6 +3,13 @@ import XCTest
 @testable import LeetCodeAssistant
 
 final class LegacyDataStoreTests: XCTestCase {
+    func testBilibiliPresentationLabelsMatchPlayerChrome() {
+        XCTAssertEqual(BilibiliAPIClient.durationLabel(seconds: 161), "2:41")
+        XCTAssertEqual(BilibiliAPIClient.durationLabel(seconds: 3_661), "1:01:01")
+        XCTAssertEqual(BilibiliAPIClient.playCountLabel(12_300), "1.2万")
+        XCTAssertEqual(BilibiliAPIClient.playCountLabel(880), "880")
+    }
+
     func testBilibiliVideoURLPolicyOnlyAcceptsVideoPages() throws {
         XCTAssertEqual(
             BilibiliVideoURLPolicy.bvid(from: try XCTUnwrap(URL(string: "https://www.bilibili.com/video/BV1GW4y127Qo/?p=2"))),

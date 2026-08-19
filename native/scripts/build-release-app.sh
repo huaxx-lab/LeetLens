@@ -13,7 +13,7 @@ SCRIPT_DIR=${0:A:h}
 NATIVE_DIR=${SCRIPT_DIR:h}
 REPO_DIR=${NATIVE_DIR:h}
 
-APP_NAME=${APP_NAME:-LeetCode AI 助手}
+APP_NAME=${APP_NAME:-LeetLens}
 BUNDLE_ID=${BUNDLE_ID:-io.github.huaxxlab.leetcode-ai-helper.native}
 SHORT_VERSION=${SHORT_VERSION:-$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ${NATIVE_DIR}/App/Info.plist)}
 
@@ -91,12 +91,12 @@ ditto --norsrc --noextattr ${STAGE_APP} ${APP_PATH}
 xattr -cr ${APP_PATH}
 codesign --verify --deep --strict ${APP_PATH}
 
-ZIP_PATH=${DIST_DIR}/LeetCode-AI-Helper-mac-arm64.zip
+ZIP_PATH=${DIST_DIR}/LeetCode-Agent-mac-arm64.zip
 ditto -c -k --sequesterRsrc --keepParent ${APP_PATH} ${ZIP_PATH}
 
 # DMG：拖进「应用程序」即可安装。
 DMG_STAGE=${STAGE_ROOT}/dmg
-DMG_PATH=${DIST_DIR}/LeetCode-AI-Helper-mac-arm64.dmg
+DMG_PATH=${DIST_DIR}/LeetCode-Agent-mac-arm64.dmg
 rm -rf ${DMG_STAGE}
 mkdir -p ${DMG_STAGE}
 ditto --norsrc --noextattr ${APP_PATH} ${DMG_STAGE}/${APP_NAME}.app
