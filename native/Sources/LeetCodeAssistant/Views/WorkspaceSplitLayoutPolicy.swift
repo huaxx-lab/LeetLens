@@ -18,8 +18,15 @@ enum WorkspaceSplitLayoutPolicy {
     static let inspectorHoldingPriority: Float = 260
     static let detailHoldingPriority: Float = 1
 
-    static func clampInspectorWidth(_ width: CGFloat) -> CGFloat {
-        min(max(width, inspectorMin), inspectorMax)
+    /// 第三列能拉到多宽：一直拉到中间列见底为止，而不是一个写死的 pt 值。
+    /// 屏幕越大能给它的越多——这正是"右边拉不大"的原因。
+    static func inspectorMax(total: CGFloat, sidebarWidth: CGFloat) -> CGFloat {
+        guard total > 0 else { return inspectorMax }
+        return max(inspectorMin, total - sidebarWidth - AppDesign.Size.primaryDragMinimum)
+    }
+
+    static func clampInspectorWidth(_ width: CGFloat, total: CGFloat = 0, sidebarWidth: CGFloat = 0) -> CGFloat {
+        min(max(width, inspectorMin), inspectorMax(total: total, sidebarWidth: sidebarWidth))
     }
 
     static func sidebarDividerLimit(proposed: CGFloat) -> CGFloat {

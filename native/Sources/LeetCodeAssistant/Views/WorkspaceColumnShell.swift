@@ -58,6 +58,32 @@ struct WorkspaceColumnShell<Sidebar: View, Detail: View, Inspector: View>: View 
                 column(visible: widths.detail, content: content.detail, reveal: .leading) {
                     detail()
                 }
+                // 中间列这边再出一条对称的抓取带。分栏线两侧各 8pt，合起来 16pt。
+                // 不用一条 16pt 的带子横跨过去：越出列边界的那一半会被相邻列里的
+                // WKWebView（真 AppKit 视图）挡住，点不着——每列自己的那半才稳。
+                .overlay(alignment: .leading) {
+                    if sidebarVisible {
+                        ColumnResizeHandle(
+                            width: sidebarWidth,
+                            range: WorkspaceSplitLayoutPolicy.sidebarMin...WorkspaceSplitLayoutPolicy.sidebarMax,
+                            growsOnDragRight: true,
+                            onChange: onSidebarWidth
+                        )
+                    }
+                }
+                .overlay(alignment: .trailing) {
+                    if inspectorVisible && !inspectorExpanded {
+                        ColumnResizeHandle(
+                            width: inspectorWidth,
+                            range: WorkspaceSplitLayoutPolicy.inspectorMin...WorkspaceSplitLayoutPolicy.inspectorMax(
+                                total: proxy.size.width,
+                                sidebarWidth: widths.sidebar
+                            ),
+                            growsOnDragRight: false,
+                            onChange: onInspectorWidth
+                        )
+                    }
+                }
 
                 column(visible: widths.inspector, content: content.inspector, reveal: .trailing) {
                     inspector()
@@ -67,7 +93,10 @@ struct WorkspaceColumnShell<Sidebar: View, Detail: View, Inspector: View>: View 
                         ZStack(alignment: .leading) {
                             ColumnResizeHandle(
                                 width: inspectorWidth,
-                                range: WorkspaceSplitLayoutPolicy.inspectorMin...WorkspaceSplitLayoutPolicy.inspectorMax,
+                                range: WorkspaceSplitLayoutPolicy.inspectorMin...WorkspaceSplitLayoutPolicy.inspectorMax(
+                                total: proxy.size.width,
+                                sidebarWidth: widths.sidebar
+                            ),
                                 growsOnDragRight: false,
                                 onChange: onInspectorWidth
                             )
@@ -172,8 +201,12 @@ struct ColumnResizeHandle: NSViewRepresentable {
         apply(to: view)
     }
 
+    /// 单侧抓取带宽度。分栏线两侧各挂一条，实际可拖范围是 16pt。
+    /// 原来只有贴着第三列内侧的 6pt，指针得先瞄准才拖得动。
+    static let thickness: CGFloat = 8
+
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: ColumnResizeHandleView, context: Context) -> CGSize? {
-        CGSize(width: 6, height: proposal.height ?? nsView.bounds.height)
+        CGSize(width: Self.thickness, height: proposal.height ?? nsView.bounds.height)
     }
 
     private func apply(to view: ColumnResizeHandleView) {

@@ -43,6 +43,9 @@ struct FloatingScrollIndicatorModifier: ViewModifier {
                     newValue.offset.y - oldValue.offset.y
                 )
                 metrics = newValue
+                // 列宽变化也会打到这里（容器尺寸变了），但那不是"用户在滚动"。
+                // 不拦住的话，拖分栏线时两边会莫名冒出滚动条，还跟着列宽一路挪。
+                guard delta > 0.5 else { return }
                 reveal(delta: delta)
             }
             .overlay(alignment: .topLeading) { thumbs }

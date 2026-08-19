@@ -171,10 +171,20 @@ final class WorkspaceStateTests: XCTestCase {
         XCTAssertEqual(state.sidebarColumnWidth, AppDesign.Size.sidebarMin)
         state.setSidebarColumnWidth(400)
         XCTAssertEqual(state.sidebarColumnWidth, AppDesign.Size.sidebarMax)
+        state.handleWindowWidth(1_700)
         state.setInspectorColumnWidth(200)
         XCTAssertEqual(state.inspectorColumnWidth, AppDesign.Size.inspectorMin)
-        state.setInspectorColumnWidth(900)
-        XCTAssertEqual(state.inspectorColumnWidth, AppDesign.Size.inspectorMax)
+
+        // 上限不是写死的 620，而是"拉到中间列的手动下限为止"：窗口越大给得越多。
+        state.setInspectorColumnWidth(5_000)
+        XCTAssertEqual(
+            state.inspectorColumnWidth,
+            WorkspaceSplitLayoutPolicy.inspectorMax(
+                total: state.windowWidth,
+                sidebarWidth: state.isSidebarPresented ? state.sidebarColumnWidth : 0
+            )
+        )
+        XCTAssertGreaterThan(state.inspectorColumnWidth, AppDesign.Size.inspectorMax)
     }
 
     func testThreeColumnMinimumIsTheSumOfPinnedColumnFloors() {

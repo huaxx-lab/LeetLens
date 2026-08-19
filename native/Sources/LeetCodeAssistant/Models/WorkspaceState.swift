@@ -296,7 +296,11 @@ final class WorkspaceState {
     }
 
     func setInspectorColumnWidth(_ width: CGFloat) {
-        let clamped = WorkspaceSplitLayoutPolicy.clampInspectorWidth(width)
+        let clamped = WorkspaceSplitLayoutPolicy.clampInspectorWidth(
+            width,
+            total: windowWidth,
+            sidebarWidth: isSidebarPresented ? sidebarColumnWidth : 0
+        )
         guard clamped != inspectorColumnWidth else { return }
         inspectorColumnWidth = clamped
         preferences.set(Double(clamped), forKey: Keys.inspectorColumnWidth)

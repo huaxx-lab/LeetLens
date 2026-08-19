@@ -1,6 +1,6 @@
 {
   "name": "leetlens",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "A LeetCode practice client for learning algorithms. AI turns questions, chats, and submissions into a knowledge map and a review queue.",
   "private": true,
   "author": "huaxx-lab",
