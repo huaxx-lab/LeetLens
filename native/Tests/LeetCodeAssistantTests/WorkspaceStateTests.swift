@@ -152,6 +152,21 @@ final class WorkspaceStateTests: XCTestCase {
         XCTAssertGreaterThan(originY, 0, "按钮不能掉到标题栏容器外面，否则点不动")
     }
 
+    /// 三颗按钮必须落在绝对位置上：增量写法在 AppKit 中途重排时只会挪到一半，
+    /// 表现就是间距一边 18 一边 23。
+    func testTrafficLightsKeepTheSystemSpacingAtTheNewLeading() {
+        let offsets: [CGFloat] = [0, 23, 46]
+        let targets = WindowTitlebarLayout.buttonOriginsX(targetLeading: 14, offsets: offsets)
+        XCTAssertEqual(targets, [14, 37, 60])
+        // 幂等：拿算出来的位置再算一遍，结果不变。
+        let again = WindowTitlebarLayout.buttonOriginsX(
+            targetLeading: 14,
+            offsets: targets.map { $0 - targets[0] }
+        )
+        XCTAssertEqual(again, targets)
+        XCTAssertEqual(targets[1] - targets[0], targets[2] - targets[1], "三颗之间必须等距")
+    }
+
     func testTitlebarContainerCoversTheWholeHeaderBand() {
         let band = ToolHeaderLayoutPolicy.titlebarBandHeight(isFullScreen: false)
         let frame = WindowTitlebarLayout.containerFrame(
@@ -171,10 +186,20 @@ final class WorkspaceStateTests: XCTestCase {
         XCTAssertEqual(state.sidebarColumnWidth, AppDesign.Size.sidebarMin)
         state.setSidebarColumnWidth(400)
         XCTAssertEqual(state.sidebarColumnWidth, AppDesign.Size.sidebarMax)
+        state.handleWindowWidth(1_700)
         state.setInspectorColumnWidth(200)
         XCTAssertEqual(state.inspectorColumnWidth, AppDesign.Size.inspectorMin)
-        state.setInspectorColumnWidth(900)
-        XCTAssertEqual(state.inspectorColumnWidth, AppDesign.Size.inspectorMax)
+
+        // 上限不是写死的 620，而是"拉到中间列的手动下限为止"：窗口越大给得越多。
+        state.setInspectorColumnWidth(5_000)
+        XCTAssertEqual(
+            state.inspectorColumnWidth,
+            WorkspaceSplitLayoutPolicy.inspectorMax(
+                total: state.windowWidth,
+                sidebarWidth: state.isSidebarPresented ? state.sidebarColumnWidth : 0
+            )
+        )
+        XCTAssertGreaterThan(state.inspectorColumnWidth, AppDesign.Size.inspectorMax)
     }
 
     func testThreeColumnMinimumIsTheSumOfPinnedColumnFloors() {

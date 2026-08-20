@@ -19,11 +19,17 @@ enum WindowTitlebarLayout {
         bandHeight - centerFromTop - buttonHeight / 2
     }
 
-    /// 三颗按钮整体要平移多少。系统默认贴到左边 9pt，这里统一挪到
-    /// `trafficLightLeadingInset`，按钮之间的间距原样保留（不自己造节奏）。
-    /// 用「当前最左那颗」算增量，所以重复调用是幂等的。
-    static func horizontalShift(currentLeading: CGFloat, targetLeading: CGFloat) -> CGFloat {
-        targetLeading - currentLeading
+    /// 三颗按钮的目标 x：`targetLeading` 加上各自相对最左那颗的间距。
+    ///
+    /// **必须算成绝对值，不能用「整体平移多少」那种增量**。增量写法在这里是错的：
+    /// 我们写完第一颗的 frame，AppKit 可能当场把整条标题栏重排回默认位置，
+    /// 剩下两颗再加上同一个增量，结果就是 13 / 31 / 54——间距 18 和 23，
+    /// 头一颗挪了、后两颗没挪。绝对值写法重复调用多少次都收敛到同一处。
+    ///
+    /// `offsets` 是第一次看到这三颗按钮时量下来的系统间距（默认 0 / 23 / 46），
+    /// 用量到的而不是写死的数，系统换了节奏也跟得上。
+    static func buttonOriginsX(targetLeading: CGFloat, offsets: [CGFloat]) -> [CGFloat] {
+        offsets.map { targetLeading + $0 }
     }
 
     /// 加高后的标题栏容器在 `NSThemeFrame` 里的位置。
@@ -47,6 +53,12 @@ final class WindowTrafficLightPositioner {
     private weak var window: NSWindow?
     private var observers: [NSObjectProtocol] = []
     private var isApplying = false
+    private var isVerifying = false
+    /// 三颗按钮的系统间距，第一次见到时量一次（那时它们还在默认位置）。
+    private var buttonOffsets: [CGFloat] = []
+    /// 当前正在盯着的那三个按钮视图。AppKit 换掉其中任何一个（进出设置页时
+    /// 缩放键就会被换掉），旧的观察者就成了死信——必须重新挂。
+    private var watchedButtons: [ObjectIdentifier] = []
 
     func attach(to window: NSWindow?) {
         guard self.window !== window else { return }
@@ -60,6 +72,7 @@ final class WindowTrafficLightPositioner {
     func detach() {
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
+        buttonOffsets = []
         window = nil
     }
 
@@ -83,11 +96,22 @@ final class WindowTrafficLightPositioner {
         let center = ToolHeaderLayoutPolicy.headerCenterY(isFullScreen: false)
         let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
             .compactMap { window.standardWindowButton($0) }
-        let shift = WindowTitlebarLayout.horizontalShift(
-            currentLeading: buttons.map(\.frame.origin.x).min() ?? 0,
-            targetLeading: AppDesign.Size.trafficLightLeadingInset
+        // 按钮被换掉了：重新挂观察者，否则下一次它被重排我们收不到通知，
+        // 只能等窗口缩放之类的事件补救——那就是肉眼可见的"跳一下再回位"。
+        let identities = buttons.map(ObjectIdentifier.init)
+        if identities != watchedButtons {
+            observe(window)
+        }
+        if buttonOffsets.count != buttons.count {
+            let leading = buttons.map(\.frame.origin.x).min() ?? 0
+            buttonOffsets = buttons.map { $0.frame.origin.x - leading }
+        }
+        let targets = WindowTitlebarLayout.buttonOriginsX(
+            targetLeading: AppDesign.Size.trafficLightLeadingInset,
+            offsets: buttonOffsets
         )
-        for button in buttons {
+        var didWrite = false
+        for (button, x) in zip(buttons, targets) {
             let y = WindowTitlebarLayout.buttonOriginY(
                 bandHeight: band,
                 buttonHeight: button.frame.height,
@@ -95,25 +119,48 @@ final class WindowTrafficLightPositioner {
             )
             var frame = button.frame
             if abs(frame.origin.y - y) > 0.5 { frame.origin.y = y }
-            if abs(shift) > 0.5 { frame.origin.x += shift }
-            if !frame.equalTo(button.frame) { button.frame = frame }
+            if abs(frame.origin.x - x) > 0.5 { frame.origin.x = x }
+            if !frame.equalTo(button.frame) {
+                button.frame = frame
+                didWrite = true
+            }
+        }
+
+        // AppKit 有时在我们写完之后当场把标题栏重排回去——实测最常见的是缩放键，
+        // 于是三颗里两颗在新位置、一颗还在系统默认位置。下一个 runloop 再核一次，
+        // 不对就再写一遍。只在真写过之后排一次，写完发现已经对了就不再排，不会打转。
+        guard didWrite, !isVerifying else { return }
+        isVerifying = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isVerifying = false
+            self.apply()
         }
     }
 
     private func observe(_ window: NSWindow) {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
         var watched: [NSView] = []
         if let close = window.standardWindowButton(.closeButton), let titlebar = close.superview {
             watched.append(contentsOf: [titlebar, titlebar.superview].compactMap { $0 })
         }
+        var buttons: [NSView] = []
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            if let button = window.standardWindowButton(kind) { watched.append(button) }
+            if let button = window.standardWindowButton(kind) { buttons.append(button) }
         }
+        watched.append(contentsOf: buttons)
+        watchedButtons = buttons.map(ObjectIdentifier.init)
+        // `queue: nil` 是关键：给了队列就是**异步投递**，修正要等到下一轮 runloop，
+        // 中间那一帧按钮就停在系统默认位置上——进设置页时看到的"先跳一下再回位"
+        // 就是这一帧。nil 表示在发通知的那个线程上同步跑，AppKit 刚把按钮重排回去，
+        // 我们当场改回来，落在同一轮布局里，没有中间态。
         for view in watched {
             view.postsFrameChangedNotifications = true
             observers.append(NotificationCenter.default.addObserver(
                 forName: NSView.frameDidChangeNotification,
                 object: view,
-                queue: .main
+                queue: nil
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.apply() }
             })
@@ -122,12 +169,15 @@ final class WindowTrafficLightPositioner {
         for name in [
             NSWindow.didResizeNotification,
             NSWindow.didBecomeKeyNotification,
-            NSWindow.didExitFullScreenNotification
+            NSWindow.didExitFullScreenNotification,
+            // 兜底：窗口每轮事件处理结束都会发这条。进出设置页时 AppKit 可能
+            // 直接换掉按钮视图而不是改 frame，那条路一个通知都不发。
+            NSWindow.didUpdateNotification
         ] {
             observers.append(NotificationCenter.default.addObserver(
                 forName: name,
                 object: window,
-                queue: .main
+                queue: nil
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.apply() }
             })

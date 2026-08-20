@@ -91,12 +91,12 @@ ditto --norsrc --noextattr ${STAGE_APP} ${APP_PATH}
 xattr -cr ${APP_PATH}
 codesign --verify --deep --strict ${APP_PATH}
 
-ZIP_PATH=${DIST_DIR}/LeetCode-Agent-mac-arm64.zip
+ZIP_PATH=${DIST_DIR}/LeetLens-mac-arm64.zip
 ditto -c -k --sequesterRsrc --keepParent ${APP_PATH} ${ZIP_PATH}
 
 # DMG：拖进「应用程序」即可安装。
 DMG_STAGE=${STAGE_ROOT}/dmg
-DMG_PATH=${DIST_DIR}/LeetCode-Agent-mac-arm64.dmg
+DMG_PATH=${DIST_DIR}/LeetLens-mac-arm64.dmg
 rm -rf ${DMG_STAGE}
 mkdir -p ${DMG_STAGE}
 ditto --norsrc --noextattr ${APP_PATH} ${DMG_STAGE}/${APP_NAME}.app

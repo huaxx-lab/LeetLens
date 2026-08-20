@@ -206,12 +206,26 @@ enum WebViewPresentation {
             scrollWidth: Math.max(doc.scrollWidth, body ? body.scrollWidth : 0)
           };
         }
+        // thumb 是 position: fixed，**不受祖先的 overflow 裁剪**。容器有一段被上层
+        // 面板盖住 / 被父级裁掉时，直接拿 getBoundingClientRect 定位就会把 thumb
+        // 画到那一段上——看起来就是"滚动条跑到上一层去了"。所以先跟所有会裁剪的
+        // 祖先求交集，只在真正露出来的那块里定位；交集没了就干脆不画。
         const rect = target.getBoundingClientRect();
+        let top = rect.top, left = rect.left, right = rect.right, bottom = rect.bottom;
+        for (let node = target.parentElement; node && node !== doc; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (style.overflow === 'visible' && style.overflowX === 'visible' && style.overflowY === 'visible') continue;
+          const box = node.getBoundingClientRect();
+          top = Math.max(top, box.top);
+          left = Math.max(left, box.left);
+          right = Math.min(right, box.right);
+          bottom = Math.min(bottom, box.bottom);
+        }
         return {
-          top: rect.top,
-          left: rect.left,
-          width: rect.width,
-          height: rect.height,
+          top,
+          left,
+          width: Math.max(0, right - left),
+          height: Math.max(0, bottom - top),
           scrollTop: target.scrollTop,
           scrollLeft: target.scrollLeft,
           scrollHeight: target.scrollHeight,
@@ -224,6 +238,28 @@ enum WebViewPresentation {
         let s = stretchState.get(target);
         if (!s) { s = { v: 0, h: 0, lastTop: null, lastLeft: null, timer: 0 }; stretchState.set(target, s); }
         return s;
+      };
+
+      /// 视口刚变过的那一小段时间：reflow 会把滚动位置夹一下，浏览器跟着抛
+      /// scroll 事件，走 reveal 就等于"用户在滚动"——thumb 淡入，并带着
+      /// top/left 的 0.16s 过渡从旧位置飞到新位置。拖分栏线时看到的就是这个。
+      let viewportSettleUntil = 0;
+
+      /// 落位。**横向位置一变就不许补间**：普通滚动只会改 top，left 纹丝不动；
+      /// left 变了只有一个原因——容器换地方了（站点自己拖了内部分栏、面板收放、
+      /// 换了滚动对象）。这时候还带着 0.16s 过渡，thumb 就会当着你的面从旧位置
+      /// 飞到新位置。thumb 当前是隐藏的同理：藏着的时候位置早就过期了，
+      /// 下一次淡入必须直接出现在对的地方。
+      const place = (el, left, top) => {
+        const snap = !el.classList.contains('__lc-on')
+          || Math.abs(parseFloat(el.style.left || '0') - left) > 0.5;
+        if (snap) el.classList.add('__lc-jump');
+        el.style.left = left + 'px';
+        el.style.top = top + 'px';
+        if (!snap) return;
+        requestAnimationFrame(() => {
+          if (performance.now() >= viewportSettleUntil) el.classList.remove('__lc-jump');
+        });
       };
 
       const layout = (target, s, prefetched) => {
@@ -242,8 +278,7 @@ enum WebViewPresentation {
           vertical.style.display = 'block';
           vertical.style.width = THICKNESS + 'px';
           vertical.style.height = length + 'px';
-          vertical.style.top = top + 'px';
-          vertical.style.left = (box.left + box.width - THICKNESS - INSET) + 'px';
+          place(vertical, box.left + box.width - THICKNESS - INSET, top);
         } else {
           vertical.style.display = 'none';
         }
@@ -256,8 +291,7 @@ enum WebViewPresentation {
           horizontal.style.display = 'block';
           horizontal.style.height = THICKNESS + 'px';
           horizontal.style.width = length + 'px';
-          horizontal.style.left = left + 'px';
-          horizontal.style.top = (box.top + box.height - THICKNESS - INSET) + 'px';
+          place(horizontal, left, box.top + box.height - THICKNESS - INSET);
         } else {
           horizontal.style.display = 'none';
         }
@@ -266,6 +300,11 @@ enum WebViewPresentation {
       let timer = 0;
       let activeTarget = null;
       const reveal = (target) => {
+        if (performance.now() < viewportSettleUntil) {
+          activeTarget = target;
+          layout(target, stretchFor(target));
+          return;
+        }
         activeTarget = target;
         const box = metrics(target);
         const s = stretchFor(target);
@@ -353,18 +392,27 @@ enum WebViewPresentation {
       // resize 只重排、不淡入。展开/收起列、拖分栏、缩窗口都会打到这里；
       // 走 reveal 的话用户根本没滚动，却凭空多出一条滚动条、0.9s 后才消失。
       // `__lc-jump` 期间关掉 top/left 过渡，否则视口一变 thumb 会横穿页面滑过去。
+      let jumpTimer = 0;
       const relayout = () => {
         const target = activeTarget || document;
         const s = stretchFor(target);
         s.v = 0;
         s.h = 0;
+        // 视口正在变（拖分栏线、缩窗口）：**先把 thumb 藏掉再重排**。
+        // 只关掉 transition 不够——拖动是连续几十次 resize，每两次之间
+        // transition 又被恢复，于是 thumb 一路"飞"过整个页面。
+        // 藏起来重排，等下一次真正滚动时再淡入。
+        vertical.classList.remove('__lc-on');
+        horizontal.classList.remove('__lc-on');
         vertical.classList.add('__lc-jump');
         horizontal.classList.add('__lc-jump');
+        viewportSettleUntil = performance.now() + 260;
         layout(target, s);
-        requestAnimationFrame(() => {
+        clearTimeout(jumpTimer);
+        jumpTimer = setTimeout(() => {
           vertical.classList.remove('__lc-jump');
           horizontal.classList.remove('__lc-jump');
-        });
+        }, 150);
       };
       let resizeFrame = 0;
 
@@ -381,10 +429,37 @@ enum WebViewPresentation {
     })();
     """
 
+    /// 只藏原生滚动条的那几行，**必须在 documentStart 就位**。
+    ///
+    /// 整套自绘脚本要等 DOM 建好才能挂 thumb，所以它是 documentEnd 注入的；
+    /// 但藏原生滚动条等不了：样式生效之前页面是拿系统滚动条渲染的，而这台机器上
+    /// 系统是 legacy 样式（接鼠标或设了"始终显示"），于是首屏明晃晃画出几条 17pt
+    /// 的深灰粗条，等页面加载完才消失。这段不碰 DOM 结构，只往 documentElement
+    /// 上挂一个 style，document.head 还不存在时也能跑。
+    static let hideNativeScrollbarsScript = """
+    (() => {
+      if (window.__leetcodeHidNativeScrollbars) return;
+      window.__leetcodeHidNativeScrollbars = true;
+      const style = document.createElement('style');
+      style.textContent = `
+        html { scrollbar-width: none !important; }
+        *::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+    })();
+    """
+
     /// 注入只作用于主文档：打到第三方页面的每个 iframe（验证码、内嵌播放器）
     /// 可能破坏对方的布局脚本，而那些 iframe 的滚动条本就不该由我们接管。
     @MainActor
     static func applyFloatingScrollbars(in configuration: WKWebViewConfiguration) {
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: hideNativeScrollbarsScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
         configuration.userContentController.addUserScript(
             WKUserScript(
                 source: floatingScrollbarScript,

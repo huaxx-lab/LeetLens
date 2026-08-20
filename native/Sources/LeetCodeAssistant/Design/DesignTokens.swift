@@ -67,8 +67,14 @@ enum AppDesign {
         static let contextPanelMaximum: CGFloat = 324
         static let inspectorMin: CGFloat = 380
         static let inspectorIdeal: CGFloat = 460
+        /// 第三列的**兜底**上限，真正的上限按窗口算（`WorkspaceSplitLayoutPolicy.inspectorMax(total:sidebarWidth:)`）：
+        /// 写死 620 的话，屏幕再大第三列也只能到 620pt，浏览器一开就挤。
         static let inspectorMax: CGFloat = 620
+        /// 中间列最小宽。**自动布局**用它：窗口窄到三列放不下时，应用自己收侧栏。
         static let primaryMinimum: CGFloat = 620
+        /// 手动拖分栏线时中间列的下限。比自动断点低——你自己把它压窄是明确意图，
+        /// 和"窗口太小、应用替你决定"是两回事。第三列能拉多宽由它决定。
+        static let primaryDragMinimum: CGFloat = 420
         static let contentReadable: CGFloat = 780
         /// 对话正文 / 标题 / 输入框共用的内容列宽上限。
         /// 1100 而不是原来的 820：820 时正文在宽列里居中，左边会空出一大条，
