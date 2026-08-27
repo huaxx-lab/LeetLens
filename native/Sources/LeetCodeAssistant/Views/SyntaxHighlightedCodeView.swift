@@ -20,7 +20,7 @@ struct SyntaxHighlightedCodeView: View {
             if showsHeader {
                 HStack(spacing: 8) {
                     Text(displayLanguage)
-                        .font(.system(size: 12, weight: .regular))
+                        .font(.appScaled(size: 12, weight: .regular))
                         .foregroundStyle(ConversationCodeBlockStyle.secondaryForeground)
                     Spacer()
                     Button {
@@ -33,7 +33,7 @@ struct SyntaxHighlightedCodeView: View {
                         }
                     } label: {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 13, weight: .regular))
+                            .font(.appScaled(size: 13, weight: .regular))
                             .frame(
                                 width: ConversationCodeBlockStyle.copyControlSize,
                                 height: ConversationCodeBlockStyle.copyControlSize
@@ -54,7 +54,7 @@ struct SyntaxHighlightedCodeView: View {
             // 鼠标停在代码上滚动就推不动外层页面了。
             ScrollView(maxHeight == nil ? .horizontal : [.horizontal, .vertical]) {
                 highlightedText
-                    .font(.system(size: ConversationCodeBlockStyle.fontSize, design: .monospaced))
+                    .font(.appScaled(size: ConversationCodeBlockStyle.fontSize, design: .monospaced))
                     .lineSpacing(ConversationCodeBlockStyle.lineSpacing)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)

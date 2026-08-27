@@ -29,7 +29,7 @@ struct SettingsView: View {
                     HStack(spacing: 8) {
                         Button(action: onDismiss) {
                             Label("返回应用", systemImage: "chevron.left")
-                                .font(.system(size: 15))
+                                .font(.appScaled(size: 15))
                                 .frame(height: 32)
                         }
                         .buttonStyle(.plain)
@@ -39,7 +39,7 @@ struct SettingsView: View {
 
                         Button { dataStore.reload() } label: {
                             Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 15))
+                                .font(.appScaled(size: 15))
                                 .frame(width: 32, height: 32)
                         }
                         .buttonStyle(.plain)
@@ -49,10 +49,10 @@ struct SettingsView: View {
 
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 14))
+                            .font(.appScaled(size: 14))
                             .foregroundStyle(.secondary)
                         TextField("搜索设置…", text: $searchText)
-                            .font(.system(size: 14))
+                            .font(.appScaled(size: 14))
                             .textFieldStyle(.plain)
                     }
                     .padding(.horizontal, 12)
@@ -65,7 +65,7 @@ struct SettingsView: View {
                     LazyVStack(alignment: .leading, spacing: 3) {
                         ForEach(visibleGroups) { group in
                             Text(group.title)
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.appScaled(size: 13, weight: .medium))
                                 .foregroundStyle(.secondary)
                                 .padding(.leading, 12)
                                 .padding(.top, 18)
@@ -118,7 +118,7 @@ struct SettingsView: View {
                     .font(AppDesign.Typography.body)
                     .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 740, alignment: .leading)
+            .frame(maxWidth: AppDesign.Size.settingsColumn, alignment: .leading)
             Spacer(minLength: 0)
         }
         .padding(.top, 30)
@@ -131,12 +131,12 @@ struct SettingsView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: section.systemImage)
-                    .font(.system(size: 16))
+                    .font(.appScaled(size: 16))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(selection == section ? Color.accentColor : Color.secondary)
                     .frame(width: 24)
                 Text(section.title)
-                    .font(.system(size: 14, weight: selection == section ? .medium : .regular))
+                    .font(.appScaled(size: 14, weight: selection == section ? .medium : .regular))
                 Spacer()
             }
             .padding(.horizontal, 10)
@@ -243,7 +243,7 @@ private struct SettingsSectionGroup: Identifiable {
 // MARK: - Codex 式设置组件
 
 private struct SettingsScroll<Content: View>: View {
-    var maxWidth: CGFloat = 740
+    var maxWidth: CGFloat = AppDesign.Size.settingsColumn
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -273,13 +273,13 @@ private struct SettingsCard<Content: View>: View {
             HStack(spacing: 7) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.appScaled(size: 11, weight: .semibold))
                         .foregroundStyle(tint)
                         .frame(width: 22, height: 22)
                         .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appScaled(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
             .padding(.leading, 4)
@@ -384,10 +384,10 @@ private struct SettingsSliderRow<Control: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(title)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.appScaled(size: 15, weight: .medium))
                 Spacer()
                 Text(valueText)
-                    .font(.system(size: 14))
+                    .font(.appScaled(size: 14))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
@@ -621,7 +621,7 @@ struct BrowserHistorySheet: View {
                                     HStack(spacing: 12) {
                                     Image(systemName: "globe").foregroundStyle(.secondary).frame(width: 24)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(entry.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
+                                        Text(entry.title).font(.appScaled(size: 14, weight: .medium)).lineLimit(1)
                                         Text(entry.url.absoluteString).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                     }
                                     Spacer()
@@ -858,12 +858,12 @@ private struct ProfileSettingsPage: View {
     }
 
     var body: some View {
-        SettingsScroll(maxWidth: 980) {
+        SettingsScroll {
             VStack(spacing: 12) {
                 profileAvatar
                     .frame(width: 82, height: 82)
                     .clipShape(Circle())
-                Text(displayName).font(.system(size: 26, weight: .semibold))
+                Text(displayName).font(.appScaled(size: 26, weight: .semibold))
                 HStack(spacing: 7) {
                     Text(accountLabel).foregroundStyle(.secondary)
                     Text("·").foregroundStyle(.tertiary)
@@ -955,7 +955,7 @@ private struct ProfileSettingsPage: View {
         ZStack {
             Circle().fill(Color.accentColor.opacity(0.14))
             Text(String(displayName.prefix(1)).uppercased())
-                .font(.system(size: 30, weight: .medium)).foregroundStyle(Color.accentColor)
+                .font(.appScaled(size: 30, weight: .medium)).foregroundStyle(Color.accentColor)
         }
     }
 
@@ -976,12 +976,12 @@ private struct ProfileSettingsPage: View {
         } label: {
             VStack(spacing: 5) {
                 Text(metricValue(item))
-                    .font(.system(size: 25, weight: .semibold).monospacedDigit())
+                    .font(.appScaled(size: 25, weight: .semibold).monospacedDigit())
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                 HStack(spacing: 4) {
                     Image(systemName: item.systemImage)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.appScaled(size: 10, weight: .semibold))
                     Text(item.title)
                         .font(.caption)
                 }
@@ -1104,7 +1104,7 @@ private struct ProfileSettingsPage: View {
             ForEach(items, id: \.0) { item in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.1)
-                        .font(.system(size: 15, weight: .medium).monospacedDigit())
+                        .font(.appScaled(size: 15, weight: .medium).monospacedDigit())
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     Text(item.0).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -1118,7 +1118,7 @@ private struct ProfileSettingsPage: View {
     private var activityHeader: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text("\(activity.total) 次提交")
-                .font(.system(size: 15, weight: .semibold).monospacedDigit())
+                .font(.appScaled(size: 15, weight: .semibold).monospacedDigit())
             Text("· 活跃 \(activity.activeDays) 天 · 当前连续 \(activity.currentStreak) 天 · 最长 \(activity.longestStreak) 天")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1150,7 +1150,7 @@ private struct ProfileSettingsPage: View {
             VStack(spacing: spacing) {
                 ForEach(0..<7, id: \.self) { row in
                     Text(["", "一", "", "三", "", "五", ""][row])
-                        .font(.system(size: 9))
+                        .font(.appScaled(size: 9))
                         .foregroundStyle(.tertiary)
                         .frame(width: 14, height: cell, alignment: .trailing)
                 }
@@ -1162,7 +1162,7 @@ private struct ProfileSettingsPage: View {
                     Color.clear.frame(height: 12)
                     ForEach(activity.monthMarks) { mark in
                         Text(mark.title)
-                            .font(.system(size: 9))
+                            .font(.appScaled(size: 9))
                             .foregroundStyle(.tertiary)
                             .fixedSize()
                             .offset(x: CGFloat(mark.column) * step)
@@ -1193,7 +1193,7 @@ private struct ProfileSettingsPage: View {
                             // 90 天视图格子够大，直接把日期写进去，不用靠悬停猜。
                             if cell > 20 {
                                 let text = Text("\(Calendar.current.component(.day, from: day))")
-                                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                    .font(.appScaled(size: 9, weight: .medium).monospacedDigit())
                                     .foregroundStyle(count >= 4 ? Color.white.opacity(0.9) : Color.secondary)
                                 context.draw(text, at: CGPoint(x: rect.midX, y: rect.midY))
                             }
@@ -1257,13 +1257,13 @@ private struct ProfileSettingsPage: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Text("少").font(.system(size: 9)).foregroundStyle(.tertiary)
+            Text("少").font(.appScaled(size: 9)).foregroundStyle(.tertiary)
             ForEach([0, 1, 2, 5, 9], id: \.self) { level in
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(activityColor(level))
                     .frame(width: 11, height: 11)
             }
-            Text("多").font(.system(size: 9)).foregroundStyle(.tertiary)
+            Text("多").font(.appScaled(size: 9)).foregroundStyle(.tertiary)
         }
     }
 
@@ -1273,14 +1273,14 @@ private struct ProfileSettingsPage: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Text(day.formatted(.dateTime.year().month(.wide).day().weekday(.wide)))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appScaled(size: 13, weight: .semibold))
                 Text("\(items.count) 次提交 · 通过 \(items.count { $0.accepted })")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Button { selectedDay = nil } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.appScaled(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 22, height: 22)
                         .contentShape(Circle())
@@ -1440,9 +1440,9 @@ private struct ProviderSettingsPage: View {
                 ProviderMark(assetName: provider.assetName, size: 26)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(provider.name)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.appScaled(size: 15, weight: .medium))
                     Text(provider.model.isEmpty ? "未设置模型" : provider.model)
-                        .font(.system(size: 12))
+                        .font(.appScaled(size: 12))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -1451,7 +1451,7 @@ private struct ProviderSettingsPage: View {
                     .fill(provider.isConfigured ? AppDesign.ColorToken.success : Color.secondary)
                     .frame(width: 7, height: 7)
                 Text("默认")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.appScaled(size: 10, weight: .semibold))
                     .foregroundStyle(AppDesign.ColorToken.success)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -1572,7 +1572,7 @@ private struct ProviderSettingsPage: View {
                                     .frame(width: 30, height: 30)
                             } else {
                                 Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(.appScaled(size: 13, weight: .medium))
                                     .frame(width: 30, height: 30)
                             }
                         }
@@ -1587,14 +1587,14 @@ private struct ProviderSettingsPage: View {
                     CardDivider()
                     SettingsRow("可用模型", subtitle: "从供应商实时获取") {
                         Text("\(model.availableModels.count) 个")
-                            .font(.system(size: 13).monospacedDigit())
+                            .font(.appScaled(size: 13).monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                 }
                 CardDivider()
                 SettingsRow("推理能力") {
                     Label("支持按任务覆盖", systemImage: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 13))
+                        .font(.appScaled(size: 13))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1618,15 +1618,15 @@ private struct ProviderSettingsPage: View {
     private func routeRow(_ route: AITaskRoute) -> some View {
         HStack(spacing: 14) {
             Image(systemName: route.systemImage)
-                .font(.system(size: 15))
+                .font(.appScaled(size: 15))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.secondary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(route.title)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.appScaled(size: 15, weight: .medium))
                 Text(route.subtitle)
-                    .font(.system(size: 12))
+                    .font(.appScaled(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -1775,7 +1775,7 @@ private struct ContextSettingsPage: View {
                                 Task { await removeFact(fact.id) }
                             } label: {
                                 Image(systemName: "trash")
-                                    .font(.system(size: 11))
+                                    .font(.appScaled(size: 11))
                                     .foregroundStyle(.secondary)
                                     .frame(width: 24, height: 24)
                                     .contentShape(Rectangle())
@@ -1861,13 +1861,13 @@ private struct VideoSettingsPage: View {
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 16, weight: .medium))
+                            .font(.appScaled(size: 16, weight: .medium))
                             .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.secondary)
                             .frame(width: 24)
                         VStack(alignment: .leading, spacing: 3) {
                             Text("本地播放历史")
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.appScaled(size: 14, weight: .medium))
                             Text(dataStore.videoHistoryCount == 0
                                  ? "尚无记录"
                                  : "\(dataStore.videoHistoryCount) 条·点击视频在右侧浏览器播放")
@@ -1876,7 +1876,7 @@ private struct VideoSettingsPage: View {
                         }
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.appScaled(size: 11, weight: .semibold))
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(isHistoryExpanded ? 90 : 0))
                     }
@@ -1915,7 +1915,7 @@ private struct VideoSettingsPage: View {
                                 }
                                 Spacer()
                                 Image(systemName: "rectangle.righthalf.inset.filled.arrow.right")
-                                    .font(.system(size: 13))
+                                    .font(.appScaled(size: 13))
                                     .symbolRenderingMode(.hierarchical)
                                     .foregroundStyle(.tertiary)
                                     .frame(width: 28, height: 28)
@@ -2012,7 +2012,7 @@ private struct LearningSettingsPage: View {
         SettingsRow(title) {
             HStack(spacing: 10) {
                 Text("\(Int(value.wrappedValue)) 项")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.appScaled(size: 13, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                 HStack(spacing: 0) {
@@ -2034,7 +2034,7 @@ private struct LearningSettingsPage: View {
                     }
                     .disabled(value.wrappedValue >= range.upperBound)
                 }
-                .font(.system(size: 11, weight: .semibold))
+                .font(.appScaled(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .buttonStyle(.plain)
                 .glassCapsule()
@@ -2244,7 +2244,7 @@ private struct EmbeddedAccountLoginView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         } else {
             Image(systemName: "person.crop.square")
-                .font(.system(size: 64))
+                .font(.appScaled(size: 64))
                 .foregroundStyle(.secondary)
         }
     }
@@ -2686,6 +2686,11 @@ private struct DataCacheSettingsPage: View {
 
 private struct AppearanceSettingsPage: View {
     @Bindable var dataStore: LegacyDataStore
+    private let metrics = InterfaceMetrics.shared
+
+    private var autoScaleText: String {
+        String(format: "%.2f×", metrics.displayScale)
+    }
     @State private var appearance = "system"
     @State private var emphasizeMotion = true
     @State private var status = ""
@@ -2699,6 +2704,22 @@ private struct AppearanceSettingsPage: View {
                         selection: $appearance
                     )
                     .frame(width: 230)
+                }
+                CardDivider()
+                // 界面已按屏幕自动缩放（口径见 `InterfaceMetrics.displayScale`），
+                // 这一档是在自动档之上再做相对调整，两者相乘。
+                SettingsRow(
+                    "界面字号",
+                    subtitle: "「跟随屏幕」按当前显示器算，这块屏上是 \(autoScaleText)"
+                ) {
+                    GlassSegmentedControl(
+                        options: InterfaceMetrics.FontScale.allCases.map { ($0.rawValue, $0.title) },
+                        selection: Binding(
+                            get: { metrics.fontScale.rawValue },
+                            set: { metrics.fontScale = InterfaceMetrics.FontScale(rawValue: $0) ?? .standard }
+                        )
+                    )
+                    .frame(width: 272)
                 }
                 CardDivider()
                 SettingsToggleRow("使用流畅的面板与符号动效", isOn: $emphasizeMotion)
@@ -2749,7 +2770,7 @@ private extension View {
 
     func settingsInputSurface() -> some View {
         textFieldStyle(.plain)
-            .font(.system(size: 13))
+            .font(.appScaled(size: 13))
             .padding(.horizontal, 12)
             .frame(height: 32)
             .settingsFieldChrome()
@@ -2765,10 +2786,10 @@ private struct SettingsMenuLabel: View {
                 .lineLimit(1)
             Spacer(minLength: 4)
             Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.appScaled(size: 9, weight: .semibold))
                 .foregroundStyle(.tertiary)
         }
-        .font(.system(size: 13))
+        .font(.appScaled(size: 13))
         .foregroundStyle(.primary)
         .padding(.horizontal, 12)
         .frame(height: 32)
@@ -2795,7 +2816,7 @@ private struct SettingsModelCombo: View {
         HStack(spacing: 0) {
             TextField("搜索或输入模型", text: $selection)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(.appScaled(size: 13))
                 .padding(.leading, 12)
                 .frame(maxWidth: .infinity)
 
@@ -2814,7 +2835,7 @@ private struct SettingsModelCombo: View {
                     }
                 } label: {
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.appScaled(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 28, height: 30)
                         .contentShape(Rectangle())
@@ -2865,7 +2886,7 @@ private struct SettingsPillButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .medium))
+            .font(.appScaled(size: 13, weight: .medium))
             .foregroundStyle(tint ?? Color.primary)
             .padding(.horizontal, 14)
             .frame(height: 30)
@@ -2915,7 +2936,7 @@ private struct ProviderQuickLink: Identifiable {
 private struct ProviderLinkCapsuleStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium))
+            .font(.appScaled(size: 12, weight: .medium))
             .foregroundStyle(Color.accentColor)
             .padding(.horizontal, 11)
             .frame(height: 26)

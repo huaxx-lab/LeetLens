@@ -728,7 +728,7 @@ private struct ConversationEmptyStateView<Composer: View>: View {
 
                     TimelineView(.periodic(from: .now, by: 60)) { timeline in
                         Text(timeline.date.formatted(.dateTime.month(.wide).day().weekday(.wide)))
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.appScaled(size: 13, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
                     .padding(.top, compactHeight ? 10 : 18)
@@ -889,7 +889,7 @@ private struct ComposerView: View {
                         .frame(width: 28, height: 28)
                     if !pendingArtifacts.isEmpty {
                         Text("\(pendingArtifacts.count)")
-                            .font(.system(size: 8, weight: .bold).monospacedDigit())
+                            .font(.appScaled(size: 8, weight: .bold).monospacedDigit())
                             .foregroundStyle(.white)
                             .frame(minWidth: 13, minHeight: 13)
                             .background(Color.accentColor, in: Circle())
@@ -935,7 +935,7 @@ private struct ComposerView: View {
 
             Button(action: primaryAction) {
                 Image(systemName: sendButtonSymbol)
-                    .font(.system(size: sendButtonSymbol == "stop.fill" ? 10 : 13, weight: .semibold))
+                    .font(.appScaled(size: sendButtonSymbol == "stop.fill" ? 10 : 13, weight: .semibold))
                     .contentTransition(.symbolEffect(.replace))
                     .foregroundStyle(.white)
                     .frame(width: 30, height: 30)
@@ -971,7 +971,7 @@ private struct ComposerView: View {
     private var queueStatus: some View {
         HStack(spacing: 8) {
             Image(systemName: "text.badge.plus")
-                .font(.system(size: 12, weight: .medium))
+                .font(.appScaled(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
             Text("待发送 \(queuedDrafts.count) 条")
                 .font(.caption.weight(.semibold))
@@ -982,7 +982,7 @@ private struct ComposerView: View {
             Spacer(minLength: 8)
             Button(action: onClearQueue) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.appScaled(size: 10, weight: .semibold))
                     .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
@@ -1058,7 +1058,7 @@ private struct ComposerView: View {
                         .frame(width: 13, height: 13)
                 }
                 Text(activeProvider?.model ?? "选择模型")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.appScaled(size: 12, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .layoutPriority(-1)
@@ -1139,7 +1139,7 @@ private struct ComposerView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.appScaled(size: 10, weight: .bold))
                     .foregroundStyle(Color.accentColor)
                     .opacity(isActive ? 1 : 0)
                     .frame(width: 12)

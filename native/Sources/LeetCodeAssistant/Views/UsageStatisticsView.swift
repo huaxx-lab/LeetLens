@@ -180,7 +180,7 @@ struct UsageStatisticsView: View {
                             ForEach(taskRows, id: \.0.id) { route, counters in
                                 HStack(spacing: 12) {
                                     Image(systemName: route.systemImage)
-                                        .font(.system(size: 13, weight: .semibold))
+                                        .font(.appScaled(size: 13, weight: .semibold))
                                         .foregroundStyle(.blue)
                                         .frame(width: 30, height: 30)
                                         .background(Color.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -218,12 +218,12 @@ struct UsageStatisticsView: View {
     private func metricCard(_ title: String, _ value: Int?, icon: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.appScaled(size: 13, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(width: 28, height: 28)
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             Text(value?.formatted() ?? "-")
-                .font(.system(size: 22, weight: .semibold).monospacedDigit())
+                .font(.appScaled(size: 22, weight: .semibold).monospacedDigit())
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -245,7 +245,7 @@ struct UsageStatisticsView: View {
     ) -> some View {
         HStack(spacing: 12) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.appScaled(size: 13, weight: .semibold))
                 .foregroundStyle(.indigo)
                 .frame(width: 30, height: 30)
                 .background(Color.indigo.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))

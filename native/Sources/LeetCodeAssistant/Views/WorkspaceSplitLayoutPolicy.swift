@@ -3,6 +3,9 @@ import CoreGraphics
 /// Pinned widths for the SwiftUI workspace columns.
 /// The shell is `NavigationSplitView` + `.inspector`; these numbers are the
 /// contract those modifiers must honor, not an AppKit split-view implementation.
+/// `@MainActor`：这些数现在跟着界面字号走（`AppDesign.Size` 里装文字的那一档），
+/// 而字号倍率是主线程上的可观察状态。
+@MainActor
 enum WorkspaceSplitLayoutPolicy {
     static var sidebarMin: CGFloat { AppDesign.Size.sidebarMin }
     static var sidebarIdeal: CGFloat { AppDesign.Size.sidebarIdeal }

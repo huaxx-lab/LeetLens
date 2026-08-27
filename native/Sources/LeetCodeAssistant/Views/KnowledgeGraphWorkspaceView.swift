@@ -180,12 +180,12 @@ struct KnowledgeGraphWorkspaceView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(AppDesign.ColorToken.warning)
             Text(errorText)
-                .font(.system(size: 12))
+                .font(.appScaled(size: 12))
                 .lineLimit(2)
             Button {
                 errorText = ""
             } label: {
-                Image(systemName: "xmark").font(.system(size: 10))
+                Image(systemName: "xmark").font(.appScaled(size: 10))
             }
             .buttonStyle(.plain)
         }
@@ -200,11 +200,11 @@ struct KnowledgeGraphWorkspaceView: View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
+                    .font(.appScaled(size: 11))
                     .foregroundStyle(.secondary)
                 TextField("搜索节点", text: $searchText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12.5))
+                    .font(.appScaled(size: 12.5))
                     .frame(width: 130)
                 if !searchText.isEmpty {
                     Button { searchText = "" } label: {
@@ -227,7 +227,7 @@ struct KnowledgeGraphWorkspaceView: View {
                 }
             } label: {
                 Label(isLinking ? (linkDirected ? "单向连线中" : "双向连线中") : "连线", systemImage: "link")
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.appScaled(size: 12.5, weight: .medium))
                     .foregroundStyle(isLinking ? Color.accentColor : .secondary)
                     .padding(.horizontal, 11)
                     .frame(height: 30)
@@ -269,7 +269,7 @@ struct KnowledgeGraphWorkspaceView: View {
 
             Button { fitRequest &+= 1 } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 12))
+                    .font(.appScaled(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(width: 30, height: 30)
                     .contentShape(Circle())
@@ -287,7 +287,7 @@ struct KnowledgeGraphWorkspaceView: View {
     ) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(.system(size: 12, weight: .medium))
+                .font(.appScaled(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .frame(height: 26)

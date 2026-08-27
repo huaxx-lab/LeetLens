@@ -364,7 +364,7 @@ struct LeetCodeProblemNavBar: View {
             if let slug { onSelect(slug) }
         } label: {
             Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.appScaled(size: 11, weight: .semibold))
                 .frame(width: 22, height: 22)
                 .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
@@ -417,13 +417,18 @@ struct LeetCodeSolutionsBrowser: View {
 
             HStack(spacing: 0) {
                 solutionList
-                    .frame(width: 248)
+                    .paneListColumn(
+                        storageKey: "native.paneList.solutionList",
+                        defaultWidth: 248,
+                        minWidth: 200,
+                        maxWidth: 380
+                    )
                 Divider()
                 solutionDetail
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 980, idealWidth: 1180, maxWidth: 1440)
+        .frame(minWidth: 980, idealWidth: 1180, maxWidth: AppDesign.Size.dashboardColumnMaximum)
         .frame(minHeight: 700, idealHeight: 800, maxHeight: 1040)
         .background(AppDesign.ColorToken.canvas)
         .task { await loadList() }
@@ -461,7 +466,7 @@ struct LeetCodeSolutionsBrowser: View {
                 // 官方题解（作者 LeetCode-Solution）单独标出来——列表里最该先看的就是它。
                 if item.isOfficial {
                     Text("官方")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.appScaled(size: 9, weight: .semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
@@ -469,7 +474,7 @@ struct LeetCodeSolutionsBrowser: View {
                 }
                 Text(item.authorName).lineLimit(1)
                 Spacer(minLength: 4)
-                Image(systemName: "eye").font(.system(size: 9))
+                Image(systemName: "eye").font(.appScaled(size: 9))
                 Text(LeetCodeQuestionActionBar.compactCount(item.views)).monospacedDigit()
             }
             .font(AppDesign.Typography.micro)
