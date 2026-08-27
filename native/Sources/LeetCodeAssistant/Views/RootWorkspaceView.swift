@@ -101,10 +101,20 @@ struct RootWorkspaceView: View {
         // 顶栏布局（上移一个标题栏、左内缩 78pt、两处 offset）会在画面已经稳定
         // 之后突然整体跳一下。will* 在动画开始时就发，这一跳就藏在系统动画里。
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
+            workspace.beginWindowTransition()
             workspace.handleFullScreenChange(true)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in
+            workspace.beginWindowTransition()
             workspace.handleFullScreenChange(false)
+        }
+        // did* 才是"系统动画播完了"。断点在这里按最终宽度算一次，
+        // 中途扫过的那些临时状态一个都不会被看到。
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            workspace.endWindowTransition()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
+            workspace.endWindowTransition()
         }
         // 内容一路画到窗口顶端，列头才能和红绿灯同处一行（窗口态下标题栏那 28pt
         // 否则会把列头整个挤到第二行）。

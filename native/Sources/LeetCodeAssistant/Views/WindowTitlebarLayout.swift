@@ -76,9 +76,37 @@ final class WindowTrafficLightPositioner {
         window = nil
     }
 
+    /// 全屏动画进行中。退出全屏时 AppKit 在 `willExit` 就把 `.fullScreen` 从
+    /// styleMask 摘掉了，于是接下来那半秒的每一帧 resize 都会走进 `apply()`——
+    /// 我们逐帧强写红绿灯的 frame、还各排一次校验，等于和系统自己的动画抢同三颗按钮。
+    private var isTransitioning = false
+    /// 兜底计时的代次，用来忽略过期的那一发。
+    private var transitionGeneration = 0
+
+    private func beginTransition() {
+        isTransitioning = true
+        transitionGeneration &+= 1
+        let generation = transitionGeneration
+        // 兜底：`willEnter/willExit` 之后不一定有对应的 `did*`——动画被打断时
+        // AppKit 走的是 `windowDidFailTo…FullScreen` 代理方法，没有通知可收。
+        // 漏掉一次收尾，`isTransitioning` 就永远停在 true、红绿灯从此没人摆，
+        // 比动画抖一下严重得多。系统那段动画约半秒，2 秒足够宽。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.transitionGeneration == generation else { return }
+            self.endTransition()
+        }
+    }
+
+    private func endTransition() {
+        guard isTransitioning else { return }
+        isTransitioning = false
+        apply()
+    }
+
     /// 全屏由系统自己收起红绿灯，这里一律不碰；退出全屏时 `apply()` 会被再调一次。
     func apply() {
-        guard !isApplying, let window, !window.styleMask.contains(.fullScreen) else { return }
+        guard !isApplying, !isTransitioning else { return }
+        guard let window, !window.styleMask.contains(.fullScreen) else { return }
         guard let close = window.standardWindowButton(.closeButton),
               let titlebar = close.superview,
               let container = titlebar.superview,
@@ -166,10 +194,28 @@ final class WindowTrafficLightPositioner {
             })
         }
 
+        // 全屏动画期间停手，动画播完再排一次。
+        for (name, transitioning) in [
+            (NSWindow.willEnterFullScreenNotification, true),
+            (NSWindow.willExitFullScreenNotification, true),
+            (NSWindow.didEnterFullScreenNotification, false),
+            (NSWindow.didExitFullScreenNotification, false)
+        ] {
+            observers.append(NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: nil
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if transitioning { self.beginTransition() } else { self.endTransition() }
+                }
+            })
+        }
+
         for name in [
             NSWindow.didResizeNotification,
             NSWindow.didBecomeKeyNotification,
-            NSWindow.didExitFullScreenNotification,
             // 兜底：窗口每轮事件处理结束都会发这条。进出设置页时 AppKit 可能
             // 直接换掉按钮视图而不是改 frame，那条路一个通知都不发。
             NSWindow.didUpdateNotification
