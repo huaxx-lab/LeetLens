@@ -179,6 +179,52 @@ final class WorkspaceStateTests: XCTestCase {
         XCTAssertEqual(frame, CGRect(x: 0, y: 800 - band, width: 1_200, height: band))
     }
 
+    /// 全屏进出的那半秒里窗口宽度是连续变化的，断点会被一路扫过。
+    /// 中途那些临时状态一个都不该被看到——否则侧栏和上下文列会在动画里弹进弹出。
+    func testBreakpointsStayFrozenUntilTheFullScreenAnimationSettles() {
+        let (preferences, suiteName) = makePreferences()
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let state = WorkspaceState(preferences: preferences)
+
+        // 从一个三列都放得下的宽度出发。
+        state.handleWindowWidth(1_900)
+        let sidebarBefore = state.compactSidebar
+        let contextBefore = state.compactContext
+
+        state.beginWindowTransition()
+        // 动画中途扫过所有断点：窄到连侧栏都该收起。
+        for width in stride(from: CGFloat(1_900), through: 600, by: -100) {
+            state.handleWindowWidth(width)
+        }
+        XCTAssertEqual(state.compactSidebar, sidebarBefore, "动画期间不许翻断点")
+        XCTAssertEqual(state.compactContext, contextBefore, "动画期间不许翻断点")
+        XCTAssertEqual(state.windowWidth, 600, "宽度本身照记，只是先不结算")
+
+        // 落定：按最终宽度一次性算完。
+        state.endWindowTransition()
+        XCTAssertTrue(state.compactSidebar, "600pt 放不下侧栏，落定后应当收起")
+        XCTAssertTrue(state.compactContext)
+    }
+
+    /// `endWindowTransition` 要用动画期间记下的最后一个宽度结算，
+    /// 而不是进入动画前的那个——否则全屏后布局还按窗口态的宽度排。
+    func testTransitionSettlesOnTheFinalWidth() {
+        let (preferences, suiteName) = makePreferences()
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let state = WorkspaceState(preferences: preferences)
+
+        state.handleWindowWidth(700)
+        XCTAssertTrue(state.compactSidebar)
+
+        state.beginWindowTransition()
+        state.handleWindowWidth(1_920)
+        XCTAssertTrue(state.compactSidebar, "动画期间维持原样")
+
+        state.endWindowTransition()
+        XCTAssertFalse(state.compactSidebar, "全屏落定后该按 1920 排")
+        XCTAssertEqual(state.windowWidth, 1_920)
+    }
+
     @MainActor
     func testColumnWidthSettersClampToPinnedRanges() {
         let (preferences, suiteName) = makePreferences()

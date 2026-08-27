@@ -484,6 +484,23 @@ final class WorkspaceState {
         }
     }
 
+    /// 全屏动画进行中。系统那段窗口动画大约半秒，期间窗口宽度是连续变化的。
+    private(set) var isWindowTransitioning = false
+
+    /// 系统开始播放全屏动画。断点在这半秒里会被一路扫过，先冻住。
+    func beginWindowTransition() {
+        isWindowTransitioning = true
+    }
+
+    /// 动画落定，按最终宽度一次性把断点算完。
+    func endWindowTransition() {
+        guard isWindowTransitioning else { return }
+        isWindowTransitioning = false
+        let width = pendingWindowWidth ?? windowWidth
+        pendingWindowWidth = nil
+        handleWindowWidth(width)
+    }
+
     func handleFullScreenChange(_ isFullScreen: Bool) {
         guard isWindowFullScreen != isFullScreen else { return }
         // 显式关掉动画：这一下改的是顶栏的排布口径（内缩、偏移、控件归属），
@@ -561,6 +578,11 @@ final class WorkspaceState {
         if windowWidth != width {
             windowWidth = width
         }
+        // 全屏进出的那半秒里宽度是连续变化的，断点会被一路扫过：侧栏、上下文列、
+        // 工具列在动画中途弹进弹出，每一下还各自带着 0.22s 的补间，叠在系统那段
+        // 窗口动画上就是"跳好几下"。动画期间只记宽度，落定后由 `endWindowTransition`
+        // 按最终宽度算一次——中途那些临时状态一个都不该被看到。
+        guard !isWindowTransitioning else { return }
         let newShowsTitle = WindowChromePolicy.showsTitle(current: showsWindowTitle, width: width)
         if newShowsTitle != showsWindowTitle {
             withAnimation(AppDesign.Motion.fade) { showsWindowTitle = newShowsTitle }
