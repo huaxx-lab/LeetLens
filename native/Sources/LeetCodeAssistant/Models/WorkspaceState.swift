@@ -288,6 +288,14 @@ final class WorkspaceState {
         }
     }
 
+    /// 界面字号一改，列宽的上下界跟着变（`AppDesign.Size` 里装文字的那一档），
+    /// 但存档里的宽度还是老值——不重新夹一次，就会出现"字放大了、侧栏还是原来那么窄，
+    /// 会话标题反而截得更狠"。
+    func reclampColumnWidths() {
+        setSidebarColumnWidth(sidebarColumnWidth)
+        setInspectorColumnWidth(inspectorColumnWidth)
+    }
+
     func setSidebarColumnWidth(_ width: CGFloat) {
         let clamped = WorkspaceSplitLayoutPolicy.sidebarDividerLimit(proposed: width)
         guard clamped != sidebarColumnWidth else { return }
@@ -701,9 +709,15 @@ final class WorkspaceState {
         static let context: CGFloat = 1_180
         /// True three-column floor: sidebar min + primary min + inspector min.
         /// The old 1280 cutoff compacted the sidebar while all three still fit.
-        static let toolWithSidebar: CGFloat = AppDesign.Size.sidebarMin
-            + AppDesign.Size.primaryMinimum
-            + AppDesign.Size.inspectorMin
+        ///
+        /// 计算属性而不是 `static let`：三列的最小宽现在跟着界面字号走，
+        /// 全局 `let` 会在进程启动时把它定死，调完字号断点还停在老值上。
+        @MainActor
+        static var toolWithSidebar: CGFloat {
+            AppDesign.Size.sidebarMin
+                + AppDesign.Size.primaryMinimum
+                + AppDesign.Size.inspectorMin
+        }
         static let contextWithToolAndSidebar: CGFloat = 1_600
         static let fullWorkspace: CGFloat = 1_850
     }

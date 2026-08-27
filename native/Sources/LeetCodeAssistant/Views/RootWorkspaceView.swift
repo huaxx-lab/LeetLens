@@ -26,6 +26,15 @@ struct RootWorkspaceView: View {
         .onChange(of: dataStore.settings.alwaysOnTop) { _, value in
             applyWindowLevel(value)
         }
+        // 窗口出现之后才知道自己落在哪块屏上——`InterfaceMetrics` 初始化时只能问
+        // `NSScreen.main`，那时窗口还没摆好，接了外接屏也算不出正确的自动档。
+        .task {
+            InterfaceMetrics.shared.refreshDisplayScale()
+        }
+        // 倍率一变，列宽的上下界跟着变，存档里的宽度要重新夹一次。
+        .onChange(of: InterfaceMetrics.shared.scale) { _, _ in
+            workspace.reclampColumnWidths()
+        }
         // 提交分析队列的所有权属于 App，不属于刷题页。挂在页面上时，
         // 导航离开会取消 worker，而取消曾被记成分析失败并耗尽重试预算。
         .task {
@@ -921,7 +930,9 @@ enum ContextPanelOverlayPolicy {
     }
 }
 
-/// 对话列头标题与正文 / 输入框共用的中轴：列宽减去右侧浮层后，在 820 内容宽上居中。
+/// 对话列头标题与正文 / 输入框共用的中轴：列宽减去右侧浮层后，在内容宽上居中。
+/// `@MainActor`：内容列宽跟着界面字号走（`AppDesign.Size`）。
+@MainActor
 enum ConversationColumnLayout {
     static var contentMaximum: CGFloat { AppDesign.Size.contentColumnMaximum }
     static var minimumInset: CGFloat { AppDesign.Spacing.lg }
@@ -955,6 +966,8 @@ enum ConversationColumnLayout {
     }
 }
 
+/// `@MainActor`：判据里的正文列宽跟着界面字号走（`AppDesign.Size`）。
+@MainActor
 enum QuestionRailPresentationPolicy {
     static let minimumQuestionCount = 6
     static let tickStride: CGFloat = 15

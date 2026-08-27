@@ -17,7 +17,12 @@ struct StudyPlanWorkspaceView: View {
                 calendarPane
                     // 左列也要吃满高度，否则它按内容取理想高度，
                     // 底边就和右侧时间线差出一截（两根圆角矩形对不齐）。
-                    .frame(minWidth: 344, maxWidth: 344, maxHeight: .infinity)
+                    // 下限比列表类高：日历是固定 7 列，压太窄日期会挤成一团。
+                    .paneListColumn(
+                        storageKey: "native.paneList.studyPlanCalendar",
+                        defaultWidth: 344,
+                        minWidth: 300
+                    )
                 timelinePane
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -287,7 +292,7 @@ struct StudyPlanWorkspaceView: View {
             if selectedTasks.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "calendar.badge.plus")
-                        .font(.system(size: 19, weight: .light))
+                        .font(.appScaled(size: 19, weight: .light))
                         .foregroundStyle(.tertiary)
                     Text("当天没有安排")
                         .font(.caption)
@@ -474,7 +479,7 @@ struct StudyPlanWorkspaceView: View {
                 try? dataStore.toggleStudyTask(task.id)
             } label: {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 17))
+                    .font(.appScaled(size: 17))
                     .foregroundStyle(task.isCompleted ? AppDesign.ColorToken.success : priorityColor(task.priority))
             }
             .buttonStyle(.plain)
@@ -483,7 +488,7 @@ struct StudyPlanWorkspaceView: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 8) {
                     Text(task.title)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.appScaled(size: 14, weight: .medium))
                         .strikethrough(task.isCompleted)
                     Text(task.priority.title)
                         .font(.caption2.weight(.medium))
@@ -935,7 +940,7 @@ private struct AIStudyPlanPreviewRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     Text(task.title)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.appScaled(size: 14, weight: .medium))
                     if isReschedule {
                         Text("改期")
                             .font(.caption2.weight(.medium))

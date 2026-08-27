@@ -173,7 +173,7 @@ struct LeetCodeWorkspaceView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Text(activePlanName).lineLimit(1)
-                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                        Image(systemName: "chevron.down").font(.appScaled(size: 9, weight: .semibold))
                     }
                     .frame(maxWidth: 180, alignment: .leading)
                 }
@@ -195,7 +195,7 @@ struct LeetCodeWorkspaceView: View {
                 dataStore.reload()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.appScaled(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 26, height: 26)
                     .contentShape(Circle())
@@ -280,7 +280,7 @@ struct LeetCodeWorkspaceView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(value)\(suffix)")
-                    .font(.system(size: 19, weight: .semibold).monospacedDigit())
+                    .font(.appScaled(size: 19, weight: .semibold).monospacedDigit())
                     .foregroundStyle(color)
                 Text(title).font(.caption).foregroundStyle(.secondary)
             }
@@ -351,7 +351,7 @@ struct LeetCodeWorkspaceView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .trailing)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(question.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
+                    Text(question.title).font(.appScaled(size: 14, weight: .medium)).lineLimit(1)
                     Text(([question.groupName] + question.topicTags.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -456,7 +456,7 @@ struct LeetCodeWorkspaceView: View {
             Image(nsImage: image).resizable().scaledToFill()
                 .frame(width: 54, height: 54).clipShape(RoundedRectangle(cornerRadius: 10))
         } else {
-            Image(systemName: "person.crop.square").font(.system(size: 34)).foregroundStyle(.secondary)
+            Image(systemName: "person.crop.square").font(.appScaled(size: 34)).foregroundStyle(.secondary)
                 .frame(width: 54, height: 54)
         }
     }
@@ -543,7 +543,7 @@ struct LeetCodeWorkspaceView: View {
                 Circle().fill(submission.accepted ? Color.green : Color.orange).frame(width: 7, height: 7)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(submission.frontendID). \(submission.title)")
-                        .font(.system(size: compact ? 13.5 : 14, weight: .medium)).lineLimit(1)
+                        .font(.appScaled(size: compact ? 13.5 : 14, weight: .medium)).lineLimit(1)
                     Text([submission.status.isEmpty ? (submission.accepted ? "通过" : "未通过") : submission.status,
                           submission.language.uppercased(), submission.runtime, submission.memory,
                           submission.submittedAt.formatted(date: .abbreviated, time: .shortened)]
@@ -571,7 +571,7 @@ struct LeetCodeWorkspaceView: View {
                 .buttonStyle(.plain).help("返回题库")
             if let question = selectedQuestion {
                 Text("\(question.frontendID). \(question.title)")
-                    .font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                    .font(.appScaled(size: 14, weight: .semibold)).lineLimit(1)
                 Text(difficultyTitle(question.difficulty))
                     .font(.caption.weight(.medium)).foregroundStyle(difficultyColor(question.difficulty))
             }
@@ -598,7 +598,7 @@ struct LeetCodeWorkspaceView: View {
                 workspace.openURL(url)
             } label: {
                 Image(systemName: "globe")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.appScaled(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 26, height: 26)
                     .contentShape(Circle())
@@ -634,7 +634,7 @@ struct LeetCodeWorkspaceView: View {
                             Task { await ensureWorkspace(slug, force: true) }
                         } label: {
                             Label("重新加载", systemImage: "arrow.clockwise")
-                                .font(.system(size: 12.5, weight: .medium))
+                                .font(.appScaled(size: 12.5, weight: .medium))
                                 .foregroundStyle(Color.accentColor)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
@@ -990,7 +990,7 @@ struct LeetCodeWorkspaceView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12.5, weight: .medium))
+                .font(.appScaled(size: 12.5, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 26, height: 26)
                 .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -1016,10 +1016,10 @@ struct LeetCodeWorkspaceView: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(selectedWorkspace?.snippets.first { $0.languageSlug == selectedLanguage }?.language ?? selectedLanguage)
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.appScaled(size: 12.5, weight: .medium))
                         .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.appScaled(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 .frame(width: 108)
@@ -1069,10 +1069,10 @@ struct LeetCodeWorkspaceView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: isHinting ? "ellipsis" : "lightbulb.max")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.appScaled(size: 12, weight: .medium))
                     .symbolEffect(.pulse, isActive: isHinting)
                 Text(codeHints.isEmpty ? "AI 提示" : "提示 \(codeHints.count)/3")
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.appScaled(size: 12.5, weight: .medium))
             }
             .foregroundStyle(codeHints.isEmpty ? Color.secondary : Color.accentColor)
             .padding(.horizontal, 11)
@@ -1394,7 +1394,7 @@ struct LeetCodeWorkspaceView: View {
     ) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(.system(size: 12.5, weight: .medium))
+                .font(.appScaled(size: 12.5, weight: .medium))
                 .foregroundStyle(tint)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)

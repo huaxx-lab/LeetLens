@@ -1,6 +1,9 @@
 import XCTest
 @testable import LeetCodeAssistant
 
+// 布局尺寸现在跟着界面字号走（`AppDesign.Size` 里装文字的那一档是主线程可观察状态），
+// 所以这些断言也必须在主线程上跑。
+@MainActor
 final class WorkspaceStateTests: XCTestCase {
     func testConversationTitleUsesTheSameLeadingInsetAsTheComposer() {
         // 1200 宽：正文列 1100，两边各让 50。

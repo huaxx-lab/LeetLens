@@ -43,7 +43,11 @@ struct ReviewWorkspaceView: View {
     var body: some View {
         HSplitView {
             reviewQueue
-                .frame(minWidth: 244, idealWidth: 276, maxWidth: 312)
+                .frame(
+                    minWidth: AppDesign.Size.paneListMin,
+                    idealWidth: 276,
+                    maxWidth: AppDesign.Size.paneListMax
+                )
 
             reviewDetail
                 .frame(minWidth: 540, maxWidth: .infinity, maxHeight: .infinity)
@@ -145,7 +149,7 @@ struct ReviewWorkspaceView: View {
 
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
+                    .font(.appScaled(size: 12))
                     .foregroundStyle(.secondary)
                 TextField("搜索复习项", text: $searchText)
                     .textFieldStyle(.plain)
@@ -257,7 +261,7 @@ struct ReviewWorkspaceView: View {
                         Spacer()
                     }
                 }
-                .frame(maxWidth: 760, alignment: .leading)
+                .frame(maxWidth: AppDesign.Size.contentColumnMaximum, alignment: .leading)
                 .padding(.horizontal, 32)
                 .padding(.top, 28)
                 .padding(.bottom, 56)
@@ -336,7 +340,7 @@ struct ReviewWorkspaceView: View {
                     showLessonInGraph()
                 } label: {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.appScaled(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
                         .frame(width: 26, height: 26)
                         .contentShape(Circle())
@@ -349,7 +353,7 @@ struct ReviewWorkspaceView: View {
                     Task { await preparePackageIfNeeded(force: true) }
                 } label: {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.appScaled(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
                         .frame(width: 26, height: 26)
                         .contentShape(Circle())
@@ -444,7 +448,7 @@ struct ReviewWorkspaceView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("现在还记得吗")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appScaled(size: 13, weight: .semibold))
                 Text("评分直接决定下一次复习时间")
                     .font(AppDesign.Typography.micro)
                     .foregroundStyle(.secondary)
@@ -460,9 +464,9 @@ struct ReviewWorkspaceView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: rating.symbol)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.appScaled(size: 11, weight: .semibold))
                             Text(rating.title)
-                                .font(.system(size: 12.5, weight: .medium))
+                                .font(.appScaled(size: 12.5, weight: .medium))
                         }
                         .foregroundStyle(rating.tint)
                         .frame(maxWidth: .infinity)
@@ -516,7 +520,7 @@ struct ReviewWorkspaceView: View {
                     selectedRecord?.activeStudyPackage == nil ? "生成讲解与检测" : "重新生成",
                     systemImage: "sparkles"
                 )
-                .font(.system(size: 12.5, weight: .medium))
+                .font(.appScaled(size: 12.5, weight: .medium))
                 .foregroundStyle(Color.accentColor)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
@@ -620,7 +624,7 @@ struct ReviewWorkspaceView: View {
                         Task { await submitAttempt(record) }
                     } label: {
                         Label("提交检测", systemImage: "paperplane.fill")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.appScaled(size: 13, weight: .medium))
                             .foregroundStyle(canSubmit ? Color.accentColor : .secondary)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
@@ -962,7 +966,7 @@ struct GlassSegmentedControl: View {
                     selection = option.value
                 } label: {
                     Text(option.label)
-                        .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                        .font(.appScaled(size: 12.5, weight: isSelected ? .semibold : .regular))
                         .foregroundStyle(isSelected ? .primary : .secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 5)

@@ -63,25 +63,37 @@ struct LearningLibraryWorkspaceView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Text(category)
-                                .font(.system(size: 12.5, weight: .medium))
+                                .font(AppDesign.Typography.auxEmphasis)
                                 .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 2)
                             Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.appScaled(size: 9, weight: .semibold))
                                 .foregroundStyle(.secondary)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
+                        .padding(.horizontal, 10)
+                        .frame(height: AppDesign.Size.toolbarControl)
                         .contentShape(Capsule())
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
+                    // borderlessButton 的 Menu 不理会 label 的尺寸，不锁宽就和兄弟视图平分剩余空间。
+                    // 原来 label 上还写着 `maxWidth: .infinity`，等于主动要满宽：胶囊铺满整条侧栏、
+                    // "全部"被摆到正中间，右边跟着空一大片。锁死宽度后它才回到行首。
+                    .frame(width: 150, height: AppDesign.Size.toolbarControl)
                     .glassCapsule()
                     .help("知识分类")
+                    Spacer(minLength: 8)
                     Text("\(records.count) 项")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                .padding(10)
+                .padding(.horizontal, 10)
+                // `maxWidth: .infinity` 不能省：不写的话这行 HStack 只有内容那么宽，
+                // 再被 VStack 居中——胶囊和计数一起飘到侧栏正中，左右各空一条。
+                // （Spacer 只有在 HStack 本身被撑满时才推得动东西。）
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: AppDesign.Size.pageHeader)
 
                 Divider()
 
@@ -146,7 +158,11 @@ struct LearningLibraryWorkspaceView: View {
                     }
                 }
             }
-            .frame(minWidth: 250, idealWidth: 300, maxWidth: 360)
+            .frame(
+                minWidth: AppDesign.Size.paneListMin,
+                idealWidth: 300,
+                maxWidth: AppDesign.Size.paneListMax
+            )
             .background(AppDesign.ColorToken.canvas)
 
             if let record = selectedRecord {
@@ -208,19 +224,19 @@ private struct LearningRecordDetailView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(record.title)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.appScaled(size: 22, weight: .semibold))
                         Text(record.knowledgePath.joined(separator: "  ›  "))
-                            .font(.system(size: 12))
+                            .font(.appScaled(size: 12))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("\(Int(record.effectiveMastery()))%")
-                            .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                            .font(.appScaled(size: 20, weight: .semibold).monospacedDigit())
                         // 显示的是按遗忘曲线折算后的"现在还剩多少"；
                         // 放久了它会自己往下走，不再是一个学会之后就冻住的数字。
                         Text(masteryCaption(record))
-                            .font(.system(size: 11))
+                            .font(.appScaled(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -238,13 +254,13 @@ private struct LearningRecordDetailView: View {
 
                 detailSection("当前诊断") {
                     Text(record.diagnosis.isEmpty ? "等待更多学习证据" : record.diagnosis)
-                        .font(.system(size: 14))
+                        .font(.appScaled(size: 14))
                         .foregroundStyle(.secondary)
                         .lineSpacing(5)
                     FlowLayout(spacing: 6) {
                         ForEach(record.labels, id: \.self) { label in
                             Text(label)
-                                .font(.system(size: 12))
+                                .font(.appScaled(size: 12))
                                 .padding(.horizontal, 9)
                                 .padding(.vertical, 4)
                                 .background(.quaternary, in: Capsule())
@@ -278,10 +294,10 @@ private struct LearningRecordDetailView: View {
                             } label: {
                                 HStack(alignment: .top, spacing: 9) {
                                     Image(systemName: "arrow.up.right.square")
-                                        .font(.system(size: 13))
+                                        .font(.appScaled(size: 13))
                                         .foregroundStyle(.secondary)
                                     Text(source.excerpt)
-                                        .font(.system(size: 13))
+                                        .font(.appScaled(size: 13))
                                         .lineLimit(3)
                                         .multilineTextAlignment(.leading)
                                     Spacer(minLength: 0)
@@ -295,7 +311,9 @@ private struct LearningRecordDetailView: View {
             }
             .padding(.horizontal, 32)
             .padding(.vertical, 30)
-            .frame(maxWidth: 760, alignment: .leading)
+            // 版心统一走 token：写死 760 时窗口越宽左右空得越多，
+            // 对话页当年就是因为 820 太窄、正文左边空一大条才改到 1100 的。
+            .frame(maxWidth: AppDesign.Size.contentColumnMaximum, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .floatingScrollIndicators()
@@ -308,7 +326,7 @@ private struct LearningRecordDetailView: View {
                     workspace.selectedSection = .knowledge
                 } label: {
                     Label("在脑图中查看", systemImage: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.appScaled(size: 13, weight: .medium))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -322,7 +340,7 @@ private struct LearningRecordDetailView: View {
                     workspace.selectedSection = .review
                 } label: {
                     Label("开始练习", systemImage: "play.fill")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.appScaled(size: 13, weight: .medium))
                         .foregroundStyle(Color.accentColor)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -340,7 +358,7 @@ private struct LearningRecordDetailView: View {
     private func detailSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.appScaled(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
             content()
         }
@@ -389,7 +407,7 @@ private struct LearningRecordDetailView: View {
                     .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: AppDesign.Radius.card, style: .continuous))
                 } else if problemLoadFailed {
                     Text(record.question.isEmpty ? record.title : record.question)
-                        .font(.system(size: 14))
+                        .font(.appScaled(size: 14))
                         .lineSpacing(5)
                         .textSelection(.enabled)
                     Text("题面未能加载，可能是未登录力扣或网络不可用")
@@ -416,7 +434,7 @@ private struct LearningRecordDetailView: View {
             }
         } else {
             Text(record.question.isEmpty ? record.title : record.question)
-                .font(.system(size: 14))
+                .font(.appScaled(size: 14))
                 .lineSpacing(5)
                 .textSelection(.enabled)
         }
@@ -577,7 +595,7 @@ private struct LearningRecordDetailView: View {
             detailSection("AI 解题分析") {
                 if !analysis.summary.isEmpty, !duplicatesDiagnosis {
                     Text(analysis.summary)
-                        .font(.system(size: 14))
+                        .font(.appScaled(size: 14))
                         .lineSpacing(6)
                         .textSelection(.enabled)
                 }
@@ -707,6 +725,9 @@ private struct LearningRecordDetailView: View {
 struct LearningInsightsWorkspaceView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
+    /// 版心的实际可用宽度。断点按它算而不是按窗口：这一页左边还有全局侧栏，
+    /// 侧栏收起来时同一个窗口能多出 256pt，卡片该多排一列。
+    @State private var contentWidth: CGFloat = 0
 
     private var records: [LearningRecord] { dataStore.learningRecords }
     private var focus: [LearningRecord] { LearningInsights.focus(records: dataStore.activeLearningRecords) }
@@ -730,23 +751,36 @@ struct LearningInsightsWorkspaceView: View {
 
                     // 两列等高：不给 maxHeight 的话短的那张卡会缩成一半，
                     // 和右边的长卡片底边对不齐。
-                    HStack(alignment: .top, spacing: AppDesign.Spacing.rowInset) {
-                        focusCard
-                        topicCard
+                    // 窄到并排放不下时改成上下排——并排时每张不足 360pt，
+                    // 主题名和条形图都要折行，读起来比堆两行还费劲。
+                    if contentWidth >= Self.twoColumnBreakpoint {
+                        HStack(alignment: .top, spacing: AppDesign.Spacing.rowInset) {
+                            focusCard
+                            topicCard
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        VStack(spacing: AppDesign.Spacing.rowInset) {
+                            focusCard
+                            topicCard
+                        }
                     }
-                    .fixedSize(horizontal: false, vertical: true)
 
                     forecastCard
                 }
             }
             .padding(.horizontal, AppDesign.Spacing.lg)
             .padding(.vertical, AppDesign.Spacing.lg)
-            .frame(maxWidth: 1_120, alignment: .leading)
+            .frame(maxWidth: AppDesign.Size.dashboardColumnMaximum, alignment: .leading)
             .frame(maxWidth: .infinity)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
         }
         .floatingScrollIndicators()
         .background(AppDesign.ColorToken.canvas)
     }
+
+    /// 两张主卡并排的下限。低于它就叠成一列。
+    private static let twoColumnBreakpoint: CGFloat = 900
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -761,8 +795,16 @@ struct LearningInsightsWorkspaceView: View {
 
     // MARK: - 概览
 
+    /// 指标卡的列数。**不用 `GridItem(.adaptive(minimum:))`**：adaptive 是按
+    /// "最小宽度能塞下几列"算列数的，1600pt 宽会算出 8 列，4 张卡只填前 4 格、
+    /// 每张卡还是 200pt，右边空一半。列数自己按断点定，卡片才会撑满。
+    private var metricColumns: [GridItem] {
+        let count = contentWidth >= 820 ? 4 : (contentWidth >= 460 ? 2 : 1)
+        return Array(repeating: GridItem(.flexible(), spacing: AppDesign.Spacing.sm), count: count)
+    }
+
     private var metricStrip: some View {
-        HStack(alignment: .top, spacing: AppDesign.Spacing.sm) {
+        LazyVGrid(columns: metricColumns, alignment: .leading, spacing: AppDesign.Spacing.sm) {
             metric("学习项", value: records.count, detail: "累计沉淀", icon: "books.vertical", tint: .accentColor)
             metric(
                 "已到期",
@@ -786,7 +828,6 @@ struct LearningInsightsWorkspaceView: View {
                 tint: .green
             )
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func metric(_ title: String, value: Int, detail: String, icon: String, tint: Color) -> some View {
@@ -1028,7 +1069,10 @@ struct LearningTemplatesWorkspaceView: View {
         // 不用 HSplitView：它给每个 pane 画不透明底，圆角卡外面会套出直角矩形。
         HStack(alignment: .top, spacing: AppDesign.Spacing.sm) {
             templateSidebar
-                .frame(minWidth: 268, maxWidth: 268, maxHeight: .infinity)
+                .paneListColumn(
+                    storageKey: "native.paneList.templates",
+                    defaultWidth: 268
+                )
 
             if let template = selectedTemplate {
                 templateDetail(template)
@@ -1143,7 +1187,7 @@ struct LearningTemplatesWorkspaceView: View {
                     ForEach(Array(template.applicableWhen.enumerated()), id: \.offset) { _, value in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.appScaled(size: 10, weight: .bold))
                                 .foregroundStyle(Color.accentColor)
                                 .frame(width: 12)
                             Text(value)
@@ -1280,7 +1324,7 @@ private struct LearningSidebarSearchField: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
+                .font(.appScaled(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
             TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
