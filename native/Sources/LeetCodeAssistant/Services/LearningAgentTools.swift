@@ -256,11 +256,15 @@ enum LearningAgentTools {
         return DailyBrief(
             dayKey: dayKey,
             title: "今日学习简报 · \(month)月\(day)日",
-            messageID: "m_daily_brief_\(dayKey)",
+            messageID: dailyBriefMessagePrefix + dayKey,
             content: "## 今日学习简报\n\n" + paragraphs.joined(separator: "\n\n"),
             runs: [planRun, weakRun]
         )
     }
+
+    /// 每日简报那条消息的 id 前缀。侧栏靠它把简报会话认出来——
+    /// 不能靠标题前缀，标题会被 AI 改写，一改就认不出来了。
+    static let dailyBriefMessagePrefix = "m_daily_brief_"
 
     // MARK: - 执行
 

@@ -67,6 +67,12 @@ struct ConversationSummary: Identifiable, Hashable, Sendable {
     var lastChatUsage = ConversationUsage()
     var isPinned = false
 
+    /// 是不是每日学习简报。按简报那条消息的 id 前缀判定，不看标题——
+    /// 标题会被 AI 改写，改完就认不出来了。
+    var isDailyBrief: Bool {
+        messages.contains { $0.id.hasPrefix(LearningAgentTools.dailyBriefMessagePrefix) }
+    }
+
     var revision: ConversationRevision {
         ConversationRevision(
             updatedAtMilliseconds: Int64((updatedAt.timeIntervalSince1970 * 1_000).rounded()),
