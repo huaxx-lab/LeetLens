@@ -5,6 +5,7 @@ struct GlobalSidebarView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
     @Environment(\.colorScheme) private var colorScheme
+    // 简报**不在**默认展开集合里：它一天长一条，展开着会把真正的会话挤到看不见。
     @State private var expandedGroups: Set<SidebarGroup> = [.learning, .conversations, .plans]
     @State private var pendingConversationDeletion: ConversationSummary?
     /// 账户行那个 `Menu` 必须拿到显式宽度，见 `accountMenu` 的注释。
@@ -36,8 +37,23 @@ struct GlobalSidebarView: View {
 
                     groupHeader(.conversations, title: "最近会话", systemImage: "clock")
                     if expandedGroups.contains(.conversations) {
-                        ForEach(dataStore.conversations) { conversation in
+                        ForEach(chatConversations) { conversation in
                             conversationRow(conversation)
+                        }
+                    }
+
+                    if !dailyBriefs.isEmpty {
+                        groupHeader(
+                            .briefings,
+                            title: "学习简报",
+                            systemImage: "sun.max",
+                            badge: "\(dailyBriefs.count)"
+                        )
+                        if expandedGroups.contains(.briefings) {
+                            ForEach(dailyBriefs) { conversation in
+                                // 组名已经写着「学习简报」，行里只留日期，不再重复一遍标题。
+                                conversationRow(conversation, label: briefDateLabel(conversation))
+                            }
                         }
                     }
 
@@ -164,7 +180,8 @@ struct GlobalSidebarView: View {
     private func groupHeader(
         _ group: SidebarGroup,
         title: String,
-        systemImage: String
+        systemImage: String,
+        badge: String? = nil
     ) -> some View {
         Button {
             withAnimation(.easeOut(duration: 0.14)) {
@@ -180,6 +197,12 @@ struct GlobalSidebarView: View {
                 Text(title)
                     .font(AppDesign.Typography.bodyEmphasis)
                 Spacer(minLength: 4)
+                // 收起时也看得见有多少条，省得为了数一眼再展开。
+                if let badge {
+                    Text(badge)
+                        .font(AppDesign.Typography.micro.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, minHeight: AppDesign.Size.compactRow, alignment: .leading)
             .padding(.horizontal, AppDesign.Spacing.xs)
@@ -190,14 +213,32 @@ struct GlobalSidebarView: View {
         .padding(.top, 5)
     }
 
-    private func conversationRow(_ conversation: ConversationSummary) -> some View {
+    /// 简报和普通会话分开列：简报一天一条，混在「最近会话」里会把真正聊过的内容顶下去。
+    private var dailyBriefs: [ConversationSummary] {
+        dataStore.conversations.filter(\.isDailyBrief)
+    }
+
+    private var chatConversations: [ConversationSummary] {
+        dataStore.conversations.filter { !$0.isDailyBrief }
+    }
+
+    /// 「今日学习简报 · 9月7日」→「9月7日」。分隔符找不到就原样返回（标题被改写过）。
+    private func briefDateLabel(_ conversation: ConversationSummary) -> String {
+        guard let range = conversation.title.range(of: " · ") else { return conversation.title }
+        return String(conversation.title[range.upperBound...])
+    }
+
+    private func conversationRow(
+        _ conversation: ConversationSummary,
+        label: String? = nil
+    ) -> some View {
         Button {
             withAnimation(AppDesign.Motion.selection) {
                 workspace.selectedConversationID = conversation.id
                 workspace.selectedSection = .conversation
             }
         } label: {
-            FadingSidebarText(conversation.title)
+            FadingSidebarText(label ?? conversation.title)
                 .font(AppDesign.Typography.body)
                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                 .padding(.leading, Self.indentedInset)
@@ -458,6 +499,7 @@ private final class RemoteAvatarCache {
 private enum SidebarGroup: Hashable {
     case learning
     case conversations
+    case briefings
     case plans
 }
 
