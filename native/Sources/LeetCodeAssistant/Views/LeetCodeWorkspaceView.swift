@@ -619,7 +619,13 @@ struct LeetCodeWorkspaceView: View {
     }
 
     private var questionWorkspace: some View {
-        HSplitView {
+        // 不用 HSplitView：它是 NSSplitView，三列开合时列宽在补间，
+        // 它会逐帧重新分配窗格、里面的 WKWebView 每帧重排，画面上窗格互相错位。
+        ProportionalSplit(
+            storageKey: "native.leetcode.problemFraction",
+            minLeading: 360,
+            minTrailing: 380
+        ) {
             Group {
                 if let workspace = selectedWorkspace, !workspace.htmlContent.isEmpty {
                     LeetCodeProblemWebView(html: workspace.htmlContent)
@@ -652,8 +658,7 @@ struct LeetCodeWorkspaceView: View {
                     )
                 }
             }
-            .frame(minWidth: 360, idealWidth: 560)
-            // 两条都是**浮层**，不参与 HSplitView 的布局——力扣官网那条也是浮在题面窗格底部的胶囊。
+            // 两条都是**浮层**，不参与分栏布局——力扣官网那条也是浮在题面窗格底部的胶囊。
             // 之前以为要把这一栏拆成上下结构才能加，是我想复杂了：题面照旧铺满，浮层压在它上面。
             .overlay(alignment: .bottom) { problemActionOverlay }
             .task(id: selectedQuestionSlug) { await loadQuestionMeta() }
@@ -669,10 +674,10 @@ struct LeetCodeWorkspaceView: View {
                 }
             }
 
+        } trailing: {
             Group {
                 if isSolving { editorPane } else { submissionDetailPane }
             }
-            .frame(minWidth: 380, idealWidth: 560)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

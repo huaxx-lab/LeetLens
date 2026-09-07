@@ -3,14 +3,23 @@ import SwiftUI
 
 /// SwiftUI three-column shell. Not `NavigationSplitView`, not `NSSplitView`.
 ///
-/// 每一列都是「外层裁剪框 + 内层固定宽度内容」两层：
-/// **外层**的宽度参与动画（展开/收起时补间），**内层**一步到位落到目标宽度。
-/// 这是当初把动画整个关掉的那个坑的正解——中间列和第三列里装的是 WKWebView，
-/// 让它跟着补间宽度走等于每帧重排一次网页，滚动位置乱跳、播放中的视频还会卡住；
-/// 现在网页只在动画开始时排一次，动画本身只是把它裁出来/裁回去。
+/// 每一列都是「外层裁剪框 + 内层内容」两层，**动画期间两层同宽**。
 ///
-/// 收起的列不卸载、也不把内容宽度压成 0（那等于再重排两次），
-/// 而是保持最后一个正宽度，外层裁到 0——第三列放大再还原时，会话页面原样还在。
+/// 曾经的做法是内层一步到位、只让外层补间，为的是别让 WKWebView 逐帧重排。
+/// 代价是看着不像一个整体：点收起，中间列瞬间就是最终宽度了，侧栏才慢慢滑走，
+/// 像侧栏盖在中间列上面。所以改回锁步——中间列展开与侧栏收起同时发生。
+///
+/// 逐帧重排的老问题用另外两招压住：动画从 0.22s 收到 0.18s；
+/// 收起到很窄时内容宽度不再继续跟到 0，而是停在 `collapsedContentFloor`，
+/// 避免把 0 宽度交给 WKWebView（那一下会把滚动位置和播放中的视频弄丢）。
+///
+/// 动画结束后，收起的列把内容宽度还原到最后一个正宽度并停在那儿（外层仍裁到 0），
+/// 这样第三列放大再还原时，会话页面原样还在。
+/// 收起过程中内容宽度的下限。再窄就不跟了——0 宽度的 WKWebView 重排会丢滚动位置，
+/// 而这一段本来也几乎看不见（外层已经裁到比它还窄）。
+/// 放在类型外：泛型类型里不能有 static 存储属性。
+private let workspaceCollapsedContentFloor: CGFloat = 200
+
 struct WorkspaceColumnShell<Sidebar: View, Detail: View, Inspector: View>: View {
     var sidebarVisible: Bool
     var inspectorVisible: Bool
@@ -24,6 +33,10 @@ struct WorkspaceColumnShell<Sidebar: View, Detail: View, Inspector: View>: View 
     @ViewBuilder var inspector: () -> Inspector
 
     @State private var restingWidths = WorkspaceColumnWidths(sidebar: 0, detail: 0, inspector: 0)
+    /// 开合动画是否正在进行。只有这段时间内容宽度才跟着裁剪框走。
+    @State private var isAnimatingColumns = false
+    @State private var settleTask: Task<Void, Never>?
+
 
     var body: some View {
         GeometryReader { proxy in
@@ -35,7 +48,7 @@ struct WorkspaceColumnShell<Sidebar: View, Detail: View, Inspector: View>: View 
                 inspectorExpanded: inspectorExpanded,
                 inspectorWidth: inspectorWidth
             )
-            let content = widths.contentWidths(fallingBackTo: restingWidths)
+            let content = contentWidths(for: widths)
 
             HStack(spacing: 0) {
                 column(visible: widths.sidebar, content: content.sidebar, reveal: .trailing) {
@@ -109,9 +122,37 @@ struct WorkspaceColumnShell<Sidebar: View, Detail: View, Inspector: View>: View 
             // 挂上动画就会跟不上指针——那时要的是一比一跟手。
             .animation(AppDesign.Motion.panelTransition, value: transitions)
             .onChange(of: widths) { _, new in restingWidths = new.restingWidths(previous: restingWidths) }
+            .onChange(of: transitions) { _, _ in beginColumnAnimation() }
             .onAppear { restingWidths = widths.restingWidths(previous: restingWidths) }
+            .onDisappear { settleTask?.cancel() }
         }
         .background(AppDesign.ColorToken.canvas)
+    }
+
+    /// 动画期间内容跟着裁剪框走（锁步）；静止时收起的列回落到最后一个正宽度。
+    private func contentWidths(for widths: WorkspaceColumnWidths) -> WorkspaceColumnWidths {
+        guard isAnimatingColumns else { return widths.contentWidths(fallingBackTo: restingWidths) }
+        let floor = workspaceCollapsedContentFloor
+        return WorkspaceColumnWidths(
+            sidebar: max(widths.sidebar, min(floor, restingWidths.sidebar)),
+            detail: max(widths.detail, min(floor, restingWidths.detail)),
+            inspector: max(widths.inspector, min(floor, restingWidths.inspector))
+        )
+    }
+
+    /// 开合开始时进入锁步，一个动画时长之后退出。
+    /// 退出这一下会把收起的列的内容宽度从 floor 还原到 resting——必须不带动画，
+    /// 否则动画刚停又起一段。
+    private func beginColumnAnimation() {
+        isAnimatingColumns = true
+        settleTask?.cancel()
+        settleTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(AppDesign.Motion.panelTransitionDuration))
+            guard !Task.isCancelled else { return }
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { isAnimatingColumns = false }
+        }
     }
 
     private var transitions: WorkspaceColumnTransitions {
@@ -134,7 +175,6 @@ struct WorkspaceColumnShell<Sidebar: View, Detail: View, Inspector: View>: View 
         body()
             .frame(width: content)
             .frame(maxHeight: .infinity)
-            .animation(nil, value: content)
             .frame(width: visible, alignment: reveal)
             .clipped()
             // `.clipped()` 只裁画面不裁命中：不加这一句，收起的列还会在原地吃掉点击。
