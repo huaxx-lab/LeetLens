@@ -93,17 +93,24 @@ touch ${DIST_DIR}/.metadata_never_index
 APP_PATH=${DIST_DIR}/${APP_NAME}.app
 ditto --norsrc --noextattr ${STAGE_APP} ${APP_PATH}
 xattr -cr ${APP_PATH}
-codesign --verify --deep --strict ${APP_PATH}
+# **不对 dist 里这份做 --strict 校验。**
+# dist/ 可能落在 iCloud 同步目录里（项目放在「桌面」或「文稿」下就是），
+# 系统会给拷过去的可执行文件打上 com.apple.provenance 扩展属性，
+# `xattr -cr` 清不掉、签完立刻又被加回来，--strict 于是以
+# "resource fork, Finder information, or similar detritus not allowed" 失败，
+# 脚本死在这儿，zip 和 dmg 都不会生成。
+# 签名的权威副本是临时目录里的 STAGE_APP，它上面已经校验过了；
+# 下面的 zip 与 dmg 也一律从 STAGE_APP 打包，dist 里这份只是给人双击用的。
 
 ZIP_PATH=${DIST_DIR}/LeetLens-mac-arm64.zip
-ditto -c -k --sequesterRsrc --keepParent ${APP_PATH} ${ZIP_PATH}
+ditto -c -k --sequesterRsrc --keepParent ${STAGE_APP} ${ZIP_PATH}
 
 # DMG：拖进「应用程序」即可安装。
 DMG_STAGE=${STAGE_ROOT}/dmg
 DMG_PATH=${DIST_DIR}/LeetLens-mac-arm64.dmg
 rm -rf ${DMG_STAGE}
 mkdir -p ${DMG_STAGE}
-ditto --norsrc --noextattr ${APP_PATH} ${DMG_STAGE}/${APP_NAME}.app
+ditto --norsrc --noextattr ${STAGE_APP} ${DMG_STAGE}/${APP_NAME}.app
 ln -s /Applications ${DMG_STAGE}/Applications
 hdiutil create -volname ${APP_NAME} -srcfolder ${DMG_STAGE} -ov -format UDZO ${DMG_PATH} >/dev/null
 
