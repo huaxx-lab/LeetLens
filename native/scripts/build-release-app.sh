@@ -86,6 +86,10 @@ codesign --verify --deep --strict ${STAGE_APP}
 
 rm -rf ${DIST_DIR}
 mkdir -p ${DIST_DIR}
+# 让 Spotlight 别索引构建产物。dist/ 里的 .app 和 /Applications 里装的那份同名、
+# 同 bundle id，被索引之后 Launchpad 与聚焦里就会并排出现两个 LeetLens，
+# 看着像装了两遍——其实一个是安装，一个只是构建输出。
+touch ${DIST_DIR}/.metadata_never_index
 APP_PATH=${DIST_DIR}/${APP_NAME}.app
 ditto --norsrc --noextattr ${STAGE_APP} ${APP_PATH}
 xattr -cr ${APP_PATH}
