@@ -751,18 +751,17 @@ struct LearningInsightsWorkspaceView: View {
                     // 和右边的长卡片底边对不齐。
                     // 窄到并排放不下时改成上下排——并排时每张不足 360pt，
                     // 主题名和条形图都要折行，读起来比堆两行还费劲。
-                    if contentWidth >= Self.twoColumnBreakpoint {
-                        HStack(alignment: .top, spacing: AppDesign.Spacing.rowInset) {
-                            focusCard
-                            topicCard
-                        }
-                        .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        VStack(spacing: AppDesign.Spacing.rowInset) {
-                            focusCard
-                            topicCard
-                        }
+                    //
+                    // **用 `AnyLayout` 换布局，不用 `if` 分支换容器。**
+                    // 写成 `if 宽 { HStack } else { VStack }` 的话，两个分支是不同类型、
+                    // 视图标识不同：断点一翻，两张卡连同所有子视图整个销毁重建。
+                    // 侧栏开合时列宽逐帧变化，这一下会在动画中途触发——就是这一页
+                    // 收放特别卡的原因。`AnyLayout` 只换排列方式，标识不变，卡片原地重排。
+                    twoCardLayout(alignment: .top, spacing: AppDesign.Spacing.rowInset) {
+                        focusCard
+                        topicCard
                     }
+                    .fixedSize(horizontal: false, vertical: true)
 
                     forecastCard
                 }
@@ -771,7 +770,11 @@ struct LearningInsightsWorkspaceView: View {
             .padding(.vertical, AppDesign.Spacing.lg)
             .frame(maxWidth: AppDesign.Size.dashboardColumnMaximum, alignment: .leading)
             .frame(maxWidth: .infinity)
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
+            // 量化到 40pt 一档再写回 `@State`：不量化的话侧栏开合的每一帧都会写一次，
+            // 整页跟着重建一次。断点判定本来也只需要"落在哪一档"这个精度。
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                (proxy.size.width / 40).rounded(.down) * 40
+            } action: { contentWidth = $0 }
         }
         .floatingScrollIndicators()
         .background(AppDesign.ColorToken.canvas)
@@ -779,6 +782,18 @@ struct LearningInsightsWorkspaceView: View {
 
     /// 两张主卡并排的下限。低于它就叠成一列。
     private static let twoColumnBreakpoint: CGFloat = 900
+
+    /// 并排还是上下排。换的是 `Layout` 不是容器类型，所以卡片的视图标识不变。
+    private func twoCardLayout<Content: View>(
+        alignment: VerticalAlignment,
+        spacing: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let layout = contentWidth >= Self.twoColumnBreakpoint
+            ? AnyLayout(HStackLayout(alignment: alignment, spacing: spacing))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: spacing))
+        return layout { content() }
+    }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {

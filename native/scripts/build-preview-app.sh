@@ -17,6 +17,9 @@ if [[ -z ${XCODE_PATH:-} ]]; then
 fi
 DEVELOPER_DIR=${XCODE_PATH}/Contents/Developer
 APP_PATH=${NATIVE_DIR}/.build/LeetLens\ Preview.app
+# 让 Spotlight 别索引这份构建产物。它和 /Applications 里装的那份只差一个显示名，
+# 被索引之后 Launchpad 与聚焦里会并排冒出好几个 LeetLens，看着像装了好多版本。
+touch ${NATIVE_DIR}/.build/.metadata_never_index
 STAGE_ROOT=${TMPDIR:-/tmp}/leetcode-ai-helper-preview-stage
 STAGE_APP=${STAGE_ROOT}/LeetLens\ Preview.app
 CONTENTS_PATH=${STAGE_APP}/Contents
