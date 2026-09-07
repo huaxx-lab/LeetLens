@@ -41,16 +41,13 @@ struct ReviewWorkspaceView: View {
     }
 
     var body: some View {
-        HSplitView {
+        // 不用 HSplitView：它是 NSSplitView，三列开合时列宽在补间，它会逐帧重排窗格。
+        HStack(spacing: 0) {
             reviewQueue
-                .frame(
-                    minWidth: AppDesign.Size.paneListMin,
-                    idealWidth: 276,
-                    maxWidth: AppDesign.Size.paneListMax
-                )
+                .paneListColumn(storageKey: "native.paneList.reviewQueue", defaultWidth: 276)
 
             reviewDetail
-                .frame(minWidth: 540, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear {
             adoptExternalSelection()

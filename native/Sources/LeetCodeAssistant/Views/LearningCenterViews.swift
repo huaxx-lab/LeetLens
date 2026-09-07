@@ -49,7 +49,8 @@ struct LearningLibraryWorkspaceView: View {
     }
 
     var body: some View {
-        HSplitView {
+        // 不用 HSplitView：它是 NSSplitView，三列开合时列宽在补间，它会逐帧重排窗格。
+        HStack(spacing: 0) {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     Menu {
@@ -158,11 +159,7 @@ struct LearningLibraryWorkspaceView: View {
                     }
                 }
             }
-            .frame(
-                minWidth: AppDesign.Size.paneListMin,
-                idealWidth: 300,
-                maxWidth: AppDesign.Size.paneListMax
-            )
+            .paneListColumn(storageKey: "native.paneList.library", defaultWidth: 300)
             .background(AppDesign.ColorToken.canvas)
 
             if let record = selectedRecord {
@@ -170,6 +167,7 @@ struct LearningLibraryWorkspaceView: View {
                     .frame(minWidth: 500, maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView("没有符合条件的学习项", systemImage: "books.vertical")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onAppear {

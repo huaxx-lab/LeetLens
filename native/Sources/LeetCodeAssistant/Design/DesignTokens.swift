@@ -137,7 +137,10 @@ enum AppDesign {
     enum Motion {
         static let panel = Animation.spring(response: 0.38, dampingFraction: 0.88, blendDuration: 0.08)
         /// 分栏显隐使用无回弹的短过渡，既不僵硬，也不会让重型内容来回越界重排。
-        static let panelTransition = Animation.easeInOut(duration: 0.22)
+        /// 三列开合的时长。内容宽度现在跟着裁剪框一起补间（"一个平面"），
+        /// 这一段里网页要逐帧重排，帧数越少越稳，所以从 0.22 收到 0.18。
+        static let panelTransitionDuration: Double = 0.18
+        static let panelTransition = Animation.easeInOut(duration: panelTransitionDuration)
         static let selection = Animation.snappy(duration: 0.22, extraBounce: 0.03)
         static let subtle = Animation.easeOut(duration: 0.16)
         static let fade = Animation.easeInOut(duration: 0.18)
