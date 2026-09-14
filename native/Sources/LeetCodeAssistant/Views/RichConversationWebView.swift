@@ -111,11 +111,11 @@ struct RichConversationWebView: NSViewRepresentable {
 
         func loadTemplate() {
             guard let webView else { return }
-            let templateURL = Bundle.module.url(
+            let templateURL = Bundle.appResources.url(
                 forResource: "conversation",
                 withExtension: "html",
                 subdirectory: "RichContent"
-            ) ?? Bundle.module.url(forResource: "conversation", withExtension: "html")
+            ) ?? Bundle.appResources.url(forResource: "conversation", withExtension: "html")
             guard let templateURL else { return }
             webView.loadFileURL(
                 templateURL,

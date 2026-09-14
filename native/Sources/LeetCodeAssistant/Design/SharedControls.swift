@@ -43,8 +43,8 @@ struct ProviderMark: View {
         guard let assetName else { return nil }
         let extensions = ["png", "svg"]
         for fileExtension in extensions {
-            let url = Bundle.module.url(forResource: assetName, withExtension: fileExtension)
-                ?? Bundle.module.url(
+            let url = Bundle.appResources.url(forResource: assetName, withExtension: fileExtension)
+                ?? Bundle.appResources.url(
                     forResource: assetName,
                     withExtension: fileExtension,
                     subdirectory: "Providers"

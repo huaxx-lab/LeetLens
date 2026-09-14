@@ -241,8 +241,8 @@ struct LeetCodeSolutionWebView: NSViewRepresentable {
         webView.uiDelegate = context.coordinator.popups
         webView.setValue(false, forKey: "drawsBackground")
         context.coordinator.pending = article
-        if let url = Bundle.module.url(forResource: "solution", withExtension: "html", subdirectory: "RichContent")
-            ?? Bundle.module.url(forResource: "solution", withExtension: "html") {
+        if let url = Bundle.appResources.url(forResource: "solution", withExtension: "html", subdirectory: "RichContent")
+            ?? Bundle.appResources.url(forResource: "solution", withExtension: "html") {
             webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }
         return webView

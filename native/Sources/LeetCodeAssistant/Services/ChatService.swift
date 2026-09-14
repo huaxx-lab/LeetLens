@@ -905,11 +905,11 @@ final class ChatService: @unchecked Sendable {
         guard let electronURL = Self.locateElectronExecutable(
             dataDirectory: settingsURL.deletingLastPathComponent()
         ),
-              let helperURL = Bundle.module.url(
+              let helperURL = Bundle.appResources.url(
                 forResource: "decrypt-provider-key",
                 withExtension: "cjs",
                 subdirectory: "ChatBridge"
-              ) ?? Bundle.module.url(forResource: "decrypt-provider-key", withExtension: "cjs")
+              ) ?? Bundle.appResources.url(forResource: "decrypt-provider-key", withExtension: "cjs")
         else {
             throw ChatServiceError.encryptedKeyUnavailable(
                 "API Key 已由原版应用加密，但未找到本地安全解密桥。请在模型供应商设置中重新保存 API Key。"

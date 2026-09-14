@@ -121,11 +121,11 @@ actor LearningEngineBridge {
 
     private func run(_ input: [String: Any]) async throws {
         guard let electronURL = ChatService.locateElectronExecutable(),
-              let helperURL = Bundle.module.url(
+              let helperURL = Bundle.appResources.url(
                 forResource: "learning-engine-bridge",
                 withExtension: "cjs",
                 subdirectory: "LearningBridge"
-              ) ?? Bundle.module.url(forResource: "learning-engine-bridge", withExtension: "cjs")
+              ) ?? Bundle.appResources.url(forResource: "learning-engine-bridge", withExtension: "cjs")
         else { throw LearningEngineBridgeError.unavailable }
 
         let inputData = try JSONSerialization.data(withJSONObject: input)

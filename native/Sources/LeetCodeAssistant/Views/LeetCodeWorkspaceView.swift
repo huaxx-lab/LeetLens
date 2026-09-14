@@ -1855,11 +1855,11 @@ struct LeetCodeProblemWebView: NSViewRepresentable {
     }
 
     private static let sharedCodeBlockCSS: String = {
-        let url = Bundle.module.url(
+        let url = Bundle.appResources.url(
             forResource: "code-block",
             withExtension: "css",
             subdirectory: "RichContent"
-        ) ?? Bundle.module.url(forResource: "code-block", withExtension: "css")
+        ) ?? Bundle.appResources.url(forResource: "code-block", withExtension: "css")
         guard let url, let css = try? String(contentsOf: url, encoding: .utf8) else { return "" }
         // A CSS file cannot normally contain a closing style tag. Escaping it keeps this
         // embedding safe even if the shared resource is edited with generated content later.
