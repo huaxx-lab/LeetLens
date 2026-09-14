@@ -161,12 +161,16 @@ struct KnowledgeGraphWebView: NSViewRepresentable {
 
             // 只有内容真的变了才重推。否则每次 SwiftUI 重绘都会重建整张图，
             // 视口和选中状态跟着抖。讲解和笔记也算内容——它们决定卡片多高。
-            let signature = "\(parent.reloadToken)|"
-                + parent.elements.nodes
-                    .map { "\($0.id)#\($0.title)#\($0.detail)#\($0.lesson.count)" }
-                    .joined(separator: ",")
-                + "|" + parent.elements.edges.map { "\($0.id)#\($0.directed)" }.joined(separator: ",")
-                + "|" + parent.noteCards.map { "\($0.id)#\($0.text.hashValue)" }.joined(separator: ",")
+            let nodesSig = parent.elements.nodes
+                .map { "\($0.id)#\($0.title)#\($0.detail)#\($0.lesson.count)" }
+                .joined(separator: ",")
+            let edgesSig = parent.elements.edges
+                .map { "\($0.id)#\($0.directed)" }
+                .joined(separator: ",")
+            let notesSig = parent.noteCards
+                .map { "\($0.id)#\($0.text.hashValue)" }
+                .joined(separator: ",")
+            let signature = "\(parent.reloadToken)|\(nodesSig)|\(edgesSig)|\(notesSig)"
             if signature != lastSignature || parent.reloadToken != lastReloadToken {
                 lastSignature = signature
                 lastReloadToken = parent.reloadToken

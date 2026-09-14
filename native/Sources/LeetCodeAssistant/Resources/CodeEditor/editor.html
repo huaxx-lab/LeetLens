@@ -214,6 +214,26 @@
       extraKeys: {
         'Tab': cm => cm.somethingSelected() ? cm.indentSelection('add') : cm.replaceSelection(' '.repeat(cm.getOption('indentUnit')), 'end', '+input'),
         'Shift-Tab': cm => cm.indentSelection('subtract'),
+        'Cmd-[': cm => cm.indentSelection('subtract'),
+        'Cmd-]': cm => cm.indentSelection('add'),
+        'Backspace': cm => {
+          if (cm.somethingSelected()) {
+            cm.replaceSelection('', 'end', '+delete');
+            return;
+          }
+          const cursor = cm.getCursor();
+          const line = cm.getLine(cursor.line);
+          const before = line.slice(0, cursor.ch);
+          if (cursor.ch > 0 && /^\s+$/.test(before)) {
+            const indentUnit = cm.getOption('indentUnit') || 4;
+            const remainder = cursor.ch % indentUnit;
+            const toDelete = remainder === 0 ? indentUnit : remainder;
+            const from = { line: cursor.line, ch: cursor.ch - toDelete };
+            cm.replaceRange('', from, cursor, '+delete');
+          } else {
+            cm.execCommand('delCharBefore');
+          }
+        },
         'Cmd-Space': complete,
         'Ctrl-Space': complete
       }
