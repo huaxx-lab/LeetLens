@@ -68,6 +68,7 @@ struct LeetCodeJudgeResult: Sendable, Equatable {
     let expectedOutput: String
     let compareResult: String
     let aiJudgeMessage: String
+    var stdOutput: String = ""
 }
 
 struct LeetCodeRemoteSubmission: Sendable, Equatable {
@@ -482,7 +483,7 @@ final class LeetCodeAPIClient {
             let status = Self.string(raw["status_msg"] ?? raw["statusMessage"] ?? raw["status_display"])
             let elapsed = Date.now.timeIntervalSince(start)
             if ["SUCCESS", "FAILURE", "REVOKED"].contains(state) {
-                let result = normalizeJudgeResult(raw, taskID: taskID, kind: kind)
+                let result = Self.normalizeJudgeResult(raw, taskID: taskID, kind: kind)
                 progress(.init(phase: .finished, status: result.status, elapsed: elapsed, attempt: attempt + 1))
                 return result
             }
@@ -505,11 +506,29 @@ final class LeetCodeAPIClient {
         return value
     }
 
-    private func normalizeJudgeResult(_ raw: [String: Any], taskID: String, kind: String) -> LeetCodeJudgeResult {
-        let state = Self.string(raw["state"]).uppercased()
-        let status = Self.string(raw["status_msg"] ?? raw["statusMessage"] ?? raw["status_display"])
-        let statusCode = Int(Self.double(raw["status_code"]))
+    nonisolated static func normalizeJudgeResult(_ raw: [String: Any], taskID: String, kind: String) -> LeetCodeJudgeResult {
+        let state = string(raw["state"]).uppercased()
+        let status = string(raw["status_msg"] ?? raw["statusMessage"] ?? raw["status_display"])
+        let statusCode = Int(double(raw["status_code"]))
         let accepted = LeetCodeStatus.isAccepted(statusCode: statusCode, display: status)
+
+        let answer = boundedText(raw["code_answer"])
+        let output = boundedText(raw["code_output"])
+        let stdOutputList = boundedText(raw["std_output_list"])
+        let stdOutputStr = boundedText(raw["std_output"])
+
+        let resolvedOutput: String
+        let resolvedStdOutput: String
+        if !answer.isEmpty {
+            resolvedOutput = answer
+            resolvedStdOutput = !output.isEmpty ? output : (!stdOutputList.isEmpty ? stdOutputList : stdOutputStr)
+        } else {
+            resolvedOutput = !output.isEmpty ? output : (!stdOutputList.isEmpty ? stdOutputList : stdOutputStr)
+            resolvedStdOutput = (resolvedOutput == stdOutputStr || resolvedOutput == stdOutputList) ? "" : (!stdOutputStr.isEmpty ? stdOutputStr : stdOutputList)
+        }
+
+        let expected = boundedText(raw["expected_output"] ?? raw["expected_code_answer"])
+
         return LeetCodeJudgeResult(
             kind: kind,
             taskID: taskID,
@@ -517,17 +536,18 @@ final class LeetCodeAPIClient {
             status: status.isEmpty ? (accepted ? "通过" : "判题完成") : status,
             statusCode: statusCode,
             accepted: accepted,
-            totalCorrect: max(0, Int(Self.double(raw["total_correct"]))),
-            totalTestCases: max(0, Int(Self.double(raw["total_testcases"]))),
-            runtime: Self.string(raw["status_runtime"] ?? raw["runtime"]),
-            memory: Self.string(raw["status_memory"] ?? raw["memory"]),
-            compileError: Self.boundedText(raw["compile_error"] ?? raw["full_compile_error"]),
-            runtimeError: Self.boundedText(raw["runtime_error"] ?? raw["full_runtime_error"]),
-            input: Self.boundedText(raw["input"] ?? raw["last_testcase"]),
-            output: Self.boundedText(raw["code_output"] ?? raw["std_output_list"] ?? raw["std_output"]),
-            expectedOutput: Self.boundedText(raw["expected_output"]),
-            compareResult: Self.boundedText(raw["compare_result"], limit: 10_000),
-            aiJudgeMessage: Self.boundedText(raw["ai_judge_message"], limit: 4_000)
+            totalCorrect: max(0, Int(double(raw["total_correct"]))),
+            totalTestCases: max(0, Int(double(raw["total_testcases"]))),
+            runtime: string(raw["status_runtime"] ?? raw["runtime"]),
+            memory: string(raw["status_memory"] ?? raw["memory"]),
+            compileError: boundedText(raw["compile_error"] ?? raw["full_compile_error"]),
+            runtimeError: boundedText(raw["runtime_error"] ?? raw["full_runtime_error"]),
+            input: boundedText(raw["input"] ?? raw["last_testcase"]),
+            output: resolvedOutput,
+            expectedOutput: expected,
+            compareResult: boundedText(raw["compare_result"], limit: 10_000),
+            aiJudgeMessage: boundedText(raw["ai_judge_message"], limit: 4_000),
+            stdOutput: resolvedStdOutput
         )
     }
 
@@ -577,25 +597,38 @@ final class LeetCodeAPIClient {
         return ["question": question, "snippets": snippets]
     }
 
-    private static func string(_ value: Any?) -> String {
+    nonisolated static func string(_ value: Any?) -> String {
         if let value = value as? String { return value }
         if let value = value as? NSNumber { return value.stringValue }
         return ""
     }
 
-    private static func double(_ value: Any?) -> Double {
+    nonisolated static func double(_ value: Any?) -> Double {
         if let value = value as? NSNumber { return value.doubleValue }
         if let value = value as? String { return Double(value) ?? 0 }
         return 0
     }
 
-    private static func boundedText(_ value: Any?, limit: Int = 50_000) -> String {
-        if let value = value as? String { return String(value.prefix(limit)) }
-        guard let value,
-              JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted])
-        else { return "" }
-        return String(String(decoding: data, as: UTF8.self).prefix(limit))
+    nonisolated static func boundedText(_ value: Any?, limit: Int = 50_000) -> String {
+        if let value = value as? String {
+            return String(value.prefix(limit))
+        }
+        if let list = value as? [Any] {
+            if list.isEmpty { return "" }
+            let elements = list.map { boundedText($0, limit: limit) }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if elements.isEmpty { return "" }
+            return String(elements.joined(separator: "\n").prefix(limit))
+        }
+        if let dict = value as? [String: Any] {
+            if dict.isEmpty { return "" }
+            guard JSONSerialization.isValidJSONObject(dict),
+                  let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
+            else { return "" }
+            return String(String(decoding: data, as: UTF8.self).prefix(limit))
+        }
+        guard let value, !(value is NSNull) else { return "" }
+        return String(String(describing: value).prefix(limit))
     }
 
     private static func endpointURL(path: String) -> URL? {

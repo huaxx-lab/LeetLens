@@ -1470,7 +1470,8 @@ struct LeetCodeWorkspaceView: View {
                     ("运行错误", result.runtimeError, "text"),
                     ("失败用例", result.input, selectedLanguage),
                     ("实际输出", result.output, selectedLanguage),
-                    ("预期输出", result.expectedOutput, selectedLanguage)
+                    ("预期输出", result.expectedOutput, selectedLanguage),
+                    ("控制台输出", result.stdOutput, "text")
                 ].filter { !$0.1.isEmpty }
                 ForEach(diagnostics, id: \.0) { label, value, language in
                     VStack(alignment: .leading, spacing: 3) {
