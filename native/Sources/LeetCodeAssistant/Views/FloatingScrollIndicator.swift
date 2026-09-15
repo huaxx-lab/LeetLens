@@ -57,12 +57,12 @@ struct FloatingScrollIndicatorModifier: ViewModifier {
             ZStack(alignment: .topLeading) {
                 if axes.contains(.vertical), let bar = metrics.verticalBar(in: proxy.size, extra: stretch) {
                     thumb(width: FloatingScrollIndicator.thickness + min(2, stretch / 20), height: bar.length)
-                        .offset(x: proxy.size.width - FloatingScrollIndicator.thickness - FloatingScrollIndicator.edgeInset - min(2, stretch / 20), y: bar.origin)
+                        .offset(x: proxy.size.width - FloatingScrollIndicator.thickness - FloatingScrollIndicator.edgeClearance - min(2, stretch / 20), y: bar.origin)
                         .gesture(dragGesture(vertical: true, proxySize: proxy.size))
                 }
                 if axes.contains(.horizontal), let bar = metrics.horizontalBar(in: proxy.size, extra: stretch) {
                     thumb(width: bar.length, height: FloatingScrollIndicator.thickness + min(2, stretch / 20))
-                        .offset(x: bar.origin, y: proxy.size.height - FloatingScrollIndicator.thickness - FloatingScrollIndicator.edgeInset - min(2, stretch / 20))
+                        .offset(x: bar.origin, y: proxy.size.height - FloatingScrollIndicator.thickness - FloatingScrollIndicator.edgeClearance - min(2, stretch / 20))
                         .gesture(dragGesture(vertical: false, proxySize: proxy.size))
                 }
             }
@@ -128,7 +128,9 @@ struct FloatingScrollIndicatorModifier: ViewModifier {
 
 enum FloatingScrollIndicator {
     static let thickness: CGFloat = 6
-    static let edgeInset: CGFloat = 4
+    /// thumb 离列边的距离。必须大于分栏抓取带伸进列里的宽度（`ColumnResizeHandle.thickness`），
+    /// 否则 thumb 压在抓取带底下点不着。网页那套自绘滚动条的 `INSET` 与它保持一致。
+    static let edgeClearance: CGFloat = 6
     static let trackInset: CGFloat = 6
     static let minimumLength: CGFloat = 28
     static let maximumStretch: CGFloat = 44

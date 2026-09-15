@@ -73,14 +73,15 @@ struct KnowledgeGraphWorkspaceView: View {
     // MARK: - 画布
 
     private var canvas: some View {
-        // 工具栏占自己的一行，不再浮在画布上——浮着会压住最上面那几张卡片。
+        // 工具栏并进列头那一行（一列一行头部），不再单独占一条、也不浮在画布上压住卡片。
         VStack(spacing: 0) {
-            toolbar
-                .padding(.horizontal, 12)
-                .frame(height: 46)
-                .background(.bar)
-            Divider()
+            Hairline()
             graphCanvas
+        }
+        .workspaceHeader(id: "knowledge", hidesTitle: false) {
+            toolbarLeading
+        } trailing: {
+            toolbarTrailing
         }
     }
 
@@ -196,16 +197,16 @@ struct KnowledgeGraphWorkspaceView: View {
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
-    private var toolbar: some View {
+    private var toolbarLeading: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.appScaled(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(AppDesign.Typography.micro)
+                    .foregroundStyle(.tertiary)
                 TextField("搜索节点", text: $searchText)
                     .textFieldStyle(.plain)
-                    .font(.appScaled(size: 12.5))
-                    .frame(width: 130)
+                    .font(AppDesign.Typography.aux)
+                    .frame(width: AppDesign.Size.scaledControl(120))
                 if !searchText.isEmpty {
                     Button { searchText = "" } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
@@ -213,9 +214,9 @@ struct KnowledgeGraphWorkspaceView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .glassCapsule()
+            .padding(.horizontal, 9)
+            .frame(height: AppDesign.Size.toolbarControl - 2)
+            .quietCapsule()
 
             // 连线：单向和双向都画虚线，靠箭头个数区分。
             Menu {
@@ -227,73 +228,73 @@ struct KnowledgeGraphWorkspaceView: View {
                 }
             } label: {
                 Label(isLinking ? (linkDirected ? "单向连线中" : "双向连线中") : "连线", systemImage: "link")
-                    .font(.appScaled(size: 12.5, weight: .medium))
+                    .font(AppDesign.Typography.auxEmphasis)
                     .foregroundStyle(isLinking ? Color.accentColor : .secondary)
-                    .padding(.horizontal, 11)
-                    .frame(height: 30)
+                    .padding(.horizontal, 10)
+                    .frame(height: AppDesign.Size.toolbarControl - 2)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .frame(width: isLinking ? 104 : 66, height: 30)
-            .background(isLinking ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
-            .glassCapsule()
+            .frame(width: AppDesign.Size.scaledControl(isLinking ? 104 : 66), height: AppDesign.Size.toolbarControl - 2)
+            .background(isLinking ? Color.accentColor.opacity(0.12) : AppDesign.ColorToken.inlineFill, in: Capsule())
             .help("连好后点虚线可以跳转或删除")
 
-            // 展开 / 收起是大图能不能看的关键，放在最显眼的位置。
-            HStack(spacing: 2) {
-                toolbarButton("展开全部", systemImage: "arrow.up.left.and.arrow.down.right") {
-                    Task { await mutate { $0.collapsed = [] } }
-                }
-                Divider().frame(height: 14)
-                toolbarButton("只看主干", systemImage: "arrow.down.right.and.arrow.up.left") {
-                    let ids = KnowledgeGraphBuilder.defaultCollapsed(elements: elements)
-                    Task { await mutate { $0.collapsed = ids } }
-                }
-                Divider().frame(height: 14)
-                toolbarButton("重新排布", systemImage: "arrow.triangle.branch") {
-                    Task {
-                        await mutate { $0.childOrder = [:] }
-                        reloadToken &+= 1
-                    }
+            // 展开 / 收起是大图能不能看的关键。列窄时只留图标，不把整行撑出去。
+            ViewThatFits(in: .horizontal) {
+                layoutButtons(showsTitles: true)
+                layoutButtons(showsTitles: false)
+            }
+        }
+    }
+
+    private func layoutButtons(showsTitles: Bool) -> some View {
+        HStack(spacing: 2) {
+            toolbarButton("展开全部", systemImage: "arrow.up.left.and.arrow.down.right", showsTitle: showsTitles) {
+                Task { await mutate { $0.collapsed = [] } }
+            }
+            toolbarButton("只看主干", systemImage: "arrow.down.right.and.arrow.up.left", showsTitle: showsTitles) {
+                let ids = KnowledgeGraphBuilder.defaultCollapsed(elements: elements)
+                Task { await mutate { $0.collapsed = ids } }
+            }
+            toolbarButton("重新排布", systemImage: "arrow.triangle.branch", showsTitle: showsTitles) {
+                Task {
+                    await mutate { $0.childOrder = [:] }
+                    reloadToken &+= 1
                 }
             }
-            .padding(.horizontal, 4)
-            .frame(height: 30)
-            .glassCapsule()
+        }
+        .fixedSize()
+    }
 
-            Spacer(minLength: 8)
-
-            Text("\(elements.nodes.count) 节点 · \(overlay.links.count) 链接 · \(overlay.noteCards.count) 笔记")
+    private var toolbarTrailing: some View {
+        HStack(spacing: AppDesign.Spacing.xs) {
+            Text("\(elements.nodes.count) 节点 · \(overlay.links.count) 链接")
                 .font(AppDesign.Typography.micro.monospacedDigit())
-                .foregroundStyle(.secondary)
-
-            Button { fitRequest &+= 1 } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.appScaled(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 30, height: 30)
-                    .contentShape(Circle())
+                .foregroundStyle(.tertiary)
+                .help("\(overlay.noteCards.count) 张笔记")
+            HeaderIconButton(systemName: "viewfinder", help: "适应窗口") {
+                fitRequest &+= 1
             }
-            .buttonStyle(.plain)
-            .glassCircle()
-            .help("适应窗口")
         }
     }
 
     private func toolbarButton(
         _ title: String,
         systemImage: String,
+        showsTitle: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(.appScaled(size: 12, weight: .medium))
+                .labelStyle(showsTitle ? AnyLabelStyle(.titleAndIcon) : AnyLabelStyle(.iconOnly))
+                .font(AppDesign.Typography.aux.weight(.medium))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .frame(height: 26)
+                .padding(.horizontal, showsTitle ? 8 : 6)
+                .frame(height: AppDesign.Size.toolbarControl - 2)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help(title)
     }
 
     // MARK: - 行为

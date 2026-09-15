@@ -73,9 +73,9 @@ struct UsageStatisticsView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("AI 用量统计").font(.title2.weight(.semibold))
+                    Text("AI 用量统计").font(AppDesign.Typography.title2.weight(.semibold))
                     Text("所有模型调用统一计入，不依赖对话记录")
-                        .font(.caption)
+                        .font(AppDesign.Typography.micro)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -103,10 +103,10 @@ struct UsageStatisticsView: View {
                         Spacer()
                         VStack(alignment: .trailing, spacing: 2) {
                             Text(usage.estimatedRequests > 0 ? "含 \(usage.estimatedRequests) 次中断估算" : "精确统计")
-                                .font(.caption2)
+                                .font(AppDesign.Typography.micro)
                                 .foregroundStyle(usage.estimatedRequests > 0 ? Color.orange : .secondary)
                             Text(usage.model.isEmpty ? "尚未请求" : usage.model)
-                                .font(.callout.weight(.medium))
+                                .font(AppDesign.Typography.aux.weight(.medium))
                                 .lineLimit(1)
                         }
                     }
@@ -131,16 +131,16 @@ struct UsageStatisticsView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Label("累计缓存命中率", systemImage: "bolt.horizontal.circle.fill")
-                                .font(.subheadline.weight(.medium))
+                                .font(AppDesign.Typography.aux.weight(.medium))
                                 .foregroundStyle(.teal)
                             Spacer()
                             Text(cacheRate?.formatted(.percent.precision(.fractionLength(1))) ?? "-")
-                                .font(.headline.monospacedDigit())
+                                .font(AppDesign.Typography.headline.monospacedDigit())
                         }
                         ProgressView(value: cacheRate ?? 0)
                             .tint(.teal)
                         Text(cacheRate == nil ? "服务端返回缓存明细后显示" : "实际命中 \(usage.cachedTokens.formatted()) / \(usage.cacheTrackedPromptTokens.formatted()) 个可统计输入 Token")
-                            .font(.caption)
+                            .font(AppDesign.Typography.micro)
                             .foregroundStyle(.secondary)
                     }
                     .padding(16)
@@ -153,7 +153,7 @@ struct UsageStatisticsView: View {
                     if scope == .all, !providerRows.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("供应商与模型")
-                                .font(.subheadline.weight(.semibold))
+                                .font(AppDesign.Typography.aux.weight(.semibold))
                             ForEach(providerRows, id: \.0) { providerID, counters in
                                 usageBreakdownRow(
                                     title: dataStore.providers.first { $0.id == providerID }?.name ?? providerID,
@@ -176,7 +176,7 @@ struct UsageStatisticsView: View {
                     if scope == .all, !taskRows.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("调用来源")
-                                .font(.subheadline.weight(.semibold))
+                                .font(AppDesign.Typography.aux.weight(.semibold))
                             ForEach(taskRows, id: \.0.id) { route, counters in
                                 HStack(spacing: 12) {
                                     Image(systemName: route.systemImage)
@@ -185,15 +185,15 @@ struct UsageStatisticsView: View {
                                         .frame(width: 30, height: 30)
                                         .background(Color.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     VStack(alignment: .leading, spacing: 1) {
-                                        Text(route.title).font(.subheadline.weight(.medium))
-                                        Text(route.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                        Text(route.title).font(AppDesign.Typography.aux.weight(.medium))
+                                        Text(route.subtitle).font(AppDesign.Typography.micro).foregroundStyle(.secondary).lineLimit(1)
                                     }
                                     Spacer()
                                     Text("\(counters.requestCount) 次")
-                                        .font(.caption)
+                                        .font(AppDesign.Typography.micro)
                                         .foregroundStyle(.secondary)
                                     Text("\(counters.totalTokens.formatted()) Token")
-                                        .font(.callout.weight(.medium).monospacedDigit())
+                                        .font(AppDesign.Typography.aux.weight(.medium).monospacedDigit())
                                         .frame(width: 118, alignment: .trailing)
                                 }
                                 .padding(.horizontal, 12)
@@ -225,7 +225,7 @@ struct UsageStatisticsView: View {
             Text(value?.formatted() ?? "-")
                 .font(.appScaled(size: 22, weight: .semibold).monospacedDigit())
             Text(title)
-                .font(.caption)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.secondary)
         }
         .padding(14)
@@ -250,12 +250,12 @@ struct UsageStatisticsView: View {
                 .frame(width: 30, height: 30)
                 .background(Color.indigo.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(title).font(AppDesign.Typography.aux.weight(.medium)).lineLimit(1)
+                Text(subtitle).font(AppDesign.Typography.micro).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             Text("\(counters.totalTokens.formatted()) Token")
-                .font(.callout.weight(.medium).monospacedDigit())
+                .font(AppDesign.Typography.aux.weight(.medium).monospacedDigit())
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -268,7 +268,7 @@ struct UsageStatisticsView: View {
             Text(title).foregroundStyle(.secondary)
             Text(value.formatted()).fontWeight(.semibold).monospacedDigit()
         }
-        .font(.caption)
+        .font(AppDesign.Typography.micro)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(color.opacity(0.08), in: Capsule())

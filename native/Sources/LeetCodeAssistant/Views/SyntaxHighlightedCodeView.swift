@@ -11,6 +11,7 @@ struct SyntaxHighlightedCodeView: View {
     var maxHeight: CGFloat? = nil
 
     @State private var copied = false
+    @State private var renderCache = RenderCacheBox()
     /// 双轴 ScrollView 的视口宽度：内容窄于视口时 SwiftUI 会把它居中，
     /// 只能把内容自己撑到视口宽（`minWidth` + leading）来抵消。
     @State private var viewportWidth: CGFloat = 0
@@ -53,7 +54,7 @@ struct SyntaxHighlightedCodeView: View {
             // 不限高时只开横向：嵌在长页面里的代码块若也接管竖向滚动，
             // 鼠标停在代码上滚动就推不动外层页面了。
             ScrollView(maxHeight == nil ? .horizontal : [.horizontal, .vertical]) {
-                highlightedText
+                Text(highlighted.text)
                     .font(.appScaled(size: ConversationCodeBlockStyle.fontSize, design: .monospaced))
                     .lineSpacing(ConversationCodeBlockStyle.lineSpacing)
                     .textSelection(.enabled)
@@ -89,19 +90,102 @@ struct SyntaxHighlightedCodeView: View {
         return value.isEmpty ? "text" : value.lowercased()
     }
 
-    private var highlightedText: Text {
-        SyntaxCodeHighlighter.tokens(in: code).reduce(Text("")) { partial, token in
-            partial + Text(verbatim: token.value).foregroundColor(token.color)
-        }
+    /// 只在 `code` 变化时重算：body 每次求值都跑一遍正则，
+    /// 几万字的失败用例在滚动、悬停时会反复卡顿。
+    private var highlighted: SyntaxCodeHighlighter.Rendered {
+        if let cached = renderCache.value, cached.source == code { return cached }
+        // 纯文本（编译信息、失败用例、输出）不着色：给几万个数字上色没有阅读价值。
+        let rendered = SyntaxCodeHighlighter.render(code, highlights: displayLanguage != "text")
+        renderCache.value = rendered
+        return rendered
     }
 }
 
-private enum SyntaxCodeHighlighter {
+/// 不参与 SwiftUI 观察的缓存盒子：写它不会触发重绘，也就不会在 body 里递归更新。
+private final class RenderCacheBox {
+    var value: SyntaxCodeHighlighter.Rendered?
+}
+
+enum SyntaxCodeHighlighter {
+    /// 超过这个长度不再逐 token 着色，也不整段排版。
+    ///
+    /// 力扣的失败用例动辄 10⁵ 个数字、几十万字符：着色没有阅读价值，
+    /// 而 SwiftUI 的 Text 排版几十万字符本身就要卡上好几秒。
+    /// 复制按钮拿的仍是完整原文，这里只影响显示。
+    static let highlightCharacterLimit = 20_000
+    static let displayCharacterLimit = 60_000
+
+    struct Rendered {
+        let source: String
+        let text: AttributedString
+        let runCount: Int
+        let isTruncated: Bool
+    }
+
+    /// 生成**一个**扁平的 `AttributedString`。
+    ///
+    /// 以前是 `tokens.reduce(Text("")) { $0 + Text(token) }`：每个 `+` 包一层
+    /// `ConcatenatedTextStorage`，树深等于 token 数，SwiftUI 解析时逐层递归。
+    /// 实测约 6 000 个 token（3 000 个数字的数组）就把主线程栈打穿——
+    /// 提交答案出错时，失败用例 / 实际输出正好走这里，表现为提交后直接闪退。
+    static func render(_ source: String, highlights: Bool = true) -> Rendered {
+        let utf16Count = source.utf16.count
+        let isTruncated = utf16Count > displayCharacterLimit
+        let visible = isTruncated ? truncatedPrefix(of: source) : source
+
+        var text = AttributedString()
+        var runCount = 0
+        if !highlights || utf16Count > highlightCharacterLimit {
+            text = AttributedString(visible)
+            runCount = visible.isEmpty ? 0 : 1
+        } else {
+            // 相邻同色 token 合并成一段：逗号、空格和数字交替时能少一半 run。
+            var pending = ""
+            var pendingStyle: Style?
+            func flush() {
+                guard let style = pendingStyle, !pending.isEmpty else { return }
+                var run = AttributedString(pending)
+                run.foregroundColor = Token.color(for: style)
+                text.append(run)
+                runCount += 1
+                pending = ""
+            }
+            for token in tokens(in: visible) {
+                if token.style != pendingStyle {
+                    flush()
+                    pendingStyle = token.style
+                }
+                pending += token.value
+            }
+            flush()
+        }
+
+        if isTruncated {
+            var note = AttributedString("\n\n…… 内容过长，只显示前 \(displayCharacterLimit / 1000)K 字符（共 \(utf16Count) 字符），复制按钮会复制完整内容")
+            note.foregroundColor = Token.color(for: .comment)
+            text.append(note)
+            runCount += 1
+        }
+        return Rendered(source: source, text: text, runCount: runCount, isTruncated: isTruncated)
+    }
+
+    /// 按 UTF-16 截断，但不切断代理对。
+    private static func truncatedPrefix(of source: String) -> String {
+        let utf16 = source.utf16
+        var end = utf16.index(utf16.startIndex, offsetBy: displayCharacterLimit)
+        while end > utf16.startIndex, String.Index(end, within: source) == nil {
+            end = utf16.index(before: end)
+        }
+        return String(source[..<(String.Index(end, within: source) ?? source.endIndex)])
+    }
+
     struct Token {
         let value: String
         let style: Style
 
-        var color: Color {
+        var color: Color { Self.color(for: style) }
+
+        static func color(for style: Style) -> Color {
             switch style {
             case .plain: .primary
             case .comment: Color(nsColor: .secondaryLabelColor)

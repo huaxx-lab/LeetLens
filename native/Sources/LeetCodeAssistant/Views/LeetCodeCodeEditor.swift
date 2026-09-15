@@ -74,6 +74,13 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
     let formatRequest: Int
     let undoRequest: Int
     let redoRequest: Int
+    /// 文档身份（题 + 语言）。变了就整篇重载并清空撤销历史；不变时 `code` 的外部改写
+    /// 走可撤销的整篇替换。不传（学习页那种只读示例）则每次都按重载处理。
+    var documentID: String = ""
+    /// 编辑器回报内容时带上文档身份，宿主可以丢掉换篇前在路上的旧消息。
+    var onCodeChange: ((String, String) -> Void)? = nil
+    var onSelectionChange: ((LeetCodeEditorSelection?) -> Void)? = nil
+    var pageZoom: CGFloat = WebViewPresentation.interfaceZoom
     /// 想按内容自适应高度的宿主传这个；刷题页那种固定分栏不用传。
     var contentHeight: Binding<CGFloat>? = nil
 
@@ -86,12 +93,14 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
         controller.add(context.coordinator, name: "editorChanged")
         controller.add(context.coordinator, name: "editorDiagnostics")
         controller.add(context.coordinator, name: "remoteCompletionRequested")
+        controller.add(context.coordinator, name: "editorSelection")
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController = controller
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         WebViewPresentation.applyFloatingScrollbars(in: configuration)
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        WebViewPresentation.applyInterfaceZoom(pageZoom, to: webView)
         webView.navigationDelegate = context.coordinator
         webView.underPageBackgroundColor = .clear
         context.coordinator.webView = webView
@@ -110,12 +119,13 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.parent = self
+        WebViewPresentation.applyInterfaceZoom(pageZoom, to: webView)
         context.coordinator.synchronize()
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
         let controller = webView.configuration.userContentController
-        ["editorReady", "editorFailed", "editorChanged", "editorDiagnostics", "remoteCompletionRequested"]
+        ["editorReady", "editorFailed", "editorChanged", "editorDiagnostics", "remoteCompletionRequested", "editorSelection"]
             .forEach(controller.removeScriptMessageHandler(forName:))
         coordinator.completionTask?.cancel()
         webView.navigationDelegate = nil
@@ -128,6 +138,7 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
         private var isReady = false
         private var lastWebCode = ""
         private var lastLanguage = ""
+        private var lastDocumentID: String?
         private var lastFormatRequest = 0
         private var lastUndoRequest = 0
         private var lastRedoRequest = 0
@@ -143,7 +154,8 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
             guard let binding = parent.contentHeight,
                   let number = value as? NSNumber
             else { return }
-            let next = CGFloat(number.doubleValue)
+            // CodeMirror 报的是 CSS px，页面缩放后要乘回点数。
+            let next = CGFloat(number.doubleValue) * (webView?.pageZoom ?? 1)
             guard next > 0, abs(next - binding.wrappedValue) >= 1 else { return }
             binding.wrappedValue = next
         }
@@ -161,8 +173,29 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
             case "editorChanged":
                 guard let body = message.body as? [String: Any], let value = body["code"] as? String else { return }
                 updateContentHeight(body["contentHeight"])
+                let reportedDocument = body["documentID"] as? String ?? ""
+                guard reportedDocument == (lastDocumentID ?? "") else { return }
                 lastWebCode = value
-                if parent.code != value { parent.code = value }
+                if let onCodeChange = parent.onCodeChange {
+                    onCodeChange(value, reportedDocument)
+                } else if parent.code != value {
+                    parent.code = value
+                }
+            case "editorSelection":
+                guard let onSelectionChange = parent.onSelectionChange,
+                      let body = message.body as? [String: Any],
+                      (body["documentID"] as? String ?? "") == (lastDocumentID ?? "")
+                else { return }
+                let text = body["text"] as? String ?? ""
+                if text.isEmpty {
+                    onSelectionChange(nil)
+                } else {
+                    onSelectionChange(LeetCodeEditorSelection(
+                        text: text,
+                        fromLine: (body["fromLine"] as? NSNumber)?.intValue ?? 1,
+                        toLine: (body["toLine"] as? NSNumber)?.intValue ?? 1
+                    ))
+                }
             case "editorDiagnostics":
                 guard let body = message.body as? [String: Any], let rawIssues = body["issues"] as? [[String: Any]] else { return }
                 let issues = rawIssues.compactMap { item -> LeetCodeEditorIssue? in
@@ -240,11 +273,20 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
         func synchronize(force: Bool = false) {
             guard isReady, webView != nil else { return }
             let normalizedLanguage = LeetCodeEditorLanguage.normalized(parent.language)
-            if force || parent.code != lastWebCode || normalizedLanguage != lastLanguage {
+            let documentChanged = parent.documentID != lastDocumentID
+            if force || documentChanged || normalizedLanguage != lastLanguage {
                 lastLanguage = normalizedLanguage
+                lastDocumentID = parent.documentID
+                lastWebCode = parent.code
                 callJavaScript(
-                    "window.editorBridge.setValue(code, language)",
-                    arguments: ["code": parent.code, "language": normalizedLanguage]
+                    "window.editorBridge.load(code, language, id)",
+                    arguments: ["code": parent.code, "language": normalizedLanguage, "id": parent.documentID]
+                )
+            } else if parent.code != lastWebCode {
+                lastWebCode = parent.code
+                callJavaScript(
+                    "window.editorBridge.replace(code, id)",
+                    arguments: ["code": parent.code, "id": parent.documentID]
                 )
             }
             if parent.formatRequest != lastFormatRequest {

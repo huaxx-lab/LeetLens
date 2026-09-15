@@ -5,24 +5,13 @@ import WebKit
 struct LeetCodeWorkspaceView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
-    @State private var section = Section.library
-    @State private var searchText = ""
+    /// 刷题页的工作状态归根视图所有，见 `LeetCodeCodingSession`：
+    /// 放在这里的 @State 会在切到对话页时随页面一起销毁，代码就没了。
+    @Bindable var session: LeetCodeCodingSession
     @State private var debouncedSearchText = ""
     @State private var filteredQuestionsCache: [LeetCodeQuestion] = []
     @State private var activityLayout = LeetCodeActivityCalendar.Layout.empty
     @State private var activityInsight = LeetCodeActivityInsight.empty
-    @State private var statusFilter = StatusFilter.all
-    @State private var difficultyFilter = DifficultyFilter.all
-    @State private var selectedQuestionSlug: String?
-    @State private var selectedSubmissionID: String?
-    @State private var isSolving = false
-    @State private var selectedLanguage = "java"
-    @State private var code = ""
-    @State private var testCase = ""
-    @State private var selectedTestCaseIndex = 0
-    @State private var editableTestCasesBySlug: [String: [String]] = [:]
-    @State private var selectedTestCaseIndexBySlug: [String: Int] = [:]
-    @State private var bottomPanelHeightsBySlug: [String: CGFloat] = [:]
     @GestureState private var bottomPanelDragTranslation: CGFloat = 0
     @State private var workspaceLoadingSlug: String?
     @State private var workspaceError: String?
@@ -30,11 +19,6 @@ struct LeetCodeWorkspaceView: View {
     @State private var submissionDetailErrors: [String: String] = [:]
     @State private var historyLoadingSlug: String?
     @State private var historyErrors: [String: String] = [:]
-    @State private var judgeProgress: LeetCodeJudgeProgress?
-    @State private var judgeResult: LeetCodeJudgeResult?
-    @State private var judgeError: String?
-    @State private var judgeAction: JudgeAction?
-    @State private var editorDiagnostics = LeetCodeEditorDiagnostics()
     @State private var editorLoadStatus = LeetCodeEditorLoadStatus.loading
     @State private var completionStatus = LeetCodeCompletionStatus.localOnly
     @State private var questionMeta = LeetCodeQuestionMeta.empty
@@ -43,34 +27,20 @@ struct LeetCodeWorkspaceView: View {
     @State private var editorFormatRequest = 0
     @State private var editorUndoRequest = 0
     @State private var editorRedoRequest = 0
-    /// AI 提示：按题存，换题清空。一级一级点出来，不一次给完。
-    @State private var codeHints: [CodingHint] = []
-    @State private var hintSlug = ""
-    @State private var isHinting = false
-    @State private var hintError = ""
-    @State private var showsHints = false
-    /// 弹层里内容的真实高度。ScrollView 在 popover 里没有固有高度，
-    /// 不量一下就会塌成一条缝。
-    @State private var hintContentHeight: CGFloat = 0
-    /// 提示卡的尺寸跟着系统文字大小走。写死 pt 的话，用户把文字调大、
-    /// 或者换到 5K 屏，卡片还是那么小一块，字挤成一团。
-    @ScaledMetric(relativeTo: .body) private var hintPanelWidth: CGFloat = 360
-    @ScaledMetric(relativeTo: .body) private var hintPanelMaximumHeight: CGFloat = 400
-    @ScaledMetric(relativeTo: .body) private var hintActionHeight: CGFloat = 32
 
     private var selectedQuestion: LeetCodeQuestion? {
-        dataStore.leetCodeQuestions.first { $0.titleSlug == selectedQuestionSlug }
+        dataStore.leetCodeQuestions.first { $0.titleSlug == session.selectedQuestionSlug }
             ?? selectedSubmission.flatMap { submission in
                 question(for: submission.titleSlug)
             }
     }
 
     private var selectedSubmission: LeetCodeSubmission? {
-        dataStore.leetCodeSubmissions.first { $0.id == selectedSubmissionID }
+        dataStore.leetCodeSubmissions.first { $0.id == session.selectedSubmissionID }
     }
 
     private var selectedWorkspace: LeetCodeQuestionWorkspace? {
-        selectedQuestionSlug.flatMap { dataStore.leetCodeWorkspaces[$0] }
+        session.selectedQuestionSlug.flatMap { dataStore.leetCodeWorkspaces[$0] }
     }
 
     private var filteredQuestions: [LeetCodeQuestion] {
@@ -78,36 +48,47 @@ struct LeetCodeWorkspaceView: View {
     }
 
     private var currentTestCases: [String] {
-        guard let slug = selectedQuestionSlug else { return [""] }
-        return editableTestCasesBySlug[slug]
-            ?? LeetCodeTestCaseWorkspace.editableCases(from: selectedWorkspace?.sampleTestCases ?? [])
+        guard let slug = session.selectedQuestionSlug else { return [""] }
+        return session.testCases(for: slug, official: selectedWorkspace?.sampleTestCases ?? [])
+    }
+
+    private var judge: (action: LeetCodeJudgeAction?, progress: LeetCodeJudgeProgress?, result: LeetCodeJudgeResult?, error: String?) {
+        session.judgeState(for: session.selectedQuestionSlug)
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if selectedQuestion == nil {
-                overviewToolbar
-                Divider()
                 overview
+                    .workspaceHeader(id: "leetcode.overview", hidesTitle: false) {
+                        overviewHeaderLeading
+                    } trailing: {
+                        overviewHeaderTrailing
+                    }
             } else {
-                questionToolbar
-                Divider()
                 questionWorkspace
+                    .workspaceHeader(id: "leetcode.question") {
+                        questionHeaderLeading
+                    } trailing: {
+                        questionHeaderTrailing
+                    }
             }
         }
+        .overlay(alignment: .top) { Divider() }
         .background(AppDesign.ColorToken.canvas)
         .onAppear {
+            session.attach(dataDirectory: dataStore.dataDirectory)
             rebuildQuestionFilterCache()
             rebuildActivityBoardCache()
         }
-        .task(id: searchText) {
+        .task(id: session.searchText) {
             try? await Task.sleep(for: .milliseconds(220))
             guard !Task.isCancelled else { return }
-            debouncedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            debouncedSearchText = session.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             rebuildQuestionFilterCache()
         }
-        .onChange(of: statusFilter) { _, _ in rebuildQuestionFilterCache() }
-        .onChange(of: difficultyFilter) { _, _ in rebuildQuestionFilterCache() }
+        .onChange(of: session.statusFilter) { _, _ in rebuildQuestionFilterCache() }
+        .onChange(of: session.difficultyFilter) { _, _ in rebuildQuestionFilterCache() }
         .onChange(of: dataStore.leetCodeQuestions) { _, _ in
             rebuildQuestionFilterCache()
             rebuildActivityBoardCache()
@@ -118,50 +99,45 @@ struct LeetCodeWorkspaceView: View {
         // 否则用户在页内换了题、再切回来又会被拽回去。
         .task(id: workspace.pendingLeetCodeSlug) {
             guard let slug = workspace.pendingLeetCodeSlug, !slug.isEmpty else { return }
-            selectedQuestionSlug = slug
+            session.openQuestion(slug)
             workspace.pendingLeetCodeSlug = nil
         }
-        .onChange(of: selectedQuestionSlug) { _, _ in
-            prepareEditor()
-            // 换题就把提示清空，否则按钮上还挂着上一题的 "提示 2/3"。
-            codeHints = []
-            hintError = ""
-            showsHints = false
-        }
-        .task(id: selectedQuestionSlug) {
-            guard let slug = selectedQuestionSlug else { return }
+        .task(id: session.selectedQuestionSlug) {
+            guard let slug = session.selectedQuestionSlug else { return }
             await ensureWorkspace(slug)
         }
-        .task(id: selectedQuestionSlug) {
-            guard let slug = selectedQuestionSlug else { return }
+        .task(id: session.selectedQuestionSlug) {
+            guard let slug = session.selectedQuestionSlug else { return }
             await ensureQuestionHistory(slug)
         }
-        .task(id: selectedSubmissionID) {
-            guard let id = selectedSubmissionID else { return }
+        .task(id: session.selectedSubmissionID) {
+            guard let id = session.selectedSubmissionID else { return }
             await ensureSubmissionDetail(id)
         }
         // 分析队列的 worker 已移到 RootWorkspaceView：它挂在这里时，
         // 离开刷题页就会取消任务、把取消当失败计数，最终把队列删空。
     }
 
-    private var overviewToolbar: some View {
-        HStack(spacing: 12) {
+    // MARK: - 列头
+
+    /// 题库总览：分区切换 + 题单，紧跟在「刷题」标题后面。
+    private var overviewHeaderLeading: some View {
+        HStack(spacing: AppDesign.Spacing.xs) {
             GlassSegmentedControl(
-                options: Section.allCases.map { ($0.rawValue, $0.title) },
+                options: LeetCodeOverviewSection.allCases.map { ($0.rawValue, $0.title) },
                 selection: Binding(
-                    get: { section.rawValue },
-                    set: { section = Section(rawValue: $0) ?? section }
+                    get: { session.overviewSection.rawValue },
+                    set: { session.overviewSection = LeetCodeOverviewSection(rawValue: $0) ?? session.overviewSection }
                 )
             )
-            .frame(width: 248)
+            .frame(width: AppDesign.Size.scaledControl(210))
 
-            if section == .library {
+            if session.overviewSection == .library, !dataStore.leetCodePlans.isEmpty {
                 Menu {
                     ForEach(dataStore.leetCodePlans) { plan in
                         Button {
                             try? dataStore.selectLeetCodePlan(plan.id)
-                            selectedQuestionSlug = nil
-                            selectedSubmissionID = nil
+                            session.closeQuestion()
                         } label: {
                             if plan.id == dataStore.activeLeetCodePlanID {
                                 Label(plan.name, systemImage: "checkmark")
@@ -172,45 +148,110 @@ struct LeetCodeWorkspaceView: View {
                     }
                 } label: {
                     HStack(spacing: 5) {
-                        Text(activePlanName).lineLimit(1)
-                        Image(systemName: "chevron.down").font(.appScaled(size: 9, weight: .semibold))
+                        Text(activePlanName)
+                            .font(AppDesign.Typography.auxEmphasis)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.appScaled(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: 180, alignment: .leading)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
+                // borderlessButton 的 Menu 不理会 label 尺寸，不钉死宽高会把列头整行吃掉。
+                .frame(width: AppDesign.Size.scaledControl(150), height: AppDesign.Size.toolbarControl)
+                .help("切换题单")
             }
-
-            Spacer(minLength: 12)
-
-            if section == .library {
-                TextField("搜索题号、题目或标签", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 10)
-                    .frame(width: 220, height: 28)
-                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 7))
-            }
-
-            Button {
-                dataStore.reload()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.appScaled(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .glassCircle()
-            .help("重新读取同步数据")
         }
-        .padding(.horizontal, 14)
-        .frame(height: 46)
+    }
+
+    private var overviewHeaderTrailing: some View {
+        HStack(spacing: AppDesign.Spacing.xxs) {
+            if session.overviewSection == .library {
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass")
+                        .font(AppDesign.Typography.micro)
+                        .foregroundStyle(.tertiary)
+                    TextField("搜索题号、题目或标签", text: $session.searchText)
+                        .textFieldStyle(.plain)
+                        .font(AppDesign.Typography.aux)
+                }
+                .padding(.horizontal, 9)
+                .frame(width: AppDesign.Size.scaledControl(200), height: AppDesign.Size.toolbarControl - 2)
+                .background(AppDesign.ColorToken.inlineFill, in: Capsule())
+            }
+            HeaderIconButton(systemName: "arrow.clockwise", help: "重新读取同步数据") {
+                dataStore.reload()
+            }
+        }
+    }
+
+    /// 打开题目后：返回 · 题号标题难度 · 上下题，全在一行里。
+    private var questionHeaderLeading: some View {
+        HStack(spacing: AppDesign.Spacing.xxs) {
+            HeaderIconButton(systemName: "square.grid.2x2", help: "返回题库") {
+                session.closeQuestion()
+            }
+            if let question = selectedQuestion {
+                Text("\(question.frontendID). \(question.title)")
+                    .font(AppDesign.Typography.rowTitleEmphasis)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(-1)
+                    .padding(.leading, 2)
+                if !difficultyTitle(question.difficulty).isEmpty {
+                    Text(difficultyTitle(question.difficulty))
+                        .font(AppDesign.Typography.micro.weight(.semibold))
+                        .foregroundStyle(difficultyColor(question.difficulty))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(difficultyColor(question.difficulty).opacity(0.12), in: Capsule())
+                        .fixedSize()
+                }
+                if !session.isPristine, session.documentID.hasPrefix(question.titleSlug + "|") {
+                    Circle()
+                        .fill(Color.secondary.opacity(0.6))
+                        .frame(width: 5, height: 5)
+                        .help("有未提交的草稿（已自动保存）")
+                }
+            }
+            // 上/下一题跟着标题走。只在「作答」下出现：看提交记录时连着翻题没有意义。
+            if session.isSolving, let position = problemPosition, position.total > 1 {
+                LeetCodeProblemNavBar(position: position) { slug in
+                    session.selectedQuestionSlug = slug
+                    session.selectedSubmissionID = nil
+                }
+                .fixedSize()
+            }
+        }
+    }
+
+    private var questionHeaderTrailing: some View {
+        HStack(spacing: AppDesign.Spacing.xs) {
+            GlassSegmentedControl(
+                options: [("view", "题目与提交"), ("solve", "作答")],
+                selection: Binding(
+                    get: { session.isSolving ? "solve" : "view" },
+                    set: { session.isSolving = $0 == "solve" }
+                )
+            )
+            .frame(width: AppDesign.Size.scaledControl(176))
+
+            HeaderPillButton(
+                title: "问 AI",
+                systemImage: "sparkles",
+                isSelected: session.isAssistantPresented,
+                help: "在这道题里问 AI，自动附带题面、当前代码与评测结果（⌘L）"
+            ) {
+                toggleAssistant()
+            }
+            .keyboardShortcut("l", modifiers: .command)
+        }
     }
 
     @ViewBuilder
     private var overview: some View {
-        switch section {
+        switch session.overviewSection {
         case .library: libraryView
         case .activity: activityView
         case .submissions: submissionsView
@@ -223,25 +264,25 @@ struct LeetCodeWorkspaceView: View {
             Divider()
             HStack(spacing: 10) {
                 GlassSegmentedControl(
-                    options: StatusFilter.allCases.map { ($0.rawValue, $0.title) },
+                    options: LeetCodeStatusFilter.allCases.map { ($0.rawValue, $0.title) },
                     selection: Binding(
-                        get: { statusFilter.rawValue },
-                        set: { statusFilter = StatusFilter(rawValue: $0) ?? statusFilter }
+                        get: { session.statusFilter.rawValue },
+                        set: { session.statusFilter = LeetCodeStatusFilter(rawValue: $0) ?? session.statusFilter }
                     )
                 )
-                .frame(width: 218)
+                .frame(maxWidth: 218)
 
                 GlassSegmentedControl(
-                    options: DifficultyFilter.allCases.map { ($0.rawValue, $0.title) },
+                    options: LeetCodeDifficultyFilter.allCases.map { ($0.rawValue, $0.title) },
                     selection: Binding(
-                        get: { difficultyFilter.rawValue },
-                        set: { difficultyFilter = DifficultyFilter(rawValue: $0) ?? difficultyFilter }
+                        get: { session.difficultyFilter.rawValue },
+                        set: { session.difficultyFilter = LeetCodeDifficultyFilter(rawValue: $0) ?? session.difficultyFilter }
                     )
                 )
-                .frame(width: 232)
+                .frame(maxWidth: 232)
                 Spacer()
                 Text("\(filteredQuestions.count) 道题")
-                    .font(.caption.monospacedDigit())
+                    .font(AppDesign.Typography.micro.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 16)
@@ -252,13 +293,15 @@ struct LeetCodeWorkspaceView: View {
                 ContentUnavailableView("没有符合条件的题目", systemImage: "magnifyingglass")
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 14) {
+                    LazyVStack(spacing: AppDesign.Spacing.section) {
                         ForEach(questionGroups) { group in
                             questionGroupCard(group)
                         }
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 16)
+                    .padding(.horizontal, AppDesign.Spacing.xs)
+                    .padding(.vertical, AppDesign.Spacing.lg)
+                    .frame(maxWidth: AppDesign.Size.dashboardColumnMaximum)
+                    .frame(maxWidth: .infinity)
                 }
                 .floatingScrollIndicators()
             }
@@ -282,7 +325,7 @@ struct LeetCodeWorkspaceView: View {
                 Text("\(value)\(suffix)")
                     .font(.appScaled(size: 19, weight: .semibold).monospacedDigit())
                     .foregroundStyle(color)
-                Text(title).font(.caption).foregroundStyle(.secondary)
+                Text(title).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
             }
             Spacer()
             Divider().frame(height: 28)
@@ -310,31 +353,26 @@ struct LeetCodeWorkspaceView: View {
     }
 
     private func questionGroupCard(_ group: LeetCodeQuestionGroup) -> some View {
+        // 专题是一段带小标题的列表，不再是一张描边卡：标题行不铺底，行与行之间发丝线。
         VStack(spacing: 0) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text(group.name)
-                    .font(AppDesign.Typography.bodyEmphasis)
-                Spacer()
+                    .font(AppDesign.Typography.headline)
                 Text("\(group.solvedCount) / \(group.questions.count)")
                     .font(AppDesign.Typography.micro.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
+                Spacer()
             }
             .padding(.horizontal, 16)
-            .frame(height: 38)
+            .padding(.bottom, 4)
             .frame(maxWidth: .infinity)
-            .background(Color.primary.opacity(0.04))
 
             ForEach(Array(group.questions.enumerated()), id: \.element.id) { index, question in
                 if index > 0 {
-                    Divider().padding(.leading, 46)
+                    Hairline().padding(.leading, 48)
                 }
                 questionRow(question)
             }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: AppDesign.Radius.card, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: AppDesign.Radius.card, style: .continuous)
-                .strokeBorder(AppDesign.ColorToken.separator)
         }
     }
 
@@ -347,25 +385,25 @@ struct LeetCodeWorkspaceView: View {
                     .foregroundStyle(statusColor(question.status))
                     .frame(width: 20)
                 Text(question.frontendID)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.appScaled(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .trailing)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(question.title).font(.appScaled(size: 14, weight: .medium)).lineLimit(1)
                     Text(([question.groupName] + question.topicTags.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(AppDesign.Typography.micro).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)
                 if question.submissionCount > 0 {
                     Text("\(question.submissionCount) 次")
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        .font(AppDesign.Typography.micro.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Text(difficultyTitle(question.difficulty))
-                    .font(.caption.weight(.medium))
+                    .font(AppDesign.Typography.micro.weight(.medium))
                     .foregroundStyle(difficultyColor(question.difficulty))
                     .frame(width: 40)
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                    .font(AppDesign.Typography.micro.weight(.semibold)).foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 16)
             .frame(height: 54)
@@ -375,8 +413,10 @@ struct LeetCodeWorkspaceView: View {
     }
 
     private var activityView: some View {
+        // 一张画布从上往下读：档案 / 指标带 / 热力图与周节奏 / 分布 / 题单与最近提交。
+        // 区块之间一条发丝线，不再是七张玻璃卡铺在渐变底上。
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: AppDesign.Spacing.lg) {
                 profileHeader
                 LeetCodeActivityMetricsRow(
                     layout: activityLayout,
@@ -384,38 +424,27 @@ struct LeetCodeWorkspaceView: View {
                     dueCount: dataStore.dueCount,
                     weakCount: dataStore.weakCount
                 )
-                HStack(alignment: .top, spacing: 14) {
+                Hairline()
+                HStack(alignment: .top, spacing: AppDesign.Spacing.xl) {
                     LeetCodeActivityHeatmapCard(layout: activityLayout)
                     LeetCodeActivityWeekRhythm(layout: activityLayout)
-                        .frame(width: 250)
+                        .frame(width: AppDesign.Size.scaledControl(250))
                 }
+                Hairline()
                 LeetCodeActivityBreakdown(insight: activityInsight)
-                HStack(alignment: .top, spacing: 14) {
+                Hairline()
+                HStack(alignment: .top, spacing: AppDesign.Spacing.xl) {
                     planProgress
                     recentActivity
                 }
             }
-            .padding(24)
+            .padding(.horizontal, AppDesign.Spacing.xl)
+            .padding(.vertical, AppDesign.Spacing.lg)
+            .frame(maxWidth: AppDesign.Size.dashboardColumnMaximum)
             .frame(maxWidth: .infinity)
         }
         .floatingScrollIndicators()
-        .background(activityBackdrop)
-    }
-
-    /// 玻璃需要背后有东西才折射得出来。给动态页铺一层极淡的冷暖渐变，
-    /// 卡片压上去才有"浮在表面"的层次，而不是一块块灰方块。
-    private var activityBackdrop: some View {
-        LinearGradient(
-            colors: [
-                Color.accentColor.opacity(0.10),
-                Color(nsColor: .systemTeal).opacity(0.05),
-                Color.clear
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottom
-        )
         .background(AppDesign.ColorToken.canvas)
-        .ignoresSafeArea()
     }
 
     private var profileHeader: some View {
@@ -442,12 +471,10 @@ struct LeetCodeWorkspaceView: View {
                     .foregroundStyle(dataStore.leetCodeSignedIn ? .green : .secondary)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .inlineGlass(cornerRadius: AppDesign.Radius.small)
+            .padding(.vertical, 5)
+            .background(AppDesign.ColorToken.inlineFill, in: Capsule())
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .navigationGlass(cornerRadius: AppDesign.Radius.floating)
     }
 
     @ViewBuilder
@@ -463,8 +490,8 @@ struct LeetCodeWorkspaceView: View {
 
     private var planProgress: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("学习计划", systemImage: "list.bullet.clipboard")
-                .font(AppDesign.Typography.bodyEmphasis)
+            Text("题单进度")
+                .font(AppDesign.Typography.rowTitleEmphasis)
             if dataStore.leetCodePlans.isEmpty {
                 Text("导入题单后显示进度")
                     .font(AppDesign.Typography.aux)
@@ -473,7 +500,7 @@ struct LeetCodeWorkspaceView: View {
             ForEach(dataStore.leetCodePlans) { plan in
                 Button {
                     try? dataStore.selectLeetCodePlan(plan.id)
-                    section = .library
+                    session.overviewSection = .library
                 } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -490,15 +517,13 @@ struct LeetCodeWorkspaceView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.card)
     }
 
     private var recentActivity: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("最近提交", systemImage: "clock.arrow.circlepath")
-                .font(AppDesign.Typography.bodyEmphasis)
+            Text("最近提交")
+                .font(AppDesign.Typography.rowTitleEmphasis)
             if dataStore.leetCodeSubmissions.isEmpty {
                 Text("同步后显示最近的提交记录")
                     .font(AppDesign.Typography.aux)
@@ -508,16 +533,14 @@ struct LeetCodeWorkspaceView: View {
                 submissionButton(submission, compact: true)
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.card)
     }
 
     private var submissionsView: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("提交记录").font(.headline)
-                Text("\(dataStore.leetCodeSubmissions.count) 条").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text("提交记录").font(AppDesign.Typography.headline)
+                Text("\(dataStore.leetCodeSubmissions.count) 条").font(AppDesign.Typography.micro.monospacedDigit()).foregroundStyle(.secondary)
                 Spacer()
             }
             .padding(.horizontal, 16).frame(height: 46)
@@ -536,7 +559,7 @@ struct LeetCodeWorkspaceView: View {
 
     private func submissionButton(_ submission: LeetCodeSubmission, compact: Bool) -> some View {
         Button {
-            selectedSubmissionID = submission.id
+            session.selectedSubmissionID = submission.id
             openQuestion(submission.titleSlug)
         } label: {
             HStack(spacing: 10) {
@@ -548,10 +571,10 @@ struct LeetCodeWorkspaceView: View {
                           submission.language.uppercased(), submission.runtime, submission.memory,
                           submission.submittedAt.formatted(date: .abbreviated, time: .shortened)]
                         .filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(AppDesign.Typography.micro).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                if !compact { Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) }
+                if !compact { Image(systemName: "chevron.right").font(AppDesign.Typography.micro).foregroundStyle(.tertiary) }
             }
             .padding(.vertical, compact ? 3 : 0)
             .padding(.horizontal, compact ? 0 : 16)
@@ -561,59 +584,10 @@ struct LeetCodeWorkspaceView: View {
         .buttonStyle(.plain)
     }
 
-    private var questionToolbar: some View {
-        HStack(spacing: 10) {
-            Button {
-                selectedQuestionSlug = nil
-                selectedSubmissionID = nil
-                isSolving = false
-            } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(.plain).help("返回题库")
-            if let question = selectedQuestion {
-                Text("\(question.frontendID). \(question.title)")
-                    .font(.appScaled(size: 14, weight: .semibold)).lineLimit(1)
-                Text(difficultyTitle(question.difficulty))
-                    .font(.caption.weight(.medium)).foregroundStyle(difficultyColor(question.difficulty))
-            }
-            // 上/下一题跟着标题走（浮在题面左上角会盖住正文第一行）。
-            // 只在「作答」下出现：看提交记录时连着翻题没有意义。
-            if isSolving, let position = problemPosition, position.total > 1 {
-                LeetCodeProblemNavBar(position: position) { slug in
-                    selectedQuestionSlug = slug
-                    selectedSubmissionID = nil
-                }
-            }
-            Spacer()
-            GlassSegmentedControl(
-                options: [("view", "题目与提交"), ("solve", "作答")],
-                selection: Binding(
-                    get: { isSolving ? "solve" : "view" },
-                    set: { isSolving = $0 == "solve" }
-                )
-            )
-            .frame(width: 200)
-            Button {
-                guard let slug = selectedQuestion?.titleSlug else { return }
-                guard let url = URL(string: "https://leetcode.cn/problems/\(slug)/") else { return }
-                workspace.openURL(url)
-            } label: {
-                Image(systemName: "globe")
-                    .font(.appScaled(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .glassCircle()
-            .help("在工具区打开题目来源")
-        }
-        .padding(.horizontal, 14).frame(height: 46)
-    }
-
     /// 上一题 / 下一题在**当前筛选后的列表**里走，和左侧看到的顺序一致。
     private var problemPosition: LeetCodeProblemNavigator.Position? {
         LeetCodeProblemNavigator.position(
-            of: selectedQuestionSlug,
+            of: session.selectedQuestionSlug,
             in: filteredQuestions.map(\.titleSlug)
         )
     }
@@ -629,14 +603,14 @@ struct LeetCodeWorkspaceView: View {
             Group {
                 if let workspace = selectedWorkspace, !workspace.htmlContent.isEmpty {
                     LeetCodeProblemWebView(html: workspace.htmlContent)
-                } else if workspaceLoadingSlug == selectedQuestionSlug {
+                } else if workspaceLoadingSlug == session.selectedQuestionSlug {
                     ProgressView("正在从力扣读取题目…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let workspaceError {
                     VStack(spacing: 12) {
                         ContentUnavailableView("题目加载失败", systemImage: "exclamationmark.triangle", description: Text(workspaceError))
                         Button {
-                            guard let slug = selectedQuestionSlug else { return }
+                            guard let slug = session.selectedQuestionSlug else { return }
                             Task { await ensureWorkspace(slug, force: true) }
                         } label: {
                             Label("重新加载", systemImage: "arrow.clockwise")
@@ -647,7 +621,7 @@ struct LeetCodeWorkspaceView: View {
                                 .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
-                        .glassCapsule()
+                        .quietCapsule()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -661,9 +635,9 @@ struct LeetCodeWorkspaceView: View {
             // 两条都是**浮层**，不参与分栏布局——力扣官网那条也是浮在题面窗格底部的胶囊。
             // 之前以为要把这一栏拆成上下结构才能加，是我想复杂了：题面照旧铺满，浮层压在它上面。
             .overlay(alignment: .bottom) { problemActionOverlay }
-            .task(id: selectedQuestionSlug) { await loadQuestionMeta() }
+            .task(id: session.selectedQuestionSlug) { await loadQuestionMeta() }
             .sheet(isPresented: $showsSolutions) {
-                if let slug = selectedQuestionSlug {
+                if let slug = session.selectedQuestionSlug {
                     LeetCodeSolutionsBrowser(
                         titleSlug: slug,
                         title: selectedQuestion?.title ?? "题解",
@@ -676,15 +650,45 @@ struct LeetCodeWorkspaceView: View {
 
         } trailing: {
             Group {
-                if isSolving { editorPane } else { submissionDetailPane }
+                if session.isSolving { editorPane } else { submissionDetailPane }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // AI 助手是一扇浮窗，不再开一列或一个标签页：默认停在题面那一栏上，
+        // 按住标题栏可以拖到任意位置、右下角可以拉大小（位置会记住）。
+        // 关掉浮窗题面原样还在，滚动位置也不丢。
+        .overlay { assistantOverlay }
+    }
+
+    @ViewBuilder
+    private var assistantOverlay: some View {
+        // 不要求题面已经加载：没登录、网络失败时题面读不到，
+        // 以前这里 `let questionWorkspace = selectedWorkspace` 守卫不过，点「问 AI」毫无反应。
+        if session.isAssistantPresented, let question = selectedQuestion {
+            FloatingPanelHost(storageKey: "native.leetcode.assistantPlacement") { moveGesture in
+                LeetCodeAssistantCard(
+                    workspace: workspace,
+                    dataStore: dataStore,
+                    session: session,
+                    question: question,
+                    questionWorkspace: selectedWorkspace,
+                    difficultyTitle: difficultyTitle(question.difficulty),
+                    moveGesture: moveGesture
+                )
+            }
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        }
+    }
+
+    private func toggleAssistant() {
+        withAnimation(AppDesign.Motion.selection) {
+            session.isAssistantPresented.toggle()
+        }
     }
 
     @ViewBuilder
     private var problemActionOverlay: some View {
-        if let slug = selectedQuestionSlug, selectedWorkspace != nil {
+        if let slug = session.selectedQuestionSlug, selectedWorkspace != nil {
             LeetCodeQuestionActionBar(
                 meta: questionMeta,
                 titleSlug: slug,
@@ -700,14 +704,14 @@ struct LeetCodeWorkspaceView: View {
     }
 
     private func loadQuestionMeta() async {
-        guard let slug = selectedQuestionSlug else {
+        guard let slug = session.selectedQuestionSlug else {
             questionMeta = .empty
             return
         }
         // 换题时先清空：否则新题面配着上一题的点赞数，看着像数据错了。
         questionMeta = .empty
         guard let meta = try? await LeetCodeAPIClient.shared.fetchQuestionMeta(titleSlug: slug) else { return }
-        guard selectedQuestionSlug == slug else { return }
+        guard session.selectedQuestionSlug == slug else { return }
         questionMeta = meta
     }
 
@@ -718,9 +722,9 @@ struct LeetCodeWorkspaceView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("提交记录").font(.headline)
+                                Text("提交记录").font(AppDesign.Typography.headline)
                                 Text("\(question.submissionCount) 次提交 · \(question.acceptedCount) 次通过")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                             }
                             Spacer()
                             if historyLoadingSlug == question.titleSlug {
@@ -733,7 +737,7 @@ struct LeetCodeWorkspaceView: View {
                             }
                         }
                         if let error = historyErrors[question.titleSlug] {
-                            Text(error).font(.caption).foregroundStyle(.orange)
+                            Text(error).font(AppDesign.Typography.micro).foregroundStyle(.orange)
                         }
                     }
                     .padding(18)
@@ -757,26 +761,26 @@ struct LeetCodeWorkspaceView: View {
     }
 
     private func submissionDisclosure(_ submission: LeetCodeSubmission) -> some View {
-        let expanded = selectedSubmissionID == submission.id
+        let expanded = session.selectedSubmissionID == submission.id
         let insight = dataStore.leetCodeAnalyses[submission.titleSlug]?.attemptInsights.first { $0.submissionID == submission.id }
         return VStack(spacing: 0) {
             Button {
-                selectedSubmissionID = expanded ? nil : submission.id
+                session.selectedSubmissionID = expanded ? nil : submission.id
             } label: {
                 HStack(spacing: 10) {
                     Circle().fill(submission.accepted ? Color.green : Color.orange).frame(width: 7, height: 7)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(submission.status.isEmpty ? (submission.accepted ? "通过" : "未通过") : submission.status)
-                            .font(.subheadline.weight(.medium))
+                            .font(AppDesign.Typography.aux.weight(.medium))
                         Text([submission.language.uppercased(), submission.runtime, submission.memory, submission.submittedAt.formatted(date: .abbreviated, time: .shortened)]
                             .filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                         if let insight, !insight.issue.isEmpty {
-                            Text(insight.issue).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            Text(insight.issue).font(AppDesign.Typography.micro).foregroundStyle(.secondary).lineLimit(2)
                         }
                     }
                     Spacer()
-                    Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Image(systemName: "chevron.down").font(AppDesign.Typography.micro.weight(.semibold)).foregroundStyle(.secondary)
                         .rotationEffect(.degrees(expanded ? 180 : 0))
                 }
                 .padding(.horizontal, 16).frame(height: 54).contentShape(Rectangle())
@@ -791,13 +795,13 @@ struct LeetCodeWorkspaceView: View {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text("正在读取源码与失败用例")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
                     } else if let error = submissionDetailErrors[submission.id] {
                         HStack(spacing: 10) {
-                            Text(error).font(.caption).foregroundStyle(.secondary)
+                            Text(error).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                             Spacer()
                             Button("重试", systemImage: "arrow.clockwise") {
                                 Task { await ensureSubmissionDetail(submission.id, force: true) }
@@ -828,18 +832,18 @@ struct LeetCodeWorkspaceView: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 8) {
                     Label("AI 分析", systemImage: "sparkles")
-                        .font(.caption.weight(.semibold))
+                        .font(AppDesign.Typography.micro.weight(.semibold))
                         .foregroundStyle(.blue)
                     Text(analysis.rootCause.isEmpty ? analysis.summary : analysis.rootCause)
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if !analysis.suggestions.isEmpty {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text("建议").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            Text("建议").font(AppDesign.Typography.micro.weight(.semibold)).foregroundStyle(.secondary)
                             ForEach(analysis.suggestions, id: \.self) { item in
                                 Label(item, systemImage: "arrow.turn.down.right")
-                                    .font(.caption)
+                                    .font(AppDesign.Typography.micro)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -870,23 +874,23 @@ struct LeetCodeWorkspaceView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Label("提交轨迹", systemImage: "point.3.connected.trianglepath.dotted")
-                        .font(.subheadline.weight(.semibold))
+                        .font(AppDesign.Typography.aux.weight(.semibold))
                     Spacer()
                     if dataStore.leetCodeAnalysisProcessingSlug == question.titleSlug {
                         ProgressView().controlSize(.small)
-                        Text("AI 正在分析").font(.caption).foregroundStyle(.secondary)
+                        Text("AI 正在分析").font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                     } else if let task {
-                        Text("\(task.submissionIDs.count) 条待分析").font(.caption).foregroundStyle(.secondary)
+                        Text("\(task.submissionIDs.count) 条待分析").font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                     } else if let analysis, analysis.updatedAt != .distantPast {
                         Text(analysis.updatedAt.formatted(.relative(presentation: .named)))
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                     }
                 }
                 if let task, !task.lastError.isEmpty {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                         Text("上次分析失败：\(task.lastError)。将自动重试。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                         Spacer()
                         Button("立即重试") {
                             try? dataStore.retryLeetCodeAnalysis(question.titleSlug)
@@ -896,7 +900,7 @@ struct LeetCodeWorkspaceView: View {
                 }
                 if let analysis {
                     if !analysis.summary.isEmpty {
-                        Text(analysis.summary).font(.callout).fixedSize(horizontal: false, vertical: true)
+                        Text(analysis.summary).font(AppDesign.Typography.aux).fixedSize(horizontal: false, vertical: true)
                     }
                     HStack(alignment: .top, spacing: 20) {
                         analysisList("待巩固", values: analysis.weaknesses, color: .orange)
@@ -904,7 +908,7 @@ struct LeetCodeWorkspaceView: View {
                     }
                 } else {
                     Text(task?.lastError.isEmpty == false ? "分析失败，等待重试" : "已进入分析队列")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                 }
             }
             .padding(16)
@@ -916,14 +920,14 @@ struct LeetCodeWorkspaceView: View {
 
     private func analysisList(_ title: String, values: [String], color: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(color)
+            Text(title).font(AppDesign.Typography.micro.weight(.semibold)).foregroundStyle(color)
             if values.isEmpty {
-                Text("暂无").font(.caption).foregroundStyle(.tertiary)
+                Text("暂无").font(AppDesign.Typography.micro).foregroundStyle(.tertiary)
             } else {
                 ForEach(values, id: \.self) { value in
                     HStack(alignment: .top, spacing: 6) {
                         Circle().fill(color).frame(width: 4, height: 4).padding(.top, 6)
-                        Text(value).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(value).font(AppDesign.Typography.micro).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -942,7 +946,7 @@ struct LeetCodeWorkspaceView: View {
         ].filter { !$0.1.isEmpty }
         ForEach(values, id: \.0) { label, value, blockLanguage in
             VStack(alignment: .leading, spacing: 4) {
-                Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(label).font(AppDesign.Typography.micro.weight(.semibold)).foregroundStyle(.secondary)
                 SyntaxHighlightedCodeView(code: value, language: blockLanguage)
             }
         }
@@ -950,15 +954,15 @@ struct LeetCodeWorkspaceView: View {
 
     private func detailMetric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.subheadline.weight(.semibold).monospacedDigit())
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(AppDesign.Typography.aux.weight(.semibold).monospacedDigit())
+            Text(title).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
         }
     }
 
     private var editorPane: some View {
         GeometryReader { proxy in
-            let slug = selectedQuestionSlug ?? ""
-            let storedHeight = bottomPanelHeightsBySlug[slug] ?? LeetCodeBottomPanelLayout.defaultHeight
+            let slug = session.selectedQuestionSlug ?? ""
+            let storedHeight = session.bottomPanelHeightsBySlug[slug] ?? LeetCodeBottomPanelLayout.defaultHeight
             let panelHeight = LeetCodeBottomPanelLayout.clampedHeight(
                 storedHeight - bottomPanelDragTranslation,
                 availableHeight: proxy.size.height
@@ -967,19 +971,29 @@ struct LeetCodeWorkspaceView: View {
                 editorToolbar
                 Divider()
                 LeetCodeCodeEditor(
-                    code: $code,
-                    language: selectedLanguage,
-                    diagnostics: $editorDiagnostics,
+                    code: .constant(session.code),
+                    language: session.language,
+                    diagnostics: $session.diagnostics,
                     loadStatus: $editorLoadStatus,
                     completionStatus: $completionStatus,
                     formatRequest: editorFormatRequest,
                     undoRequest: editorUndoRequest,
-                    redoRequest: editorRedoRequest
+                    redoRequest: editorRedoRequest,
+                    documentID: session.documentID,
+                    onCodeChange: { value, documentID in
+                        session.editorDidChange(value, documentID: documentID)
+                    },
+                    onSelectionChange: { selection in
+                        if session.selection != selection { session.selection = selection }
+                    }
                 )
                 .id(editorReloadRequest)
                 .background(AppDesign.ColorToken.canvas)
                 .overlay {
                     editorLoadOverlay
+                }
+                .overlay(alignment: .bottom) {
+                    resetNotice
                 }
                 panelResizeHandle(slug: slug, availableHeight: proxy.size.height)
                 testCasePanel(slug: slug)
@@ -991,280 +1005,126 @@ struct LeetCodeWorkspaceView: View {
     private func editorToolButton(
         _ systemName: String,
         help: String,
+        disabled: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.appScaled(size: 12.5, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 26, height: 26)
+                .font(AppDesign.Typography.iconCompact)
+                .foregroundStyle(disabled ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+                .frame(width: AppDesign.Size.iconSlot + 2, height: AppDesign.Size.iconSlot + 2)
                 .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
         .help(help)
     }
 
+    /// 编辑器工具条：语言 · 补全状态 ——— 撤销/重做 | 复制/格式化/重置。
+    /// 「AI 提示」不再单独占一颗胶囊：并进列头的「问 AI」浮窗里（分级提示是浮窗的一种模式）。
     private var editorToolbar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AppDesign.Spacing.compact) {
             Menu {
                 ForEach(selectedWorkspace?.snippets ?? []) { snippet in
                     Button {
-                        selectedLanguage = snippet.languageSlug
-                        loadSnippet()
+                        guard let questionWorkspace = selectedWorkspace else { return }
+                        session.switchLanguage(to: snippet.languageSlug, workspace: questionWorkspace)
                     } label: {
+                        let hasDraft = session.drafts.archive.questions[questionWorkspaceSlug]?.codes[snippet.languageSlug] != nil
                         Label(
-                            snippet.language,
-                            systemImage: snippet.languageSlug == selectedLanguage ? "checkmark" : "circle"
+                            hasDraft ? "\(snippet.language)（有草稿）" : snippet.language,
+                            systemImage: snippet.languageSlug == session.language ? "checkmark" : "circle"
                         )
                     }
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Text(selectedWorkspace?.snippets.first { $0.languageSlug == selectedLanguage }?.language ?? selectedLanguage)
-                        .font(.appScaled(size: 12.5, weight: .medium))
+                    Text(selectedWorkspace?.snippets.first { $0.languageSlug == session.language }?.language ?? session.language)
+                        .font(AppDesign.Typography.auxEmphasis)
                         .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.appScaled(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
-                .frame(width: 108)
+                .frame(width: AppDesign.Size.scaledControl(96))
                 .padding(.vertical, 5)
                 .contentShape(Capsule())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .glassCapsule()
-            .help("切换语言")
+            .quietCapsule()
+            .help("切换语言。每种语言的代码分别保存，切回来还在")
 
             Label(completionStatus.title, systemImage: completionStatus.isOnline ? "bolt.horizontal.circle.fill" : "bolt.slash")
-                .font(.caption2)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(completionStatus.isOnline ? Color.green : Color.secondary)
                 .lineLimit(1)
                 .layoutPriority(-1)
                 .help(completionStatus.detail)
-            Spacer(minLength: 12)
-            // 每个图标给足 26pt 的方形点击区，彼此留 4pt。
-            // 原来是 spacing 2 + 纯字形尺寸，四个图标几乎贴在一起，既难点也难看。
-            hintButton
+            Spacer(minLength: AppDesign.Spacing.sm)
             HStack(spacing: 4) {
                 editorToolButton("arrow.uturn.backward", help: "撤销") { editorUndoRequest &+= 1 }
                 editorToolButton("arrow.uturn.forward", help: "重做") { editorRedoRequest &+= 1 }
                 Divider().frame(height: 14).padding(.horizontal, 2)
-                editorToolButton("doc.on.doc", help: "复制代码") { copy(code) }
+                editorToolButton("doc.on.doc", help: "复制代码") { copy(session.code) }
                 editorToolButton("textformat", help: "安全格式化缩进") { editorFormatRequest &+= 1 }
+                editorToolButton(
+                    "arrow.counterclockwise",
+                    help: session.isPristine ? "已经是力扣初始代码" : "重置为力扣初始代码（可撤销）",
+                    disabled: session.isPristine
+                ) {
+                    withAnimation(AppDesign.Motion.selection) { session.resetToTemplate() }
+                }
             }
             .padding(.horizontal, 5)
-            .frame(height: 30)
-            .glassCapsule()
+            .frame(height: AppDesign.Size.toolbarControl + 2)
+            .quietCapsule()
         }
-        .padding(.horizontal, 12)
-        .frame(height: 42)
+        .padding(.horizontal, AppDesign.Spacing.sm)
+        .frame(height: AppDesign.Size.pageHeader - 2)
     }
 
-    // MARK: - AI 提示
-    //
-    // 交互刻意做成"一级一级要"：点开先只给方向，卡住了再点「还想不出来」
-    // 才给卡点，最后才给下一步该做什么。每一级都读当前编辑器里的代码，
-    // 但提示词禁止给完整解法——直接把答案贴出来，这道题就白做了。
-
-    private var hintButton: some View {
-        Button {
-            showsHints = true
-            if codeHints.isEmpty { Task { await requestHint() } }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: isHinting ? "ellipsis" : "lightbulb.max")
-                    .font(.appScaled(size: 12, weight: .medium))
-                    .symbolEffect(.pulse, isActive: isHinting)
-                Text(codeHints.isEmpty ? "AI 提示" : "提示 \(codeHints.count)/3")
-                    .font(.appScaled(size: 12.5, weight: .medium))
-            }
-            .foregroundStyle(codeHints.isEmpty ? Color.secondary : Color.accentColor)
-            .padding(.horizontal, 11)
-            .frame(height: 30)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .glassCapsule()
-        .help("读当前代码给提示，只点方向不给答案")
-        .popover(isPresented: $showsHints, arrowEdge: .bottom) {
-            // 宽度也跟着系统文字大小走：字变大而框不变，只会把每行挤成两三个词。
-            hintPanel.frame(width: hintPanelWidth)
-        }
+    private var questionWorkspaceSlug: String {
+        session.selectedQuestionSlug ?? ""
     }
 
-    private var hintPanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "lightbulb.max")
-                    .font(.callout)
+    /// 重置后浮在编辑器底部的一条：给「撤销」一个明显的入口，几秒后自己消失。
+    /// 编辑器里 ⌘Z 同样能撤回，这里只是不让人去猜。
+    @ViewBuilder
+    private var resetNotice: some View {
+        if let discarded = session.discardedCode, discarded.documentID == session.documentID {
+            HStack(spacing: AppDesign.Spacing.xs) {
+                Image(systemName: "arrow.counterclockwise.circle.fill")
                     .foregroundStyle(Color.accentColor)
-                Text("AI 提示")
-                    .font(.headline)
-                Spacer()
-                if !codeHints.isEmpty {
-                    // 和下面「还想不出来」同一套外观：一段灰字看不出来是能点的。
-                    Button {
-                        codeHints = []
-                        Task { await requestHint() }
-                    } label: {
-                        Label("重新看一遍代码", systemImage: "arrow.clockwise")
-                            .font(.callout.weight(.medium))
-                            .foregroundStyle(isHinting ? Color.secondary : Color.accentColor)
-                            .padding(.horizontal, 9)
-                            .frame(height: 25)
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .background(
-                        (isHinting ? Color.secondary : Color.accentColor).opacity(0.12),
-                        in: Capsule()
-                    )
-                    .disabled(isHinting)
-                    .help("按当前编辑器里的代码重新给一轮提示")
+                Text("已恢复为力扣初始代码")
+                    .font(AppDesign.Typography.aux)
+                Button("撤销") {
+                    withAnimation(AppDesign.Motion.selection) { session.undoReset() }
                 }
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 13)
-            .padding(.bottom, 8)
-
-            Text("只给方向和卡点，不给完整解法")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 10)
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(codeHints) { hint in
-                        hintCard(hint)
-                    }
-                    if isHinting {
-                        HStack(spacing: 7) {
-                            ProgressView().controlSize(.small)
-                            Text(codeHints.isEmpty ? "正在读你的代码…" : "再想想怎么说更具体…")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if !hintError.isEmpty {
-                        Label(hintError, systemImage: "exclamationmark.triangle")
-                            .font(.callout)
-                            .foregroundStyle(AppDesign.ColorToken.warning)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if !isHinting, codeHints.count < 3, !codeHints.isEmpty {
-                        Button {
-                            Task { await requestHint() }
-                        } label: {
-                            Label(
-                                codeHints.count == 1 ? "还想不出来，指一下我卡在哪" : "告诉我下一步做什么",
-                                systemImage: "arrow.down.circle"
-                            )
-                            .font(.body.weight(.medium))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: hintActionHeight)
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .background(Color.accentColor.opacity(0.12), in: Capsule())
-                        .foregroundStyle(Color.accentColor)
-                    }
-                    if codeHints.count >= 3 {
-                        Text("到此为止。再往下就是替你写了——剩下的自己试。")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { hintContentHeight = $0 }
-            }
-            .floatingScrollIndicators()
-            // 内容不高就贴着内容，高了才封顶滚动。
-            .frame(height: min(max(hintContentHeight, 60), hintPanelMaximumHeight))
-        }
-    }
-
-    /// 一级提示。
-    ///
-    /// 字号全部走系统文字样式而不是写死的 pt：换到大屏或把系统文字调大时，
-    /// 这张卡跟着变，而不是缩成一小块看不清的灰字。正文用主色不用次级色——
-    /// 这是要读完的内容，不是脚注。
-    private func hintCard(_ hint: CodingHint) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(hint.levelTitle)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Color.accentColor.opacity(0.16), in: Capsule())
-                    .foregroundStyle(Color.accentColor)
-                if !hint.title.isEmpty {
-                    Text(hint.title)
-                        .font(.callout.weight(.medium))
+                .buttonStyle(.plain)
+                .font(AppDesign.Typography.auxEmphasis)
+                .foregroundStyle(Color.accentColor)
+                Button {
+                    withAnimation(AppDesign.Motion.fade) { session.dismissResetNotice() }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.appScaled(size: 9, weight: .bold))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .frame(width: 18, height: 18)
                 }
+                .buttonStyle(.plain)
             }
-            Text(InlineMarkdown.attributed(hint.hint, codeFont: .system(.body, design: .monospaced)))
-                .font(.body)
-                .foregroundStyle(.primary)
-                .lineSpacing(2.5)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-            ForEach(hint.checkpoints.filter { !$0.isEmpty }, id: \.self) { point in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.callout)
-                        .foregroundStyle(Color.accentColor.opacity(0.75))
-                    Text(InlineMarkdown.attributed(point))
-                        .font(.callout)
-                        .foregroundStyle(.primary.opacity(0.82))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            .padding(.leading, 12)
+            .padding(.trailing, 6)
+            .frame(height: AppDesign.Size.toolbarControl + 4)
+            .navigationGlass(cornerRadius: AppDesign.Radius.floating)
+            .padding(.bottom, AppDesign.Spacing.sm)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .task(id: session.resetNoticeVersion) {
+                try? await Task.sleep(for: .seconds(8))
+                guard !Task.isCancelled else { return }
+                withAnimation(AppDesign.Motion.fade) { session.dismissResetNotice() }
             }
-            if !hint.question.isEmpty {
-                Text(InlineMarkdown.attributed(hint.question))
-                    .font(.callout.italic())
-                    .foregroundStyle(Color.accentColor)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.medium)
-    }
-
-    private func requestHint() async {
-        guard !isHinting, let workspace = selectedWorkspace else { return }
-        // 换题了就从头来，别把上一题的提示接着往下发。
-        if hintSlug != workspace.titleSlug {
-            hintSlug = workspace.titleSlug
-            codeHints = []
-        }
-        guard codeHints.count < 3 else { return }
-        isHinting = true
-        hintError = ""
-        defer { isHinting = false }
-        do {
-            let hint = try await ChatService(dataDirectory: dataStore.dataDirectory).requestCodingHint(
-                title: selectedQuestion?.title ?? workspace.titleSlug,
-                content: LeetCodeQuestionActionBar.plainText(workspace.htmlContent),
-                code: code,
-                language: selectedLanguage,
-                level: codeHints.count + 1,
-                previousHints: codeHints.map(\.hint),
-                providerID: AITaskRoute.codingHint.providerID(in: dataStore.settings)
-            )
-            codeHints.append(hint)
-        } catch {
-            hintError = error.localizedDescription
         }
     }
 
@@ -1281,8 +1141,8 @@ struct LeetCodeWorkspaceView: View {
         case .failed(let message):
             VStack(spacing: 9) {
                 Label("代码编辑器加载失败", systemImage: "exclamationmark.triangle")
-                    .font(.subheadline.weight(.semibold))
-                Text(message).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .font(AppDesign.Typography.bodyEmphasis)
+                Text(message).font(AppDesign.Typography.micro).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Button("重新加载", systemImage: "arrow.clockwise") {
                     editorLoadStatus = .loading
                     editorReloadRequest &+= 1
@@ -1307,8 +1167,8 @@ struct LeetCodeWorkspaceView: View {
                     state = value.translation.height
                 }
                 .onEnded { value in
-                    let current = bottomPanelHeightsBySlug[slug] ?? LeetCodeBottomPanelLayout.defaultHeight
-                    bottomPanelHeightsBySlug[slug] = LeetCodeBottomPanelLayout.clampedHeight(
+                    let current = session.bottomPanelHeightsBySlug[slug] ?? LeetCodeBottomPanelLayout.defaultHeight
+                    session.bottomPanelHeightsBySlug[slug] = LeetCodeBottomPanelLayout.clampedHeight(
                         current - value.translation.height,
                         availableHeight: availableHeight
                     )
@@ -1317,75 +1177,84 @@ struct LeetCodeWorkspaceView: View {
         .help("拖拽调整测试与运行结果区高度")
     }
 
+    /// 测试与结果：样例标签 + 语法状态一行，下面是用例与结果；运行 / 提交浮在右下角。
+    /// 原来是「标题行 + 标签行 + 内容 + 底栏」四层，底栏只为放两个按钮和一句固定说明。
     private func testCasePanel(slug: String) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Text("测试与结果")
-                    .font(.caption.weight(.semibold))
-                Spacer(minLength: 8)
-                Label(
-                    editorDiagnostics.statusText,
-                    systemImage: editorDiagnostics.issues.isEmpty ? "checkmark.circle" : "exclamationmark.triangle"
-                )
-                .font(.caption)
-                .foregroundStyle(editorDiagnostics.issues.isEmpty ? Color.secondary : Color.orange)
-                .help(editorDiagnostics.issues.prefix(4).map { "第 \($0.line) 行：\($0.message)" }.joined(separator: "\n"))
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-
-            testCaseTabs(slug: slug)
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    TextEditor(text: testCaseBinding(for: slug))
-                        .font(AppDesign.Typography.mono)
-                        .scrollContentBackground(.hidden)
-                        .floatingTextScrollIndicators()
-                        .padding(7)
-                        .frame(minHeight: 64)
-                        .background(Color.primary.opacity(0.035))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 5)
-                                .stroke(Color.primary.opacity(0.09), lineWidth: 1)
+        let judge = judge
+        return ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                HStack(spacing: AppDesign.Spacing.xs) {
+                    testCaseTabs(slug: slug)
+                    Spacer(minLength: AppDesign.Spacing.xs)
+                    if session.editableTestCasesBySlug[slug].map({ $0 != LeetCodeTestCaseWorkspace.editableCases(from: selectedWorkspace?.sampleTestCases ?? []) }) == true {
+                        Button("恢复样例") {
+                            session.restoreOfficialTestCases(slug: slug, official: selectedWorkspace?.sampleTestCases ?? [])
                         }
-                    if judgeAction != nil || judgeResult != nil || judgeError != nil {
-                        Divider()
-                        judgeResultPanel
+                        .buttonStyle(.plain)
+                        .font(AppDesign.Typography.micro)
+                        .foregroundStyle(Color.accentColor)
+                        .help("把改过的测试用例恢复成力扣官方样例")
                     }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .floatingScrollIndicators()
-
-            Divider()
-            HStack {
-                Text(judgeProgress?.status ?? "运行与提交使用力扣官方评测环境")
-                    .font(.caption).foregroundStyle(.secondary)
+                    Label(
+                        session.diagnostics.statusText,
+                        systemImage: session.diagnostics.issues.isEmpty ? "checkmark.circle" : "exclamationmark.triangle"
+                    )
+                    .font(AppDesign.Typography.micro)
+                    .foregroundStyle(session.diagnostics.issues.isEmpty ? Color.secondary : Color.orange)
                     .lineLimit(1)
-                Spacer()
+                    .layoutPriority(-1)
+                    .help(session.diagnostics.issues.prefix(4).map { "第 \($0.line) 行：\($0.message)" }.joined(separator: "\n"))
+                }
+                .padding(.trailing, AppDesign.Spacing.sm)
+                Divider()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextEditor(text: testCaseBinding(for: slug))
+                            .font(AppDesign.Typography.mono)
+                            .scrollContentBackground(.hidden)
+                            .floatingTextScrollIndicators()
+                            .padding(7)
+                            .frame(minHeight: 64)
+                            .background(Color.primary.opacity(0.035))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color.primary.opacity(0.09), lineWidth: 1)
+                            }
+                        if judge.action != nil || judge.result != nil || judge.error != nil {
+                            judgeResultPanel
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                    // 给右下角浮着的运行 / 提交让出位置，最后一行结果不被压住。
+                    .padding(.bottom, 56)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .floatingScrollIndicators()
+            }
+
+            HStack(spacing: AppDesign.Spacing.xs) {
                 judgeButton(
                     title: "运行",
                     systemImage: "play.fill",
                     tint: .primary,
-                    disabled: judgeAction != nil || selectedWorkspace?.canRun != true || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    disabled: judge.action != nil || selectedWorkspace?.canRun != true || session.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ) {
-                    Task { await judge(.run) }
+                    startJudge(.run)
                 }
+                .keyboardShortcut("'", modifiers: .command)
                 judgeButton(
                     title: "提交",
                     systemImage: "paperplane.fill",
                     tint: .accentColor,
-                    disabled: judgeAction != nil || selectedWorkspace?.canSubmit != true || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    disabled: judge.action != nil || selectedWorkspace?.canSubmit != true || session.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ) {
-                    Task { await judge(.submit) }
+                    startJudge(.submit)
                 }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
             }
-            .padding(.horizontal, 12)
-            .frame(height: 42)
+            .padding(AppDesign.Spacing.sm)
         }
         .background(AppDesign.ColorToken.canvas)
     }
@@ -1399,31 +1268,32 @@ struct LeetCodeWorkspaceView: View {
     ) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(.appScaled(size: 12.5, weight: .medium))
+                .font(AppDesign.Typography.auxEmphasis)
                 .foregroundStyle(tint)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 12)
+                .frame(height: AppDesign.Size.toolbarControl + 2)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .glassCapsule()
         .opacity(disabled ? 0.45 : 1)
         .allowsHitTesting(!disabled)
-        .help(title)
+        .help(title == "运行" ? "用当前样例运行（⌘'）" : "提交到力扣评测（⌘⇧↩）")
     }
 
     private func testCaseTabs(slug: String) -> some View {
         let cases = currentTestCases
+        let selectedIndex = session.selectedTestCaseIndex(for: slug, caseCount: cases.count)
         return ScrollView(.horizontal) {
             HStack(spacing: 0) {
                 ForEach(cases.indices, id: \.self) { index in
-                    let selected = selectedTestCaseIndex == index
+                    let selected = selectedIndex == index
                     Button {
-                        selectTestCase(index, slug: slug)
+                        session.selectedTestCaseIndexBySlug[slug] = index
                     } label: {
                         VStack(spacing: 5) {
                             Text("样例 \(index + 1)")
-                                .font(.caption.weight(selected ? .semibold : .regular))
+                                .font(AppDesign.Typography.micro.weight(selected ? .semibold : .regular))
                                 .foregroundStyle(selected ? Color.primary : Color.secondary)
                                 .lineLimit(1)
                             Rectangle()
@@ -1431,61 +1301,91 @@ struct LeetCodeWorkspaceView: View {
                                 .frame(height: 2)
                         }
                         .padding(.horizontal, 12)
-                        .frame(height: 34)
+                        .frame(height: AppDesign.Size.compactRow)
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
-        .floatingScrollIndicators(.horizontal)
-        .frame(height: 34)
+        .scrollIndicators(.never)
+        .frame(height: AppDesign.Size.compactRow)
     }
 
     private var judgeResultPanel: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        let judge = judge
+        return VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                if judgeAction != nil {
+                if judge.action != nil {
                     ProgressView().controlSize(.small)
-                    Text(judgeProgress?.status ?? "正在连接力扣评测")
-                        .font(.subheadline.weight(.medium))
-                } else if let result = judgeResult {
+                    Text(judge.progress?.status ?? "正在连接力扣评测")
+                        .font(AppDesign.Typography.bodyEmphasis)
+                } else if let result = judge.result {
                     Image(systemName: result.accepted ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .foregroundStyle(result.accepted ? .green : .red)
-                    Text(result.status).font(.subheadline.weight(.semibold))
+                    Text(result.status).font(AppDesign.Typography.bodyEmphasis)
                     Spacer()
                     if result.totalTestCases > 0 {
                         Text("\(result.totalCorrect)/\(result.totalTestCases)")
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .font(AppDesign.Typography.micro.monospacedDigit()).foregroundStyle(.secondary)
                     }
-                    if !result.runtime.isEmpty { Text(result.runtime).font(.caption).foregroundStyle(.secondary) }
-                    if !result.memory.isEmpty { Text(result.memory).font(.caption).foregroundStyle(.secondary) }
-                } else if let judgeError {
+                    if !result.runtime.isEmpty { Text(result.runtime).font(AppDesign.Typography.micro).foregroundStyle(.secondary) }
+                    if !result.memory.isEmpty { Text(result.memory).font(AppDesign.Typography.micro).foregroundStyle(.secondary) }
+                } else if let judgeError = judge.error {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text(judgeError).font(.caption).foregroundStyle(.secondary)
+                    Text(judgeError).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                 }
             }
-            if let result = judgeResult {
+            if let result = judge.result {
                 let diagnostics = [
                     ("编译信息", result.compileError, "text"),
                     ("运行错误", result.runtimeError, "text"),
-                    ("失败用例", result.input, selectedLanguage),
-                    ("实际输出", result.output, selectedLanguage),
-                    ("预期输出", result.expectedOutput, selectedLanguage)
+                    // 用例与输出按纯文本显示：给几万个数字着色没有阅读价值。
+                    ("失败用例", result.input, "text"),
+                    ("实际输出", result.output, "text"),
+                    ("预期输出", result.expectedOutput, "text")
                 ].filter { !$0.1.isEmpty }
                 ForEach(diagnostics, id: \.0) { label, value, language in
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                        SyntaxHighlightedCodeView(code: value, language: language)
+                        Text(label).font(AppDesign.Typography.micro.weight(.semibold)).foregroundStyle(.secondary)
+                        SyntaxHighlightedCodeView(code: value, language: language, maxHeight: 220)
                     }
                 }
+                if !result.accepted {
+                    Button {
+                        askAssistant("我的代码为什么没通过？请结合失败用例指出问题所在，先不要给完整代码。")
+                    } label: {
+                        Label("问 AI 为什么没通过", systemImage: "sparkles")
+                            .font(AppDesign.Typography.auxEmphasis)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
                 if !result.aiJudgeMessage.isEmpty {
-                    Text(result.aiJudgeMessage).font(.caption).foregroundStyle(.secondary)
+                    Text(result.aiJudgeMessage).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                 }
             }
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(judgeResult?.accepted == true ? Color.green.opacity(0.08) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
+        .background(judge.result?.accepted == true ? Color.green.opacity(0.08) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func startJudge(_ action: LeetCodeJudgeAction) {
+        guard let question = selectedQuestion else { return }
+        guard let questionWorkspace = selectedWorkspace else {
+            return
+        }
+        Task { await session.judge(action, question: question, workspace: questionWorkspace, dataStore: dataStore) }
+    }
+
+    /// 从结果区等位置直接带着一句话打开 AI 浮窗。已经在生成时只填进输入框，不打断。
+    private func askAssistant(_ prompt: String) {
+        guard let slug = session.selectedQuestionSlug else { return }
+        session.assistantMode = .chat
+        if (session.assistantDrafts[slug] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            session.assistantDrafts[slug] = prompt
+        }
+        withAnimation(AppDesign.Motion.selection) { session.isAssistantPresented = true }
     }
 
     private var activePlanName: String {
@@ -1508,13 +1408,12 @@ struct LeetCodeWorkspaceView: View {
                 || question.title.localizedCaseInsensitiveContains(query)
                 || question.frontendID.localizedCaseInsensitiveContains(query)
                 || question.topicTags.contains { $0.localizedCaseInsensitiveContains(query) }
-            return queryMatches && statusFilter.matches(question) && difficultyFilter.matches(question)
+            return queryMatches && session.statusFilter.matches(question) && session.difficultyFilter.matches(question)
         }
     }
 
     private func openQuestion(_ slug: String) {
-        selectedQuestionSlug = slug
-        isSolving = false
+        session.openQuestion(slug)
     }
 
     private func question(for slug: String) -> LeetCodeQuestion? {
@@ -1531,53 +1430,22 @@ struct LeetCodeWorkspaceView: View {
     }
 
     private func prepareEditor() {
-        guard let snippets = selectedWorkspace?.snippets, !snippets.isEmpty else {
-            code = ""; testCase = ""; return
-        }
-        if !snippets.contains(where: { $0.languageSlug == selectedLanguage }) {
-            selectedLanguage = snippets.first(where: { $0.languageSlug == "java" })?.languageSlug ?? snippets[0].languageSlug
-        }
-        loadSnippet()
-        let slug = selectedQuestionSlug ?? ""
-        if editableTestCasesBySlug[slug] == nil {
-            editableTestCasesBySlug[slug] = LeetCodeTestCaseWorkspace.editableCases(
-                from: selectedWorkspace?.sampleTestCases ?? []
-            )
-        }
-        let cases = editableTestCasesBySlug[slug] ?? [""]
-        let index = LeetCodeTestCaseWorkspace.clampedIndex(
-            selectedTestCaseIndexBySlug[slug] ?? 0,
-            caseCount: cases.count
-        )
-        selectedTestCaseIndex = index
-        selectedTestCaseIndexBySlug[slug] = index
-        testCase = cases[index]
-        judgeProgress = nil
-        judgeResult = nil
-        judgeError = nil
-    }
-
-    private func selectTestCase(_ index: Int, slug: String) {
-        let cases = currentTestCases
-        let safeIndex = LeetCodeTestCaseWorkspace.clampedIndex(index, caseCount: cases.count)
-        selectedTestCaseIndex = safeIndex
-        selectedTestCaseIndexBySlug[slug] = safeIndex
-        testCase = cases[safeIndex]
+        guard let questionWorkspace = selectedWorkspace else { return }
+        session.prepareEditor(for: questionWorkspace)
     }
 
     private func testCaseBinding(for slug: String) -> Binding<String> {
         Binding {
-            let cases = editableTestCasesBySlug[slug]
-                ?? LeetCodeTestCaseWorkspace.editableCases(from: selectedWorkspace?.sampleTestCases ?? [])
-            let index = LeetCodeTestCaseWorkspace.clampedIndex(selectedTestCaseIndex, caseCount: cases.count)
-            return cases[index]
+            let cases = currentTestCases
+            return cases[session.selectedTestCaseIndex(for: slug, caseCount: cases.count)]
         } set: { value in
-            var cases = editableTestCasesBySlug[slug]
-                ?? LeetCodeTestCaseWorkspace.editableCases(from: selectedWorkspace?.sampleTestCases ?? [])
-            let index = LeetCodeTestCaseWorkspace.clampedIndex(selectedTestCaseIndex, caseCount: cases.count)
-            cases[index] = value
-            editableTestCasesBySlug[slug] = cases
-            testCase = value
+            let cases = currentTestCases
+            session.updateTestCase(
+                value,
+                at: session.selectedTestCaseIndex(for: slug, caseCount: cases.count),
+                slug: slug,
+                official: selectedWorkspace?.sampleTestCases ?? []
+            )
         }
     }
 
@@ -1592,10 +1460,10 @@ struct LeetCodeWorkspaceView: View {
         defer { if workspaceLoadingSlug == slug { workspaceLoadingSlug = nil } }
         do {
             _ = try await dataStore.fetchLeetCodeWorkspace(slug)
-            guard selectedQuestionSlug == slug else { return }
+            guard session.selectedQuestionSlug == slug else { return }
             prepareEditor()
         } catch {
-            guard selectedQuestionSlug == slug else { return }
+            guard session.selectedQuestionSlug == slug else { return }
             workspaceError = error.localizedDescription
         }
     }
@@ -1620,67 +1488,9 @@ struct LeetCodeWorkspaceView: View {
         do {
             _ = try await dataStore.refreshLeetCodeQuestionHistory(slug, onDemand: true)
         } catch {
-            guard selectedQuestionSlug == slug else { return }
+            guard session.selectedQuestionSlug == slug else { return }
             historyErrors[slug] = error.localizedDescription
         }
-    }
-
-    private func judge(_ action: JudgeAction) async {
-        guard judgeAction == nil else {
-            judgeError = "当前判题仍在进行，请等待本次结果返回"
-            return
-        }
-        guard let question = selectedQuestion,
-              let currentWorkspace = selectedWorkspace,
-              !currentWorkspace.questionID.isEmpty
-        else {
-            judgeError = workspaceLoadingSlug == selectedQuestionSlug
-                ? "题目数据仍在加载，加载完成后即可运行或提交"
-                : "题目评测信息未加载完整，请重新加载题目"
-            return
-        }
-        judgeAction = action
-        judgeProgress = nil
-        judgeResult = nil
-        judgeError = nil
-        defer { judgeAction = nil }
-        do {
-            let result: LeetCodeJudgeResult
-            switch action {
-            case .run:
-                result = try await LeetCodeAPIClient.shared.runCode(
-                    titleSlug: question.titleSlug,
-                    questionID: currentWorkspace.questionID,
-                    language: selectedLanguage,
-                    code: code,
-                    testCase: testCase
-                ) { judgeProgress = $0 }
-            case .submit:
-                result = try await LeetCodeAPIClient.shared.submitCode(
-                    titleSlug: question.titleSlug,
-                    questionID: currentWorkspace.questionID,
-                    language: selectedLanguage,
-                    code: code
-                ) { judgeProgress = $0 }
-            }
-            judgeResult = result
-            if action == .submit {
-                _ = try await dataStore.refreshLeetCodeQuestionHistory(
-                    question.titleSlug,
-                    expectedSubmissionID: result.taskID,
-                    onDemand: false
-                )
-                selectedSubmissionID = result.taskID
-                await ensureSubmissionDetail(result.taskID)
-            }
-        } catch {
-            judgeError = error.localizedDescription
-        }
-    }
-
-    private func loadSnippet() {
-        guard let snippet = selectedWorkspace?.snippets.first(where: { $0.languageSlug == selectedLanguage }) else { return }
-        code = snippet.code
     }
 
     private func copy(_ value: String) {
@@ -1703,33 +1513,6 @@ struct LeetCodeWorkspaceView: View {
 
     private func difficultyColor(_ value: String) -> Color {
         switch value.uppercased() { case "EASY": .green; case "HARD": .red; default: .orange }
-    }
-
-    private enum Section: String, CaseIterable, Identifiable {
-        case library, activity, submissions
-        var id: String { rawValue }
-        var title: String { switch self { case .library: "题库"; case .activity: "动态"; case .submissions: "提交" } }
-    }
-
-    private enum StatusFilter: String, CaseIterable, Identifiable {
-        case all, todo, tried, solved
-        var id: String { rawValue }
-        var title: String { switch self { case .all: "全部"; case .todo: "未开始"; case .tried: "尝试过"; case .solved: "已通过" } }
-        func matches(_ question: LeetCodeQuestion) -> Bool {
-            switch self { case .all: true; case .todo: question.status == "TO_DO"; case .tried: question.status == "TRIED"; case .solved: question.status == "SOLVED" }
-        }
-    }
-
-    private enum DifficultyFilter: String, CaseIterable, Identifiable {
-        case all, easy, medium, hard
-        var id: String { rawValue }
-        var title: String { switch self { case .all: "全部难度"; case .easy: "简单"; case .medium: "中等"; case .hard: "困难" } }
-        func matches(_ question: LeetCodeQuestion) -> Bool { self == .all || question.difficulty.lowercased() == rawValue }
-    }
-
-    private enum JudgeAction {
-        case run
-        case submit
     }
 
     private struct LeetCodeQuestionGroup: Identifiable {
@@ -1771,6 +1554,7 @@ struct LeetCodeProblemWebView: NSViewRepresentable {
     let html: String
     var bottomPadding: CGFloat = 80
     var onHeightChange: ((CGFloat) -> Void)?
+    var pageZoom: CGFloat = WebViewPresentation.interfaceZoom
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onHeightChange: onHeightChange)
@@ -1782,6 +1566,7 @@ struct LeetCodeProblemWebView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         WebViewPresentation.applyFloatingScrollbars(in: configuration)
         let webView = ProblemStatementWebView(frame: .zero, configuration: configuration)
+        WebViewPresentation.applyInterfaceZoom(pageZoom, to: webView)
         webView.underPageBackgroundColor = .clear
         webView.navigationDelegate = context.coordinator
         webView.setAccessibilityIdentifier(String(html.hashValue))
@@ -1791,6 +1576,10 @@ struct LeetCodeProblemWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: ProblemStatementWebView, context: Context) {
         context.coordinator.onHeightChange = onHeightChange
+        if WebViewPresentation.applyInterfaceZoom(pageZoom, to: webView) {
+            // 内容高度按新缩放重量一次，嵌在长页面里的题面才不会被截断或留白。
+            context.coordinator.measureHeight(of: webView)
+        }
         guard webView.accessibilityIdentifier() != String(html.hashValue) else { return }
         webView.setAccessibilityIdentifier(String(html.hashValue))
         webView.loadHTMLString(document, baseURL: Self.problemBaseURL)
@@ -1809,12 +1598,18 @@ struct LeetCodeProblemWebView: NSViewRepresentable {
             // spacing without changing the statement's remote base URL.
             webView.evaluateJavaScript(Self.normalizeCodeBlocksScript) { [weak self, weak webView] _, _ in
                 guard let webView else { return }
-                webView.evaluateJavaScript("document.documentElement.scrollHeight") { [weak self, weak webView] value, _ in
-                    guard let webView else { return }
-                    guard let height = value as? CGFloat ?? (value as? NSNumber).map({ CGFloat($0.doubleValue) }) else { return }
-                    (webView as? ProblemStatementWebView)?.contentScrollHeight = height
-                    self?.onHeightChange?(height)
-                }
+                self?.measureHeight(of: webView)
+            }
+        }
+
+        /// scrollHeight 是 CSS px；页面缩放后乘回点数，外层 frame 才撑得刚好。
+        func measureHeight(of webView: WKWebView) {
+            webView.evaluateJavaScript("document.documentElement.scrollHeight") { [weak self, weak webView] value, _ in
+                guard let webView else { return }
+                guard let cssHeight = value as? CGFloat ?? (value as? NSNumber).map({ CGFloat($0.doubleValue) }) else { return }
+                let height = (cssHeight * webView.pageZoom).rounded(.up)
+                (webView as? ProblemStatementWebView)?.contentScrollHeight = height
+                self?.onHeightChange?(height)
             }
         }
 

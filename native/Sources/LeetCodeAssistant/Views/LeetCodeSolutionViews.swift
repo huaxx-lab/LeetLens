@@ -228,6 +228,7 @@ struct LeetCodeQuestionActionBar: View {
 struct LeetCodeSolutionWebView: NSViewRepresentable {
     let article: LeetCodeSolutionArticle
     let onOpenURL: (URL) -> Void
+    var pageZoom: CGFloat = WebViewPresentation.interfaceZoom
 
     func makeCoordinator() -> Coordinator { Coordinator(onOpenURL: onOpenURL) }
 
@@ -237,6 +238,7 @@ struct LeetCodeSolutionWebView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "copyCode")
         WebViewPresentation.applyFloatingScrollbars(in: configuration)
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        WebViewPresentation.applyInterfaceZoom(pageZoom, to: webView)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator.popups
         webView.setValue(false, forKey: "drawsBackground")
@@ -249,6 +251,7 @@ struct LeetCodeSolutionWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        WebViewPresentation.applyInterfaceZoom(pageZoom, to: webView)
         guard context.coordinator.pending != article else { return }
         context.coordinator.pending = article
         context.coordinator.flush(into: webView)

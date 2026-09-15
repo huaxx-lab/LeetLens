@@ -35,6 +35,8 @@ struct RichConversationWebView: NSViewRepresentable {
     let contentTrailingInset: CGFloat
     /// 左侧问题刻度条占掉的一条，作为正文左内缩的下限下发给页面。
     var contentLeadingInset: CGFloat = 0
+    /// 在 body 求值时读取，改档位时 SwiftUI 才会重新调用 `updateNSView`。
+    var pageZoom: CGFloat = WebViewPresentation.interfaceZoom
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -58,6 +60,8 @@ struct RichConversationWebView: NSViewRepresentable {
         webView.underPageBackgroundColor = .clear
         webView.allowsMagnification = true
         webView.magnification = 1
+        WebViewPresentation.applyInterfaceZoom(pageZoom, to: webView)
+        context.coordinator.pageZoom = pageZoom
         context.coordinator.webView = webView
         context.coordinator.messages = messages
         context.coordinator.conversationRevision = conversationRevision
@@ -80,6 +84,12 @@ struct RichConversationWebView: NSViewRepresentable {
         context.coordinator.onOpenURL = onOpenURL
         context.coordinator.onRetry = onRetry
         context.coordinator.onAgentJump = onAgentJump
+        if WebViewPresentation.applyInterfaceZoom(pageZoom, to: webView) {
+            // 换了缩放，CSS px 与点的换算变了，两条内缩都得按新比例重发。
+            context.coordinator.pageZoom = pageZoom
+            context.coordinator.updateContentTrailingInset(contentTrailingInset, force: true)
+            context.coordinator.updateContentLeadingInset(contentLeadingInset, force: true)
+        }
         context.coordinator.updateContentTrailingInset(contentTrailingInset)
         context.coordinator.updateContentLeadingInset(contentLeadingInset)
         context.coordinator.renderIfNeeded()
@@ -97,6 +107,7 @@ struct RichConversationWebView: NSViewRepresentable {
         var onAgentJump: ((String, String) -> Void)?
         var contentTrailingInset: CGFloat = 0
         var contentLeadingInset: CGFloat = 0
+        var pageZoom: CGFloat = 1
         private var appliedContentLeadingInset: CGFloat?
         private var isReady = false
         private var appliedContentTrailingInset: CGFloat?
@@ -143,7 +154,7 @@ struct RichConversationWebView: NSViewRepresentable {
             Task { @MainActor in
                 _ = try? await webView.callAsyncJavaScript(
                     "document.documentElement.style.setProperty('--context-panel-inset', `${pixels}px`)",
-                    arguments: ["pixels": Double(inset)],
+                    arguments: ["pixels": Double(inset / max(pageZoom, 0.1))],
                     in: nil,
                     contentWorld: .page
                 )
@@ -162,7 +173,7 @@ struct RichConversationWebView: NSViewRepresentable {
             Task { @MainActor in
                 _ = try? await webView.callAsyncJavaScript(
                     "document.documentElement.style.setProperty('--conversation-rail-inset', `${pixels}px`)",
-                    arguments: ["pixels": Double(inset)],
+                    arguments: ["pixels": Double(inset / max(pageZoom, 0.1))],
                     in: nil,
                     contentWorld: .page
                 )

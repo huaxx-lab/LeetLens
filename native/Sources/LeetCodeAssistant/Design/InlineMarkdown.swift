@@ -8,10 +8,12 @@ import SwiftUI
 /// 只做行内：块级结构（列表、围栏代码）在这些小卡片里没有排版空间，
 /// 而且提示本来就禁止给出完整代码。解析失败一律退回纯文本——
 /// 格式问题绝不能把内容本身吞掉。
+@MainActor
 enum InlineMarkdown {
+    /// `codeFont` 不传时用阶梯里的等宽档，跟着界面字号走。
     static func attributed(
         _ source: String,
-        codeFont: Font = .system(.callout, design: .monospaced)
+        codeFont: Font? = nil
     ) -> AttributedString {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return AttributedString("") }
@@ -27,7 +29,7 @@ enum InlineMarkdown {
             return AttributedString(trimmed)
         }
         for run in value.runs where run.inlinePresentationIntent?.contains(.code) == true {
-            value[run.range].font = codeFont
+            value[run.range].font = codeFont ?? AppDesign.Typography.mono
         }
         return value
     }

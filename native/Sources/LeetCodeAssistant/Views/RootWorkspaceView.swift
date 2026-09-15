@@ -4,6 +4,11 @@ import SwiftUI
 struct RootWorkspaceView: View {
     @State private var workspace = WorkspaceState()
     @State private var dataStore = LegacyDataStore()
+    /// 刷题页的工作状态（选中的题、代码、判题结果）。挂在根上，切页面不丢。
+    @State private var codingSession = LeetCodeCodingSession()
+    /// 中间列的实际宽度（量的是整列，不是列头自己）。列头按它排版，
+    /// 不能让列头量自己：内容一溢出，量到的宽度就跟着变大，标题缩进再变大，越排越宽。
+    @State private var detailColumnWidth: CGFloat = 0
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -55,11 +60,14 @@ struct RootWorkspaceView: View {
             guard phase == .active else {
                 // 用量账本现在按批 checkpoint，离开前台时补一次落盘，避免丢计数。
                 Task { await AIUsageLedger.shared.flush(dataDirectory: dataStore.dataDirectory) }
+                // 代码草稿是防抖写盘的，离开前台时把最后不到一秒的输入也落下去。
+                codingSession.drafts.flush()
                 return
             }
             Task { await dataStore.syncLeetCodeAccountActivity() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            codingSession.drafts.flush()
             Task { await AIUsageLedger.shared.flush(dataDirectory: dataStore.dataDirectory) }
         }
         .sheet(isPresented: $workspace.isUsagePresented) {
@@ -120,6 +128,9 @@ struct RootWorkspaceView: View {
         // 否则会把列头整个挤到第二行）。
         .ignoresSafeArea(.container, edges: .top)
         .preferredColorScheme(preferredColorScheme)
+        // 没显式写字体的 Text / TextField / Button 标签默认是系统 13pt 死值；
+        // 在根上换成阶梯里的正文档，它们也跟着界面字号走。
+        .font(AppDesign.Typography.body)
         .tint(.accentColor)
         .background(Color(nsColor: .textBackgroundColor).ignoresSafeArea())
     }
@@ -184,16 +195,29 @@ struct RootWorkspaceView: View {
     }
 
     /// 中间列：列头（导航 + 标题 + 右侧操作）压在最上，内容在下，第三列挂在整列右侧。
+    ///
+    /// 列头读页面交上来的内容（`WorkspaceHeaderContent`），所以它画在 preference 浮层里；
+    /// 下面垫一块同高的空白占位，页面照常从列头下沿开始排。
     private var detailColumn: some View {
         VStack(spacing: 0) {
+            Color.clear
+                .frame(height: AppDesign.Size.columnHeader + ToolHeaderLayoutPolicy.topInset(isFullScreen: workspace.isWindowFullScreen))
+            PrimaryWorkspaceView(workspace: workspace, dataStore: dataStore, codingSession: codingSession)
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width.rounded()
+        } action: { detailColumnWidth = $0 }
+        .overlayPreferenceValue(WorkspaceHeaderContentKey.self, alignment: .top) { pageContent in
             DetailColumnHeader(
                 workspace: workspace,
                 dataStore: dataStore,
                 showsNavigationChrome: !hasEmptyConversationContent,
                 title: workspaceTitle,
-                conversation: selectedConversation
+                conversation: selectedConversation,
+                pageContent: pageContent,
+                columnWidth: detailColumnWidth
             )
-            PrimaryWorkspaceView(workspace: workspace, dataStore: dataStore)
+            .frame(width: detailColumnWidth > 0 ? detailColumnWidth : nil, alignment: .leading)
         }
         .background(AppDesign.ColorToken.canvas)
     }
@@ -223,44 +247,99 @@ private struct DetailColumnHeader: View {
     let showsNavigationChrome: Bool
     let title: String
     let conversation: ConversationSummary?
-    @State private var columnWidth: CGFloat = 0
+    let pageContent: WorkspaceHeaderContent
+    let columnWidth: CGFloat
     @State private var navigationWidth: CGFloat = 0
 
+    private var isConversation: Bool { workspace.selectedSection == .conversation }
+
+    /// 一行排三段（对齐 Codex）：
+    /// 左 —— 侧栏开关 / 新建（只在侧栏收起时出现，展开时侧栏里就有）· 前进后退 · 我在哪；
+    /// 中 —— 页面交上来的左侧控件（分区切换、面包屑）；
+    /// 右 —— 页面交上来的操作 | 面板开关。
+    /// 和当前页无关的东西一律不出现：不在对话页就没有「···」和任务上下文开关。
     var body: some View {
         HStack(spacing: AppDesign.Spacing.xxs) {
             navigationCluster
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { navigationWidth = $0 }
 
-            Color.clear
-                .frame(width: titleLeadingGap, height: 1)
-
-            if showsNavigationChrome {
-                titleChrome
+            if isConversation {
+                Color.clear
+                    .frame(width: titleLeadingGap, height: 1)
             }
 
-            Spacer(minLength: AppDesign.Spacing.xs)
+            if showsNavigationChrome {
+                if isConversation {
+                    titleChrome
+                } else if !pageContent.hidesTitle {
+                    Text(title)
+                        .font(AppDesign.Typography.rowTitleEmphasis)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, AppDesign.Spacing.xxs)
+                        .accessibilityAddTraits(.isHeader)
+                }
+            }
 
-            TrailingWindowChrome(workspace: workspace, dataStore: dataStore)
+            // 页面控件占掉标题之后剩下的全部宽度，放不下就在自己的范围里裁掉，
+            // 绝不把整行撑宽——撑宽的话 HStack 会居中溢出，左边的导航和标题被推到侧栏底下。
+            if let leading = pageContent.leading {
+                leading
+                    .padding(.leading, pageContent.hidesTitle ? 0 : AppDesign.Spacing.xs)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .clipped()
+                    .layoutPriority(-1)
+            } else {
+                Spacer(minLength: AppDesign.Spacing.xs)
+            }
+
+            if let trailing = pageContent.trailing {
+                trailing
+                    .fixedSize()
+                if !workspace.isToolWorkspacePresented || isConversation {
+                    HeaderDivider()
+                }
+            }
+
+            TrailingWindowChrome(
+                workspace: workspace,
+                dataStore: dataStore,
+                contextPanelFits: contextPanelFits
+            )
         }
         .padding(.leading, headerLeadingPadding)
         .padding(.trailing, AppDesign.Spacing.xs)
         .frame(height: AppDesign.Size.columnHeader)
         .padding(.top, ToolHeaderLayoutPolicy.topInset(isFullScreen: workspace.isWindowFullScreen))
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { columnWidth = $0 }
+    }
+
+    private var contextPanelWidth: CGFloat {
+        min(
+            max(workspace.windowWidth * 0.18, AppDesign.Size.contextPanelMinimum),
+            AppDesign.Size.contextPanelMaximum
+        )
+    }
+
+    private var contextPanelFits: Bool {
+        ContextPanelPresentationPolicy.fits(columnWidth: columnWidth, panelWidth: contextPanelWidth)
     }
 
     private var headerLeadingPadding: CGFloat {
         workspace.isSidebarPresented ? AppDesign.Spacing.xs : workspace.headerLeadingInset
     }
 
+    /// 标题对齐正文左缘的那段空白。夹一个上限：列窄的时候宁可标题不和正文对齐，
+    /// 也要给标题本身（至少 160pt）和右侧开关留出位置。
     private var titleLeadingGap: CGFloat {
-        ConversationColumnLayout.titleGapAfterNavigation(
+        let aligned = ConversationColumnLayout.titleGapAfterNavigation(
             columnWidth: columnWidth,
             trailingInset: contentTrailingInset,
             headerLeadingPadding: headerLeadingPadding,
             navigationWidth: navigationWidth,
             railInset: questionRailContentInset
         )
+        let budget = columnWidth - headerLeadingPadding - navigationWidth - AppDesign.Size.scaledControl(160) - 2 * AppDesign.Size.toolbarControl - AppDesign.Spacing.lg
+        return max(0, min(aligned, budget))
     }
 
     /// 标题和正文共用一条左缘：正文给刻度条让了位，标题也得跟着让。
@@ -274,12 +353,8 @@ private struct DetailColumnHeader: View {
     }
 
     private var contentTrailingInset: CGFloat {
-        guard workspace.selectedSection == .conversation, workspace.isContextPanelPresented else { return 0 }
-        let panelWidth = min(
-            max(workspace.windowWidth * 0.18, AppDesign.Size.contextPanelMinimum),
-            AppDesign.Size.contextPanelMaximum
-        )
-        return ContextPanelOverlayPolicy.contentTrailingInset(isVisible: true, panelWidth: panelWidth)
+        guard workspace.selectedSection == .conversation, workspace.isContextPanelPresented, contextPanelFits else { return 0 }
+        return ContextPanelOverlayPolicy.contentTrailingInset(isVisible: true, panelWidth: contextPanelWidth)
     }
 
     @ViewBuilder
@@ -291,11 +366,13 @@ private struct DetailColumnHeader: View {
                 }
             }
 
-            if showsNavigationChrome {
-                if !(workspace.isWindowFullScreen && workspace.isSidebarPresented) {
-                    historyChrome
-                }
+            // 侧栏收起时把「新建会话」挪到这里；侧栏展开时它就在侧栏顶上，列头不再重复一颗。
+            if !workspace.isSidebarPresented {
                 newConversationButton
+            }
+
+            if showsNavigationChrome, !(workspace.isWindowFullScreen && workspace.isSidebarPresented) {
+                historyChrome
             }
         }
     }
@@ -639,6 +716,8 @@ private final class WindowAttachmentView: NSView {
 private struct TrailingWindowChrome: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
+    /// 中间列放不下上下文浮层时按钮置灰：亮着却看不到面板，比点不动更让人困惑。
+    var contextPanelFits = true
 
     private var hasConversationContext: Bool {
         guard let id = workspace.selectedConversationID,
@@ -655,7 +734,7 @@ private struct TrailingWindowChrome: View {
         // 归第三列自己的头部（`ToolWorkspaceView`），不再靠等宽区块去"盖住"它。
         HStack(spacing: AppDesign.Spacing.xxs) {
             if workspace.isToolWorkspacePresented {
-                contextPanelButton
+                if isConversation { contextPanelButton }
             } else {
                 chromeButtons
                     .padding(.horizontal, 4)
@@ -673,26 +752,28 @@ private struct TrailingWindowChrome: View {
             workspace.toggleContextPanel()
         } label: {
             titlebarIcon(
-                workspace.isContextPanelPresented && hasConversationContext
+                workspace.isContextPanelPresented && hasConversationContext && contextPanelFits
                     ? "list.bullet.rectangle.fill"
                     : "list.bullet.rectangle",
-                isSelected: workspace.isContextPanelPresented && hasConversationContext
+                isSelected: workspace.isContextPanelPresented && hasConversationContext && contextPanelFits
             )
         }
         .buttonStyle(.plain)
-        .disabled(workspace.selectedSection != .conversation || !hasConversationContext)
-        .help(workspace.isContextPanelPresented ? "收起任务上下文" : "显示任务上下文")
+        .disabled(workspace.selectedSection != .conversation || !hasConversationContext || !contextPanelFits)
+        .help(!contextPanelFits
+              ? "中间列太窄，放不下任务上下文（收起侧栏或第三列后显示）"
+              : (workspace.isContextPanelPresented ? "收起任务上下文" : "显示任务上下文"))
     }
+
+    /// 任务上下文只属于对话页。别的页面上它永远是灰的，挂着只会让人以为点不动是 bug。
+    /// （原来这里还有一颗「分享学习记录」，分享出去的只是一串固定文字，已删。）
+    private var isConversation: Bool { workspace.selectedSection == .conversation }
 
     private var chromeButtons: some View {
         HStack(spacing: 2) {
-            ShareLink(item: "LeetLens · 学习记录") {
-                titlebarIcon("square.and.arrow.up")
+            if isConversation {
+                contextPanelButton
             }
-            .buttonStyle(.plain)
-            .help("分享学习记录")
-
-            contextPanelButton
 
             Button {
                 workspace.toggleToolWorkspace()
@@ -775,6 +856,7 @@ private struct FocusedToolWorkspaceView: View {
 private struct PrimaryWorkspaceView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
+    @Bindable var codingSession: LeetCodeCodingSession
     /// 中间列的实测宽度。问题刻度条按它决定位置与显隐。
     @State private var columnWidth: CGFloat = 0
 
@@ -790,7 +872,7 @@ private struct PrimaryWorkspaceView: View {
                         contentLeadingInset: questionRailContentInset
                     )
                 case .leetCode:
-                    LeetCodeWorkspaceView(workspace: workspace, dataStore: dataStore)
+                    LeetCodeWorkspaceView(workspace: workspace, dataStore: dataStore, session: codingSession)
                 case .plan:
                     StudyPlanWorkspaceView(workspace: workspace, dataStore: dataStore)
                 case .review:
@@ -863,7 +945,7 @@ private struct PrimaryWorkspaceView: View {
             contextPresented: workspace.isContextPanelPresented,
             section: workspace.selectedSection,
             hasContext: !conversationContext.isEmpty || !workspace.sources.isEmpty
-        )
+        ) && ContextPanelPresentationPolicy.fits(columnWidth: columnWidth, panelWidth: contextPanelWidth)
     }
 
     private var conversationContext: ConversationContextSnapshot {
@@ -1015,6 +1097,7 @@ enum QuestionRailPresentationPolicy {
     }
 }
 
+@MainActor
 enum ContextPanelPresentationPolicy {
     static func isVisible(
         contextPresented: Bool,
@@ -1024,6 +1107,19 @@ enum ContextPanelPresentationPolicy {
         contextPresented
             && section == .conversation
             && hasContext
+    }
+
+    /// 浮层旁边至少要留下这么宽的正文。
+    static var minimumReadableWidth: CGFloat { AppDesign.Size.scaledControl(460) }
+
+    /// 浮层压在正文右侧、正文让出同样宽度。中间列窄到让完之后正文不足一栏时，**不显示浮层**。
+    ///
+    /// 以前不判断：侧栏 + 第三列都开着时中间列只剩 500pt 左右，正文让出 350pt，
+    /// 输入框放不下就把整列撑宽、居中溢出——左边一截被侧栏盖住，右边被浮层压住。
+    /// `columnWidth` 为 0（还没量到）时按放得下处理，免得首帧闪一下。
+    static func fits(columnWidth: CGFloat, panelWidth: CGFloat) -> Bool {
+        guard columnWidth > 0 else { return true }
+        return columnWidth >= panelWidth + AppDesign.Spacing.lg + minimumReadableWidth
     }
 }
 
@@ -1174,14 +1270,14 @@ private struct QuestionRailView: View {
     private func railPreview(question: QuestionRailItem, index: Int) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(question.question)
-                .font(.subheadline.weight(.semibold))
+                .font(AppDesign.Typography.aux.weight(.semibold))
                 .lineLimit(1)
             Text(question.answer)
-                .font(.caption)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Text("当前会话 · 第 \(index + 1) 次提问")
-                .font(.caption2)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 12)

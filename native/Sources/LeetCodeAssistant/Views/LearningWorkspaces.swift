@@ -126,7 +126,7 @@ struct ReviewWorkspaceView: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text("复习队列")
-                    .font(.headline)
+                    .font(AppDesign.Typography.headline)
                 Spacer(minLength: 8)
                 GlassSegmentedControl(
                     options: QueueScope.allCases.map { ($0.rawValue, $0.title) },
@@ -241,7 +241,7 @@ struct ReviewWorkspaceView: View {
 
                     if !learningError.isEmpty {
                         Label(learningError, systemImage: "exclamationmark.triangle")
-                            .font(.callout)
+                            .font(AppDesign.Typography.aux)
                             .foregroundStyle(AppDesign.ColorToken.warning)
                     }
 
@@ -277,7 +277,7 @@ struct ReviewWorkspaceView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(record.title)
-                    .font(.title2.weight(.semibold))
+                    .font(AppDesign.Typography.title2.weight(.semibold))
                 HStack(spacing: 8) {
                     Label(record.primaryKnowledge, systemImage: "scope")
                     Text("·")
@@ -285,7 +285,7 @@ struct ReviewWorkspaceView: View {
                     Text("·")
                     Text("已复习 \(record.reviewCount) 次")
                 }
-                .font(.caption)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.secondary)
             }
             Spacer()
@@ -296,10 +296,10 @@ struct ReviewWorkspaceView: View {
     private func reviewPrompt(_ record: LearningRecord) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("本次复习")
-                .font(.caption.weight(.semibold))
+                .font(AppDesign.Typography.micro.weight(.semibold))
                 .foregroundStyle(.secondary)
             Text(record.question.isEmpty ? record.title : record.question)
-                .font(.title3.weight(.medium))
+                .font(AppDesign.Typography.title3.weight(.medium))
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -308,9 +308,9 @@ struct ReviewWorkspaceView: View {
     private func diagnosis(_ record: LearningRecord) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Label("最近诊断", systemImage: "waveform.path.ecg")
-                .font(.subheadline.weight(.semibold))
+                .font(AppDesign.Typography.aux.weight(.semibold))
             Text(record.diagnosis)
-                .font(.callout)
+                .font(AppDesign.Typography.aux)
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
         }
@@ -325,10 +325,10 @@ struct ReviewWorkspaceView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("自适应讲解")
-                    .font(.caption.weight(.semibold))
+                    .font(AppDesign.Typography.micro.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text(knowledgeTitle)
-                    .font(.headline)
+                    .font(AppDesign.Typography.headline)
                     .lineLimit(1)
                 Spacer()
                 // 脑图里的卡片直接读这份讲解（同一份数据），所以这里不是"导入"，
@@ -343,7 +343,7 @@ struct ReviewWorkspaceView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .glassCircle()
+                .quietCircle()
                 .help("在知识脑图里定位这道题")
 
                 Button {
@@ -356,7 +356,7 @@ struct ReviewWorkspaceView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .glassCircle()
+                .quietCircle()
                 .disabled(isWorking)
                 .help("重新生成讲解与检测")
             }
@@ -364,7 +364,7 @@ struct ReviewWorkspaceView: View {
                 .lineSpacing(4)
             ForEach(lesson.keyPoints, id: \.self) { point in
                 Label(point, systemImage: "checkmark.circle")
-                    .font(.callout)
+                    .font(AppDesign.Typography.aux)
             }
             if !lesson.example.isEmpty {
                 SyntaxHighlightedCodeView(
@@ -376,20 +376,16 @@ struct ReviewWorkspaceView: View {
             if !lesson.pitfalls.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("易错点")
-                        .font(.caption.weight(.semibold))
+                        .font(AppDesign.Typography.micro.weight(.semibold))
                         .foregroundStyle(.secondary)
                     ForEach(lesson.pitfalls, id: \.self) { pitfall in
                         Label(pitfall, systemImage: "exclamationmark.circle")
-                            .font(.callout)
+                            .font(AppDesign.Typography.aux)
                             .foregroundStyle(.secondary)
                     }
                 }
+                // 和上面几段同一种排法：小标题 + 列表，不再单独铺一块米黄底。
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(
-                    AppDesign.ColorToken.warning.opacity(0.06),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
             }
         }
     }
@@ -480,7 +476,8 @@ struct ReviewWorkspaceView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.medium)
+        // 自评按钮组是一块很淡的实底，不再是玻璃卡。
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: AppDesign.Radius.medium, style: .continuous))
     }
 
     /// 去脑图里看这道题。讲解本身不用搬过去——脑图的卡片读的就是学习记录里
@@ -506,7 +503,7 @@ struct ReviewWorkspaceView: View {
     private var practiceTypeRow: some View {
         HStack(spacing: 8) {
             Text("练习题型")
-                .font(.caption)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.secondary)
             practiceTypePicker
                 .frame(maxWidth: .infinity)
@@ -524,7 +521,7 @@ struct ReviewWorkspaceView: View {
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .glassCapsule()
+            .quietCapsule()
             .disabled(isWorking)
             .help("按当前题型生成讲解与检测")
         }
@@ -533,9 +530,9 @@ struct ReviewWorkspaceView: View {
     private var generationPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("讲解与练习")
-                .font(.headline)
+                .font(AppDesign.Typography.headline)
             Text("选择练习题型后，点击右侧“生成讲解与检测”。")
-                .font(.callout)
+                .font(AppDesign.Typography.aux)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -547,23 +544,23 @@ struct ReviewWorkspaceView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(practiceLabel(exercise.type))
-                    .font(.caption2.weight(.medium))
+                    .font(AppDesign.Typography.micro.weight(.medium))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
                     .background(Color.accentColor.opacity(0.12), in: Capsule())
                 Text(exercise.title)
-                    .font(.headline)
+                    .font(AppDesign.Typography.headline)
                 Spacer()
                 Text("第 \(attemptCount + 1) 次")
-                    .font(.caption)
+                    .font(AppDesign.Typography.micro)
                     .foregroundStyle(.secondary)
             }
             Text(exercise.prompt)
-                .font(.body.weight(.medium))
+                .font(AppDesign.Typography.body.weight(.medium))
                 .lineSpacing(4)
             if !exercise.instructions.isEmpty {
                 Text(exercise.instructions)
-                    .font(.callout)
+                    .font(AppDesign.Typography.aux)
                     .foregroundStyle(.secondary)
             }
             if !exercise.examples.isEmpty {
@@ -628,7 +625,7 @@ struct ReviewWorkspaceView: View {
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .glassCapsule()
+                    .quietCapsule()
                     .opacity(canSubmit ? 1 : 0.45)
                     .allowsHitTesting(canSubmit)
                     .help("提交当前作答进行 AI 判分")
@@ -651,7 +648,7 @@ struct ReviewWorkspaceView: View {
     private func exerciseExtras(_ title: String, values: [String], language: String?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(AppDesign.Typography.micro.weight(.semibold))
                 .foregroundStyle(.secondary)
             if let language {
                 // 代码题示例属于只读代码，不再伪装成一组等宽正文。
@@ -662,7 +659,7 @@ struct ReviewWorkspaceView: View {
             } else {
                 ForEach(values, id: \.self) { value in
                     Text(value)
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .foregroundStyle(.secondary)
                         .lineSpacing(3)
                         .textSelection(.enabled)
@@ -703,10 +700,10 @@ struct ReviewWorkspaceView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text("你的作答")
-                    .font(.subheadline.weight(.semibold))
+                    .font(AppDesign.Typography.aux.weight(.semibold))
                 if isCode {
                     Text(language.isEmpty ? "code" : language)
-                        .font(.caption.monospaced())
+                        .font(AppDesign.Typography.micro.monospaced())
                         .foregroundStyle(.secondary)
                     Button {
                         answerFormatRequest += 1
@@ -719,7 +716,7 @@ struct ReviewWorkspaceView: View {
                 }
                 Spacer()
                 Text("\(answer.count) 字")
-                    .font(.caption.monospacedDigit())
+                    .font(AppDesign.Typography.micro.monospacedDigit())
                     .foregroundStyle(.tertiary)
             }
 
@@ -739,7 +736,7 @@ struct ReviewWorkspaceView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 } else {
                     TextEditor(text: $answer)
-                        .font(.body)
+                        .font(AppDesign.Typography.body)
                         .lineSpacing(3)
                         .scrollContentBackground(.hidden)
                         .floatingTextScrollIndicators()
@@ -747,7 +744,7 @@ struct ReviewWorkspaceView: View {
 
                     if answer.isEmpty {
                         Text("直接回答检测题；代码题请保留必要的方法签名…")
-                            .font(.body)
+                            .font(AppDesign.Typography.body)
                             .foregroundStyle(.tertiary)
                             .padding(.horizontal, 15)
                             .padding(.vertical, 16)
@@ -814,30 +811,30 @@ struct ReviewWorkspaceView: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text("最近检测")
-                    .font(.headline)
+                    .font(AppDesign.Typography.headline)
                 Spacer()
                 Text("\(Int(attempt.score.rounded())) 分")
-                    .font(.headline.monospacedDigit())
+                    .font(AppDesign.Typography.headline.monospacedDigit())
             }
             Text(attempt.feedback)
-                .font(.callout)
+                .font(AppDesign.Typography.aux)
             if !attempt.strengths.isEmpty {
                 ForEach(attempt.strengths, id: \.self) { strength in
                     Label(strength, systemImage: "checkmark.circle")
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .foregroundStyle(.secondary)
                 }
             }
             if !attempt.gaps.isEmpty {
                 ForEach(attempt.gaps, id: \.self) { gap in
                     Label(gap, systemImage: "arrow.turn.down.right")
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .foregroundStyle(.secondary)
                 }
             }
             if !attempt.nextStep.isEmpty {
                 Label(attempt.nextStep, systemImage: "arrow.right.circle")
-                    .font(.callout.weight(.medium))
+                    .font(AppDesign.Typography.aux.weight(.medium))
             }
         }
         .padding(.leading, 12)
@@ -900,7 +897,7 @@ struct ReviewWorkspaceView: View {
                     Text("\(Int(record.masteryScore))")
                         .monospacedDigit()
                 }
-                .font(.caption2)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 10)
@@ -941,9 +938,9 @@ private struct MasteryGauge: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
             Text(score, format: .number.precision(.fractionLength(0)))
-                .font(.title3.weight(.semibold).monospacedDigit())
+                .font(AppDesign.Typography.title3.weight(.semibold).monospacedDigit())
             Text("掌握度")
-                .font(.caption2)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
@@ -955,6 +952,7 @@ struct GlassSegmentedControl: View {
     let options: [(value: String, label: String)]
     @Binding var selection: String
 
+    /// 扁平分段：淡灰底槽 + 选中项一块实底小胶囊（和系统分段控件同一种读法），不再是玻璃。
     var body: some View {
         HStack(spacing: 2) {
             ForEach(options, id: \.value) { option in
@@ -963,13 +961,16 @@ struct GlassSegmentedControl: View {
                     selection = option.value
                 } label: {
                     Text(option.label)
-                        .font(.appScaled(size: 12.5, weight: isSelected ? .semibold : .regular))
+                        .font(AppDesign.Typography.aux.weight(isSelected ? .semibold : .regular))
                         .foregroundStyle(isSelected ? .primary : .secondary)
+                        .lineLimit(1)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
+                        .padding(.vertical, 4)
                         .background {
                             if isSelected {
-                                Capsule().fill(Color.primary.opacity(0.08))
+                                Capsule()
+                                    .fill(Color(nsColor: .controlBackgroundColor))
+                                    .shadow(color: .black.opacity(0.10), radius: 1, y: 0.5)
                             }
                         }
                         .contentShape(Capsule())
@@ -977,8 +978,9 @@ struct GlassSegmentedControl: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(3)
-        .glassCapsule()
+        .padding(2)
+        .quietCapsule()
+        .animation(AppDesign.Motion.selection, value: selection)
     }
 }
 

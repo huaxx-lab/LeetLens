@@ -1,12 +1,60 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// 把对话嵌进别的页面时的绑定（目前是刷题页的 AI 浮窗）。
+///
+/// 嵌入的对话和对话页用**同一条**生成管线：同一个全局生成槽、同一套记忆注入与工具、
+/// 写进同一份 conversations.json——在刷题页问过的，对话页最近会话里也能接着聊。
+/// 区别只在三处：会话由宿主指定而不是 `workspace.selectedConversationID`；
+/// 输入框草稿按宿主分开存；每次发送前可以附带一段宿主现拼的上下文（当前代码等）。
+struct ConversationEmbedding {
+    /// nil 表示还没开，第一次发送时新建。
+    var conversationID: String?
+    var draft: Binding<String>
+    var placeholder: String
+    var newConversationTitle: @MainActor (String) -> String
+    var onConversationCreated: @MainActor (String) -> Void
+    /// 发送那一刻现拼的 system 上下文。不写进消息记录，见 `LeetCodeAssistantContext`。
+    var contextPrompt: @MainActor () -> String?
+    /// 还没有消息时显示的内容（建议问题等）。
+    var emptyState: AnyView
+    /// 输入框上方的一条附件条（附带了哪些上下文）。
+    var composerAccessory: AnyView?
+}
+
 struct ConversationWorkspaceView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
     var contentTrailingInset: CGFloat = 0
     /// 左侧问题刻度条占掉的一条：正文与输入框都从这里之后开始排。
     var contentLeadingInset: CGFloat = 0
+    var embedding: ConversationEmbedding? = nil
+    /// 这块视图自己的宽度（量化到 20pt）。输入框按它决定一行排还是两行排。
+    @State private var measuredWidth: CGFloat = 0
+
+    private var isEmbedded: Bool { embedding != nil }
+
+    /// 输入框能用的宽度：整列减去两侧让位。
+    private var composerAvailableWidth: CGFloat {
+        guard measuredWidth > 0 else { return .infinity }
+        return measuredWidth - contentLeadingInset - contentTrailingInset - AppDesign.Spacing.lg * 2
+    }
+
+    /// 窄到一行排不下「附件 · 输入 · 模型 · 上下文 · 推理 · 发送」时换成两行排法。
+    /// 一行排法的控件加起来约 380pt，再给输入区留 140pt。
+    private var usesCompactComposer: Bool {
+        isEmbedded || composerAvailableWidth < AppDesign.Size.scaledControl(520)
+    }
+
+    /// 这块视图正在展示的会话。
+    private var activeConversationID: String? {
+        if let embedding { return embedding.conversationID }
+        return workspace.selectedConversationID
+    }
+
+    private var draft: Binding<String> {
+        embedding?.draft ?? $workspace.draft
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -14,9 +62,11 @@ struct ConversationWorkspaceView: View {
                 messages: conversationMessages,
                 conversationRevision: selectedConversation?.revision,
                 generation: visibleGeneration,
-                scrollTargetID: workspace.questionScrollTargetID,
-                scrollTargetRevision: workspace.questionScrollRequestVersion,
+                scrollTargetID: isEmbedded ? nil : workspace.questionScrollTargetID,
+                scrollTargetRevision: isEmbedded ? 0 : workspace.questionScrollRequestVersion,
                 onQuestionActivity: { id, isScrolling in
+                    // 问题刻度条只属于对话页；嵌入的对话不去改它的焦点。
+                    guard !isEmbedded else { return }
                     workspace.updateQuestionNavigation(activeID: id, userIsScrolling: isScrolling)
                 },
                 onOpenURL: { url in
@@ -31,7 +81,21 @@ struct ConversationWorkspaceView: View {
             .opacity(isEmptyConversation ? 0 : 1)
             .allowsHitTesting(!isEmptyConversation)
 
-            if isEmptyConversation {
+            if let embedding {
+                VStack(spacing: 0) {
+                    if isEmptyConversation {
+                        embedding.emptyState
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Spacer(minLength: 0)
+                    }
+                    VStack(spacing: AppDesign.Spacing.xxs) {
+                        embedding.composerAccessory
+                        composer
+                    }
+                    .padding(.bottom, AppDesign.Spacing.compact)
+                }
+            } else if isEmptyConversation {
                 ConversationEmptyStateView {
                     composer
                         .padding(.leading, contentLeadingInset)
@@ -44,12 +108,15 @@ struct ConversationWorkspaceView: View {
                     .padding(.bottom, AppDesign.Spacing.sm)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            (proxy.size.width / 20).rounded(.down) * 20
+        } action: { measuredWidth = $0 }
         // 这里**不能**给 inset 变化加动画：它会传进 WKWebView 去改 CSS 变量，
         // 每一帧补间都等于一次整页重排。第三列展开时列宽本来就在逐帧变，
         // 叠上补间就是稳定卡死。位置跳变一次远比卡住半秒好。
         .transaction(value: contentTrailingInset) { $0.animation = nil }
         .task(id: dataStore.isDataReady) {
-            guard dataStore.isDataReady else { return }
+            guard dataStore.isDataReady, !isEmbedded else { return }
             presentDailyBriefIfNeeded()
         }
     }
@@ -62,6 +129,9 @@ struct ConversationWorkspaceView: View {
         ComposerView(
             workspace: workspace,
             dataStore: dataStore,
+            draft: draft,
+            isCompact: usesCompactComposer,
+            placeholder: embedding?.placeholder,
             conversation: selectedConversation,
             isGenerating: visibleGeneration?.phase == .generating,
             isBusyElsewhere: workspace.conversationGeneration?.phase == .generating && visibleGeneration == nil,
@@ -73,12 +143,12 @@ struct ConversationWorkspaceView: View {
             onInterruptAndSendQueue: interruptAndSendQueue
         )
         .frame(maxWidth: AppDesign.Size.contentColumnMaximum)
-        .padding(.horizontal, AppDesign.Spacing.lg)
+        .padding(.horizontal, isEmbedded ? AppDesign.Spacing.compact : AppDesign.Spacing.lg)
         .frame(maxWidth: .infinity)
     }
 
     private var selectedConversation: ConversationSummary? {
-        guard let id = workspace.selectedConversationID else { return nil }
+        guard let id = activeConversationID else { return nil }
         return dataStore.conversations.first { $0.id == id }
     }
 
@@ -87,12 +157,13 @@ struct ConversationWorkspaceView: View {
     }
 
     private var visibleGeneration: ConversationGenerationSnapshot? {
-        guard workspace.conversationGeneration?.conversationID == workspace.selectedConversationID else { return nil }
+        guard let id = activeConversationID, workspace.conversationGeneration?.conversationID == id else { return nil }
         return workspace.conversationGeneration
     }
 
     private var visibleQueuedDrafts: [QueuedConversationDraft] {
-        workspace.queuedConversationID == workspace.selectedConversationID ? workspace.queuedConversationDrafts : []
+        guard let id = activeConversationID else { return [] }
+        return workspace.queuedConversationID == id ? workspace.queuedConversationDrafts : []
     }
 
     /// 一天只新建一份简报；同一天重启 app 时选中已经存在的那份，而不是复制。
@@ -137,9 +208,9 @@ struct ConversationWorkspaceView: View {
     }
 
     private func sendDraft(artifacts: [ConversationArtifact]) {
-        let prompt = workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, workspace.conversationGeneration?.phase != .generating else { return }
-        workspace.draft = ""
+        draft.wrappedValue = ""
 
         let userMessage = ConversationTranscriptMessage(
             id: Self.messageID(),
@@ -150,17 +221,23 @@ struct ConversationWorkspaceView: View {
         )
         do {
             let conversationID: String
-            if let selected = workspace.selectedConversationID {
+            if let selected = activeConversationID {
                 conversationID = selected
                 try dataStore.appendMessage(userMessage, to: selected)
+            } else if let embedding {
+                conversationID = try dataStore.createConversation(
+                    title: embedding.newConversationTitle(prompt),
+                    firstMessage: userMessage
+                )
+                embedding.onConversationCreated(conversationID)
             } else {
                 conversationID = try dataStore.createConversation(title: prompt, firstMessage: userMessage)
                 workspace.selectedConversationID = conversationID
             }
             startGeneration(conversationID: conversationID, replacingMessageID: nil)
         } catch {
-            workspace.draft = prompt
-            showLocalFailure(error.localizedDescription, conversationID: workspace.selectedConversationID ?? "")
+            draft.wrappedValue = prompt
+            showLocalFailure(error.localizedDescription, conversationID: activeConversationID ?? "")
         }
     }
 
@@ -174,6 +251,8 @@ struct ConversationWorkspaceView: View {
         replacingMessageID: String?,
         continuityPrompt: String? = nil
     ) {
+        // 宿主上下文在点下发送的这一刻拼好：流式任务里再拼，拿到的可能已经是改过的代码。
+        let continuityPrompts = [embedding?.contextPrompt(), continuityPrompt].compactMap { $0 }
         workspace.conversationGenerationTask?.cancel()
         let assistantID = replacingMessageID ?? Self.messageID()
         let providerID = dataStore.settings.activeProviderID
@@ -230,7 +309,7 @@ struct ConversationWorkspaceView: View {
                     conversationID: conversationID,
                     excluding: replacingMessageID,
                     memoryPrompts: memory.prompts,
-                    continuityPrompt: continuityPrompt,
+                    continuityPrompts: continuityPrompts,
                     runtimeIdentity: runtimeIdentity
                 )
                 // 工具跑在主线程拍下的这份快照上：`LegacyDataStore` 是 @MainActor 的，
@@ -381,13 +460,13 @@ struct ConversationWorkspaceView: View {
     }
 
     private func enqueueDraft(artifacts: [ConversationArtifact]) {
-        let prompt = workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty,
               let current = workspace.conversationGeneration,
               current.phase == .generating,
-              current.conversationID == workspace.selectedConversationID
+              current.conversationID == activeConversationID
         else { return }
-        workspace.draft = ""
+        draft.wrappedValue = ""
         workspace.queuedConversationID = current.conversationID
         workspace.queuedConversationDrafts.append(QueuedConversationDraft(text: prompt, artifacts: artifacts))
     }
@@ -440,7 +519,7 @@ struct ConversationWorkspaceView: View {
         conversationID: String,
         excluding messageID: String?,
         memoryPrompts: [String],
-        continuityPrompt: String?,
+        continuityPrompts: [String],
         runtimeIdentity: ConversationRuntimeIdentity
     ) -> [ChatRequestMessage] {
         // 工具是"能力"，不是"义务"：不把它写成必须调用，否则问"快排怎么写"
@@ -464,9 +543,7 @@ struct ConversationWorkspaceView: View {
         }
         let identity = ChatRequestMessage(role: "system", content: runtimeIdentity.systemPrompt)
         let memory = memoryPrompts.map { ChatRequestMessage(role: "system", content: $0) }
-        let continuity = continuityPrompt.map {
-            [ChatRequestMessage(role: "system", content: $0)]
-        } ?? []
+        let continuity = continuityPrompts.map { ChatRequestMessage(role: "system", content: $0) }
         let managed = ConversationContextManager.build(
             messages: conversation.messages.filter { $0.id != messageID },
             contextSummary: conversation.contextSummary,
@@ -844,6 +921,10 @@ private struct BraunClockView: View {
 private struct ComposerView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
+    @Binding var draft: String
+    /// 嵌在浮窗里：窄，收起上下文占用环，模型芯片用最窄一档。
+    var isCompact = false
+    var placeholder: String?
     let conversation: ConversationSummary?
     let isGenerating: Bool
     let isBusyElsewhere: Bool
@@ -870,7 +951,7 @@ private struct ComposerView: View {
     private var contextUsage: ContextUsageSnapshot {
         workspace.contextUsage(
             for: conversation,
-            draft: workspace.draft,
+            draft: draft,
             settings: dataStore.settings
         )
     }
@@ -882,75 +963,42 @@ private struct ComposerView: View {
                 Divider().padding(.horizontal, 10)
             }
 
-            HStack(alignment: .center, spacing: 9) {
-            Button { showsImageImporter = true } label: {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: "plus")
-                        .frame(width: 28, height: 28)
-                    if !pendingArtifacts.isEmpty {
-                        Text("\(pendingArtifacts.count)")
-                            .font(.appScaled(size: 8, weight: .bold).monospacedDigit())
-                            .foregroundStyle(.white)
-                            .frame(minWidth: 13, minHeight: 13)
-                            .background(Color.accentColor, in: Circle())
+            if isCompact {
+                // 浮窗里宽度只有三四百点：一行排不下输入框 + 模型 + 推理 + 发送，
+                // 硬塞的结果是输入框被挤成一条竖缝、占位文字折成三行。
+                // 改成两行：上面整行给输入，下面一排控件（和 Codex 窄窗口的输入框一样）。
+                VStack(alignment: .leading, spacing: 4) {
+                    inputField
+                        .padding(.horizontal, 4)
+                    HStack(spacing: 6) {
+                        attachButton
+                        modelPicker
+                        reasoningButton
+                        Spacer(minLength: 0)
+                        sendButton
                     }
                 }
-            }
-            .buttonStyle(.plain)
-            .help(pendingArtifacts.isEmpty ? "添加图片" : "已添加 \(pendingArtifacts.count) 张图片")
-            .disabled(isBusyElsewhere)
-
-            TextField(composerPlaceholder, text: $workspace.draft, axis: .vertical)
-                .font(.body)
-                .textFieldStyle(.plain)
-                .lineLimit(1...5)
-                .floatingTextScrollIndicators()
-                .focused($isComposerFocused)
-                .padding(.vertical, 5)
-                .onSubmit { primaryAction() }
-                .disabled(isBusyElsewhere)
-
-            // 把右侧操作组贴近发送键，空余宽度全部留给输入区；
-            // 模型选择不再停在输入框中段。
-            Spacer(minLength: AppDesign.Spacing.xs)
-
-            modelPicker
-
-            contextMeter
-
-            Button { showsReasoning.toggle() } label: {
-                HStack(spacing: 5) {
-                    Text(workspace.reasoningLevel.title)
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .rotationEffect(.degrees(showsReasoning ? 180 : 0))
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 6)
+            } else {
+                HStack(alignment: .center, spacing: 9) {
+                    attachButton
+                    inputField
+                    // 把右侧操作组贴近发送键，空余宽度全部留给输入区；
+                    // 模型选择不再停在输入框中段。
+                    Spacer(minLength: AppDesign.Spacing.xs)
+                    modelPicker
+                    contextMeter
+                    reasoningButton
+                    sendButton
                 }
-                .frame(minWidth: 44, minHeight: 28)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             }
-            .buttonStyle(.plain)
-            .popover(isPresented: $showsReasoning, arrowEdge: .bottom) {
-                ReasoningPopover(workspace: workspace)
-            }
-            .help("推理强度")
-
-            Button(action: primaryAction) {
-                Image(systemName: sendButtonSymbol)
-                    .font(.appScaled(size: sendButtonSymbol == "stop.fill" ? 10 : 13, weight: .semibold))
-                    .contentTransition(.symbolEffect(.replace))
-                    .foregroundStyle(.white)
-                    .frame(width: 30, height: 30)
-                    .background(sendButtonColor, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .disabled(sendButtonDisabled)
-            .help(sendButtonHelp)
-            .keyboardShortcut(.return, modifiers: .command)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
         }
         .frame(minHeight: AppDesign.Size.composerMinimumHeight)
-        .navigationGlass(cornerRadius: AppDesign.Radius.composer, interactive: true)
+        .background { composerSurface }
         .animation(AppDesign.Motion.selection, value: showsReasoning)
         .animation(AppDesign.Motion.selection, value: isGenerating)
         .fileImporter(
@@ -968,15 +1016,100 @@ private struct ComposerView: View {
         }
     }
 
+    /// 对话页的输入框浮在正文上，用玻璃；嵌在浮窗里时浮窗本身已经是一层，
+    /// 再叠一层玻璃就是"框里套框"，改成一块安静的实底 + 发丝边。
+    @ViewBuilder
+    private var composerSurface: some View {
+        if isCompact {
+            RoundedRectangle(cornerRadius: AppDesign.Radius.card + 2, style: .continuous)
+                .fill(Color.primary.opacity(isComposerFocused ? 0.035 : 0.025))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AppDesign.Radius.card + 2, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(isComposerFocused ? 0.16 : 0.08))
+                }
+        } else {
+            Color.clear.navigationGlass(cornerRadius: AppDesign.Radius.composer, interactive: true)
+        }
+    }
+
+    private var attachButton: some View {
+        Button { showsImageImporter = true } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "plus")
+                    .frame(width: 28, height: 28)
+                if !pendingArtifacts.isEmpty {
+                    Text("\(pendingArtifacts.count)")
+                        .font(.appScaled(size: 8, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 13, minHeight: 13)
+                        .background(Color.accentColor, in: Circle())
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(pendingArtifacts.isEmpty ? "添加图片" : "已添加 \(pendingArtifacts.count) 张图片")
+        .disabled(isBusyElsewhere)
+    }
+
+    private var inputField: some View {
+        TextField(composerPlaceholder, text: $draft, axis: .vertical)
+            .font(AppDesign.Typography.body)
+            .textFieldStyle(.plain)
+            .lineLimit(isCompact ? 2...8 : 1...5)
+            .floatingTextScrollIndicators()
+            .focused($isComposerFocused)
+            .padding(.vertical, 5)
+            .onSubmit { primaryAction() }
+            .disabled(isBusyElsewhere)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var reasoningButton: some View {
+        Button { showsReasoning.toggle() } label: {
+            HStack(spacing: 5) {
+                Text(workspace.reasoningLevel.title)
+                Image(systemName: "chevron.down")
+                    .font(AppDesign.Typography.micro)
+                    .rotationEffect(.degrees(showsReasoning ? 180 : 0))
+            }
+            .font(isCompact ? AppDesign.Typography.aux : AppDesign.Typography.body)
+            .foregroundStyle(isCompact ? .secondary : .primary)
+            .frame(minWidth: 44, minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showsReasoning, arrowEdge: .bottom) {
+            ReasoningPopover(workspace: workspace)
+        }
+        .help("推理强度")
+    }
+
+    private var sendButton: some View {
+        Button(action: primaryAction) {
+            Image(systemName: sendButtonSymbol)
+                .font(.appScaled(size: sendButtonSymbol == "stop.fill" ? 10 : 13, weight: .semibold))
+                .contentTransition(.symbolEffect(.replace))
+                .foregroundStyle(.white)
+                .frame(width: isCompact ? 26 : 30, height: isCompact ? 26 : 30)
+                .background(sendButtonColor, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(sendButtonDisabled)
+        .help(sendButtonHelp)
+        .keyboardShortcut(.return, modifiers: .command)
+    }
+
     private var queueStatus: some View {
         HStack(spacing: 8) {
             Image(systemName: "text.badge.plus")
                 .font(.appScaled(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
             Text("待发送 \(queuedDrafts.count) 条")
-                .font(.caption.weight(.semibold))
+                .font(AppDesign.Typography.micro.weight(.semibold))
             Text(queuedDrafts.map(\.text).joined(separator: " · "))
-                .font(.caption)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer(minLength: 8)
@@ -994,13 +1127,13 @@ private struct ComposerView: View {
     }
 
     private var hasDraft: Bool {
-        !workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var composerPlaceholder: String {
         if isBusyElsewhere { return "另一对话正在生成…" }
         if isGenerating { return "输入补充，发送后进入队列…" }
-        return "给 AI 发送消息"
+        return placeholder ?? "给 AI 发送消息"
     }
 
     private var sendButtonSymbol: String {
@@ -1058,13 +1191,22 @@ private struct ComposerView: View {
                         .frame(width: 13, height: 13)
                 }
                 Text(activeProvider?.model ?? "选择模型")
-                    .font(.appScaled(size: 12, weight: .medium))
+                    .font(isCompact ? AppDesign.Typography.aux : .appScaled(size: 12, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .layoutPriority(-1)
-                Image(systemName: "chevron.down").font(.caption2)
+                Image(systemName: "chevron.down").font(AppDesign.Typography.micro)
             }
-            .frame(width: modelPickerWidth, height: 28, alignment: .trailing)
+            .foregroundStyle(isCompact ? .secondary : .primary)
+            // 浮窗里模型芯片挨着附件键往左排，宽度随名字、给个上限；对话页仍是右对齐的定宽。
+            .frame(
+                minWidth: isCompact ? nil : modelPickerWidth,
+                maxWidth: isCompact ? AppDesign.Size.scaledControl(150) : modelPickerWidth,
+                minHeight: 28,
+                maxHeight: 28,
+                alignment: isCompact ? .leading : .trailing
+            )
+            .fixedSize(horizontal: isCompact, vertical: false)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1156,10 +1298,10 @@ private struct ComposerView: View {
         .buttonStyle(ModelRowButtonStyle())
     }
 
-    private var showsModelIcon: Bool { workspace.windowWidth >= 1_050 }
+    private var showsModelIcon: Bool { isCompact || workspace.windowWidth >= 1_050 }
 
     private var modelPickerWidth: CGFloat {
-        if workspace.windowWidth < 980 { return 92 }
+        if isCompact || workspace.windowWidth < 980 { return 92 }
         if workspace.windowWidth < 1_260 { return 116 }
         return 142
     }
@@ -1204,7 +1346,7 @@ private struct ComposerView: View {
 
     private var sendButtonColor: Color {
         if isGenerating { return .primary }
-        return workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .accentColor
+        return draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .accentColor
     }
 
     private var contextMeter: some View {
@@ -1246,7 +1388,7 @@ private struct ComposerView: View {
     }
 
     private func submit() {
-        let hasPrompt = !workspace.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasPrompt = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         onSend(pendingArtifacts)
         if hasPrompt {
             pendingArtifacts.removeAll()
@@ -1280,10 +1422,10 @@ private struct ContextUsagePopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("上下文").font(.headline)
+                Text("上下文").font(AppDesign.Typography.headline)
                 Spacer()
                 Text(usage.utilization, format: .percent.precision(.fractionLength(0)))
-                    .font(.headline.monospacedDigit())
+                    .font(AppDesign.Typography.headline.monospacedDigit())
             }
             ProgressView(value: usage.utilization)
                 .tint(usage.shouldCompress ? .orange : .accentColor)
@@ -1302,7 +1444,7 @@ private struct ContextUsagePopover: View {
                     .monospacedDigit()
             }
         }
-        .font(.caption)
+        .font(AppDesign.Typography.micro)
         .padding(16)
         .frame(width: 300)
         .onHover(perform: onHover)
@@ -1332,7 +1474,7 @@ private struct ReasoningPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("推理强度").font(.headline)
+                Text("推理强度").font(AppDesign.Typography.headline)
                 Spacer()
                 Text(workspace.reasoningLevel.title).foregroundStyle(.secondary)
             }
@@ -1342,7 +1484,7 @@ private struct ReasoningPopover: View {
             HStack {
                 ForEach(ReasoningLevel.allCases) { level in
                     Text(level.title)
-                        .font(.caption2)
+                        .font(AppDesign.Typography.micro)
                         .foregroundStyle(level == workspace.reasoningLevel ? .primary : .tertiary)
                     if level != ReasoningLevel.allCases.last { Spacer() }
                 }

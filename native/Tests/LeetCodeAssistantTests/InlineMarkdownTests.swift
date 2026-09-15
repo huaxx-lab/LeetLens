@@ -2,6 +2,7 @@ import SwiftUI
 import XCTest
 @testable import LeetCodeAssistant
 
+@MainActor
 final class InlineMarkdownTests: XCTestCase {
     func testRendersEmphasisAndCodeInsteadOfShowingRawMarks() {
         let value = InlineMarkdown.attributed("先看 **单调性**，再想 `nums[i]` 的取值范围")

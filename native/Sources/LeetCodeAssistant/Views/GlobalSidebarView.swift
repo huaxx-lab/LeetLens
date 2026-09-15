@@ -314,7 +314,6 @@ struct GlobalSidebarView: View {
             .padding(.horizontal, AppDesign.Spacing.xs)
             .frame(height: 40)
             .contentShape(Rectangle())
-            .inlineGlass(cornerRadius: AppDesign.Radius.medium, interactive: true)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -578,7 +577,7 @@ struct SearchPaletteView: View {
         VStack(alignment: .leading, spacing: 0) {
             TextField("搜索聊天", text: $query)
                 .textFieldStyle(.plain)
-                .font(.title3)
+                .font(AppDesign.Typography.title3)
                 .focused($isFocused)
                 .padding(.horizontal, 18)
                 .padding(.top, 16)
@@ -637,7 +636,7 @@ struct SearchPaletteView: View {
 
     private func sectionTitle(_ title: String) -> some View {
         Text(title)
-            .font(.callout)
+            .font(AppDesign.Typography.aux)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.top, 8)
@@ -660,11 +659,11 @@ struct SearchPaletteView: View {
                         .frame(width: 18)
                 }
                 Text(title)
-                    .font(.callout)
+                    .font(AppDesign.Typography.aux)
                     .lineLimit(1)
                 Spacer(minLength: 12)
                 Text(shortcut)
-                    .font(.caption2.weight(.medium))
+                    .font(AppDesign.Typography.micro.weight(.medium))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)

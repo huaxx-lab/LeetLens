@@ -229,6 +229,8 @@ struct ColumnResizeHandle: NSViewRepresentable {
     var width: CGFloat
     var range: ClosedRange<CGFloat>
     var growsOnDragRight: Bool
+    /// 抓取带宽度。默认只伸进本列 `thickness`；页内列表那种一侧挂一条的，传两倍宽再外移一半，骑在分栏线上。
+    var bandWidth: CGFloat = ColumnResizeHandle.thickness
     var onChange: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> ColumnResizeHandleView {
@@ -241,12 +243,17 @@ struct ColumnResizeHandle: NSViewRepresentable {
         apply(to: view)
     }
 
-    /// 单侧抓取带宽度。分栏线两侧各挂一条，实际可拖范围是 16pt。
-    /// 原来只有贴着第三列内侧的 6pt，指针得先瞄准才拖得动。
-    static let thickness: CGFloat = 8
+    /// 单侧抓取带宽度。分栏线两侧各挂一条，实际可拖范围是 10pt。
+    ///
+    /// **不能再宽**：它是盖在内容上面的真 NSView，命中测试永远赢过 SwiftUI 手势和网页。
+    /// 原来每侧 8pt，而列里的悬浮滚动条离边 4–10pt，正好压在抓取带底下——
+    /// 鼠标移到滚动条上出现的是左右拉伸光标，按下去拖的是分栏线，滚动条根本点不着。
+    /// 现在抓取带每侧 5pt，滚动条离边 6pt 起（`FloatingScrollIndicator.edgeClearance`），
+    /// 两者之间留出 1pt 缝，谁也不压谁。`ScrollIndicatorClearanceTests` 守着这条不等式。
+    static let thickness: CGFloat = 5
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: ColumnResizeHandleView, context: Context) -> CGSize? {
-        CGSize(width: Self.thickness, height: proposal.height ?? nsView.bounds.height)
+        CGSize(width: bandWidth, height: proposal.height ?? nsView.bounds.height)
     }
 
     private func apply(to view: ColumnResizeHandleView) {

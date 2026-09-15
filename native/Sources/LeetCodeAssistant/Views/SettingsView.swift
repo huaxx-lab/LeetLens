@@ -424,7 +424,7 @@ private struct GeneralSettingsPage: View {
 
             if !saveStatus.isEmpty {
                 Text(saveStatus)
-                    .font(.caption)
+                    .font(AppDesign.Typography.micro)
                     .foregroundStyle(.secondary)
             }
         }
@@ -522,11 +522,11 @@ private struct BrowserSettingsPage: View {
 
             if let downloadStatus = session.downloadStatus {
                 Label(downloadStatus, systemImage: "arrow.down.circle.fill")
-                    .font(.caption)
+                    .font(AppDesign.Typography.micro)
                     .foregroundStyle(.secondary)
             }
             if !status.isEmpty {
-                Text(status).font(.caption).foregroundStyle(.secondary)
+                Text(status).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
             }
         }
         .onChange(of: linkTarget) { _, value in BrowserPreferences.shared.linkTarget = value }
@@ -585,9 +585,9 @@ struct BrowserHistorySheet: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("浏览历史").font(.title2.weight(.semibold))
+                    Text("浏览历史").font(AppDesign.Typography.title2.weight(.semibold))
                     Text("最多保留 500 条，点击可在内置浏览器重新打开")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("清空", role: .destructive) { session.clearHistory() }
@@ -622,10 +622,10 @@ struct BrowserHistorySheet: View {
                                     Image(systemName: "globe").foregroundStyle(.secondary).frame(width: 24)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(entry.title).font(.appScaled(size: 14, weight: .medium)).lineLimit(1)
-                                        Text(entry.url.absoluteString).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                        Text(entry.url.absoluteString).font(AppDesign.Typography.micro).foregroundStyle(.secondary).lineLimit(1)
                                     }
                                     Spacer()
-                                    Text(entry.visitedAt, style: .relative).font(.caption).foregroundStyle(.tertiary)
+                                    Text(entry.visitedAt, style: .relative).font(AppDesign.Typography.micro).foregroundStyle(.tertiary)
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .contentShape(Rectangle())
@@ -872,7 +872,7 @@ private struct ProfileSettingsPage: View {
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(AppDesign.ColorToken.inlineFill, in: Capsule())
                 }
-                .font(.caption)
+                .font(AppDesign.Typography.micro)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
@@ -914,7 +914,7 @@ private struct ProfileSettingsPage: View {
                     ForEach(Array(topTasks.enumerated()), id: \.element.0.id) { index, item in
                         SettingsRow(item.0.title, subtitle: item.0.subtitle, systemImage: item.0.systemImage) {
                             Text("\(item.1.requestCount) 次")
-                                .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                                .font(AppDesign.Typography.aux.monospacedDigit()).foregroundStyle(.secondary)
                         }
                         if index < topTasks.count - 1 { CardDivider() }
                     }
@@ -983,7 +983,7 @@ private struct ProfileSettingsPage: View {
                     Image(systemName: item.systemImage)
                         .font(.appScaled(size: 10, weight: .semibold))
                     Text(item.title)
-                        .font(.caption)
+                        .font(AppDesign.Typography.micro)
                 }
                 .foregroundStyle(metric == item ? Color.accentColor : .secondary)
             }
@@ -1088,7 +1088,7 @@ private struct ProfileSettingsPage: View {
                 ForEach(segments, id: \.0) { part in
                     HStack(spacing: 5) {
                         Circle().fill(part.2).frame(width: 6, height: 6)
-                        Text(part.0).font(.caption).foregroundStyle(.secondary)
+                        Text(part.0).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -1107,7 +1107,7 @@ private struct ProfileSettingsPage: View {
                         .font(.appScaled(size: 15, weight: .medium).monospacedDigit())
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
-                    Text(item.0).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(item.0).font(AppDesign.Typography.micro).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
         }
@@ -1120,7 +1120,7 @@ private struct ProfileSettingsPage: View {
             Text("\(activity.total) 次提交")
                 .font(.appScaled(size: 15, weight: .semibold).monospacedDigit())
             Text("· 活跃 \(activity.activeDays) 天 · 当前连续 \(activity.currentStreak) 天 · 最长 \(activity.longestStreak) 天")
-                .font(.caption)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             Picker("", selection: $range) {
@@ -1249,11 +1249,11 @@ private struct ProfileSettingsPage: View {
             // 而且常驻一行比等 tooltip 弹出来更快看到。
             if let hoveredDay {
                 Text("\(hoveredDay.formatted(date: .abbreviated, time: .omitted))：\(activity.counts[hoveredDay] ?? 0) 次提交")
-                    .font(.caption.monospacedDigit())
+                    .font(AppDesign.Typography.micro.monospacedDigit())
                     .foregroundStyle(.secondary)
             } else {
                 Text(dataStore.leetCodeActivity.isEmpty ? "连接 LeetCode 后显示真实提交活动" : "点击某一天查看当天提交")
-                    .font(.caption)
+                    .font(AppDesign.Typography.micro)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
@@ -1275,7 +1275,7 @@ private struct ProfileSettingsPage: View {
                 Text(day.formatted(.dateTime.year().month(.wide).day().weekday(.wide)))
                     .font(.appScaled(size: 13, weight: .semibold))
                 Text("\(items.count) 次提交 · 通过 \(items.count { $0.accepted })")
-                    .font(.caption.monospacedDigit())
+                    .font(AppDesign.Typography.micro.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Button { selectedDay = nil } label: {
@@ -1289,7 +1289,7 @@ private struct ProfileSettingsPage: View {
             }
             if items.isEmpty {
                 Text("这一天没有提交记录")
-                    .font(.callout)
+                    .font(AppDesign.Typography.aux)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(items.prefix(12)) { item in
@@ -1298,24 +1298,24 @@ private struct ProfileSettingsPage: View {
                             .fill(item.accepted ? AppDesign.ColorToken.success : AppDesign.ColorToken.warning)
                             .frame(width: 6, height: 6)
                         Text(item.title)
-                            .font(.callout)
+                            .font(AppDesign.Typography.aux)
                             .lineLimit(1)
                         Text(item.status)
-                            .font(.caption)
+                            .font(AppDesign.Typography.micro)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         Spacer(minLength: 8)
                         Text(item.language)
-                            .font(.caption.monospaced())
+                            .font(AppDesign.Typography.micro.monospaced())
                             .foregroundStyle(.tertiary)
                         Text(item.submittedAt.formatted(date: .omitted, time: .shortened))
-                            .font(.caption.monospacedDigit())
+                            .font(AppDesign.Typography.micro.monospacedDigit())
                             .foregroundStyle(.tertiary)
                     }
                 }
                 if items.count > 12 {
                     Text("还有 \(items.count - 12) 条…")
-                        .font(.caption)
+                        .font(AppDesign.Typography.micro)
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -1395,7 +1395,7 @@ private struct ProviderSettingsPage: View {
                     }
                 }
                 Text("路由是全局策略：未单独指定的任务跟随默认供应商。")
-                    .font(.caption)
+                    .font(AppDesign.Typography.micro)
                     .foregroundStyle(.secondary)
                     .padding(.leading, 4)
             }
@@ -1702,7 +1702,7 @@ private struct ContextSettingsPage: View {
                 .buttonStyle(SettingsPillButtonStyle())
                 Spacer()
                 if !saveStatus.isEmpty {
-                    Text(saveStatus).font(.caption).foregroundStyle(.secondary)
+                    Text(saveStatus).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                 }
             }
 
@@ -1739,11 +1739,11 @@ private struct ContextSettingsPage: View {
             SettingsCard(title: "跨对话记忆", systemImage: "brain", tint: .indigo) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("模型每轮常驻拿到「长期事实」与会话目录；只有当你提到「上次」「我的」，或用到旧会话标题里的词时，才会额外跑一次全量检索。")
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("长期事实由「跨对话记忆整合」这条任务路由在后台离线生成，可在上面的模型路由里单独指定模型。存储在 memory-facts.json，可直接编辑。")
-                        .font(.caption)
+                        .font(AppDesign.Typography.micro)
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1754,7 +1754,7 @@ private struct ContextSettingsPage: View {
 
                 if memoryFacts.isEmpty {
                     Text("还没有沉淀出长期事实。多聊几轮、生成过会话摘要之后会自动整合。")
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
@@ -1762,12 +1762,12 @@ private struct ContextSettingsPage: View {
                     ForEach(Array(memoryFacts.enumerated()), id: \.element.id) { index, fact in
                         HStack(spacing: 10) {
                             Text(fact.kindTitle)
-                                .font(.caption2.weight(.medium))
+                                .font(AppDesign.Typography.micro.weight(.medium))
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2)
                                 .background(Color.indigo.opacity(0.12), in: Capsule())
                             Text(fact.text)
-                                .font(.callout)
+                                .font(AppDesign.Typography.aux)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
                             // 记错了删不掉，比记错本身更伤信任。
@@ -1871,7 +1871,7 @@ private struct VideoSettingsPage: View {
                             Text(dataStore.videoHistoryCount == 0
                                  ? "尚无记录"
                                  : "\(dataStore.videoHistoryCount) 条·点击视频在右侧浏览器播放")
-                                .font(.caption)
+                                .font(AppDesign.Typography.micro)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -1910,7 +1910,7 @@ private struct VideoSettingsPage: View {
                                         .lineLimit(2)
                                         .fixedSize(horizontal: false, vertical: true)
                                     Text(videoProgress(item))
-                                        .font(.caption)
+                                        .font(AppDesign.Typography.micro)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -2088,7 +2088,7 @@ private struct AccountSettingsPage: View {
                 }
             }
             if !status.isEmpty {
-                Text(status).font(.caption).foregroundStyle(.secondary)
+                Text(status).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
             }
         }
         .sheet(item: $loginProvider) { provider in
@@ -2189,8 +2189,8 @@ private struct EmbeddedAccountLoginView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Text(provider.title).font(.headline)
-                Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(provider.title).font(AppDesign.Typography.headline)
+                Text(status).font(AppDesign.Typography.micro).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
                 if identity == nil {
                     Button("检查登录状态", systemImage: "arrow.clockwise") { checkRevision &+= 1 }
@@ -2207,12 +2207,12 @@ private struct EmbeddedAccountLoginView: View {
                 VStack(spacing: 14) {
                     loginAvatar(identity)
                     Text(identity.name)
-                        .font(.title2.weight(.semibold))
+                        .font(AppDesign.Typography.title2.weight(.semibold))
                     Text(identity.account)
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .foregroundStyle(.secondary)
                     Label("账号已连接", systemImage: "checkmark.circle.fill")
-                        .font(.subheadline.weight(.medium))
+                        .font(AppDesign.Typography.aux.weight(.medium))
                         .foregroundStyle(.green)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2501,7 +2501,7 @@ private struct DataCacheSettingsPage: View {
                             TextField("2", text: $redis.timeoutSeconds)
                                 .settingsInputSurface()
                                 .frame(width: 72)
-                            Text("秒").font(.caption).foregroundStyle(.secondary)
+                            Text("秒").font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -2563,7 +2563,7 @@ private struct DataCacheSettingsPage: View {
                             TextField("5", text: $vectorDatabase.timeoutSeconds)
                                 .settingsInputSurface()
                                 .frame(width: 72)
-                            Text("秒").font(.caption).foregroundStyle(.secondary)
+                            Text("秒").font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -2582,7 +2582,7 @@ private struct DataCacheSettingsPage: View {
 
                 if !vectorStatus.isEmpty {
                     Text(vectorStatus)
-                        .font(.caption)
+                        .font(AppDesign.Typography.micro)
                         .foregroundStyle(vectorStatus.contains("成功") ? AppDesign.ColorToken.success : AppDesign.ColorToken.warning)
                         .lineLimit(2)
                 }
@@ -2591,7 +2591,7 @@ private struct DataCacheSettingsPage: View {
 
                 if !saveStatus.isEmpty {
                     Text(saveStatus)
-                        .font(.caption)
+                        .font(AppDesign.Typography.micro)
                         .foregroundStyle(saveStatus.hasPrefix("保存失败") ? AppDesign.ColorToken.warning : .secondary)
                 }
                 Button {
@@ -2607,7 +2607,7 @@ private struct DataCacheSettingsPage: View {
 
             if InfrastructureConfigurationStore.hasEnvironmentOverrides {
                 Label("当前进程存在环境变量覆盖；本次保存会立即应用，重新启动后仍以环境变量为准。", systemImage: "info.circle")
-                    .font(.caption)
+                    .font(AppDesign.Typography.micro)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 4)
             }
@@ -2628,7 +2628,7 @@ private struct DataCacheSettingsPage: View {
             .disabled(disabled || isRunning)
             if !status.isEmpty {
                 Text(status)
-                    .font(.caption)
+                    .font(AppDesign.Typography.micro)
                     .foregroundStyle(status.contains("成功") ? AppDesign.ColorToken.success : AppDesign.ColorToken.warning)
             }
             Spacer()
@@ -2706,27 +2706,27 @@ private struct AppearanceSettingsPage: View {
                     .frame(width: 230)
                 }
                 CardDivider()
-                // 界面已按屏幕自动缩放（口径见 `InterfaceMetrics.displayScale`），
-                // 这一档是在自动档之上再做相对调整，两者相乘。
+                // 「自动」按窗口所在显示器的工作区算（口径见 `InterfaceMetrics.displayScale`），
+                // 其余三档是固定倍率。
                 SettingsRow(
                     "界面字号",
-                    subtitle: "「跟随屏幕」按当前显示器算，这块屏上是 \(autoScaleText)"
+                    subtitle: "「自动」按窗口所在的显示器调整，这块屏上是 \(autoScaleText)；对话、题面和代码编辑器一起缩放"
                 ) {
                     GlassSegmentedControl(
                         options: InterfaceMetrics.FontScale.allCases.map { ($0.rawValue, $0.title) },
                         selection: Binding(
                             get: { metrics.fontScale.rawValue },
-                            set: { metrics.fontScale = InterfaceMetrics.FontScale(rawValue: $0) ?? .standard }
+                            set: { metrics.fontScale = InterfaceMetrics.FontScale(rawValue: $0) ?? .followDisplay }
                         )
                     )
-                    .frame(width: 272)
+                    .frame(width: AppDesign.Size.scaledControl(272))
                 }
                 CardDivider()
                 SettingsToggleRow("使用流畅的面板与符号动效", isOn: $emphasizeMotion)
             }
 
             if !status.isEmpty {
-                Text(status).font(.caption).foregroundStyle(.secondary)
+                Text(status).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
             }
 
             SettingsCard(title: "Liquid Glass") {

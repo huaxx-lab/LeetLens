@@ -82,11 +82,11 @@ struct LearningLibraryWorkspaceView: View {
                     // 原来 label 上还写着 `maxWidth: .infinity`，等于主动要满宽：胶囊铺满整条侧栏、
                     // "全部"被摆到正中间，右边跟着空一大片。锁死宽度后它才回到行首。
                     .frame(width: 150, height: AppDesign.Size.toolbarControl)
-                    .glassCapsule()
+                    .quietCapsule()
                     .help("知识分类")
                     Spacer(minLength: 8)
                     Text("\(records.count) 项")
-                        .font(.caption.monospacedDigit())
+                        .font(AppDesign.Typography.micro.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 10)
@@ -116,7 +116,7 @@ struct LearningLibraryWorkspaceView: View {
                                             .frame(width: 7, height: 7)
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(record.title)
-                                                .font(.subheadline.weight(.medium))
+                                                .font(AppDesign.Typography.aux.weight(.medium))
                                                 .lineLimit(1)
                                             HStack(spacing: 5) {
                                                 Text(record.primaryKnowledge).lineLimit(1)
@@ -124,7 +124,7 @@ struct LearningLibraryWorkspaceView: View {
                                                 Text("\(Int(record.effectiveMastery()))")
                                                     .monospacedDigit()
                                             }
-                                            .font(.caption2)
+                                            .font(AppDesign.Typography.micro)
                                             .foregroundStyle(.secondary)
                                         }
                                         Spacer(minLength: 0)
@@ -164,7 +164,9 @@ struct LearningLibraryWorkspaceView: View {
 
             if let record = selectedRecord {
                 LearningRecordDetailView(record: record, workspace: workspace, dataStore: dataStore)
-                    .frame(minWidth: 500, maxWidth: .infinity, maxHeight: .infinity)
+                    // 不设最小宽：列表 300 + 详情 500 在侧栏和第三列都开着时放不下，
+                    // 会把整页撑宽、居中溢出，左边一截钻到侧栏底下。
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView("没有符合条件的学习项", systemImage: "books.vertical")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -331,7 +333,7 @@ private struct LearningRecordDetailView: View {
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .glassCapsule()
+                .quietCapsule()
 
                 Button {
                     workspace.selectedLearningRecordID = record.id
@@ -345,7 +347,7 @@ private struct LearningRecordDetailView: View {
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .glassCapsule()
+                .quietCapsule()
             }
             .padding(.horizontal, 16)
             .frame(height: 52)
@@ -466,7 +468,7 @@ private struct LearningRecordDetailView: View {
                     Spacer(minLength: 0)
                     if submissionID != nil {
                         Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
+                            .font(AppDesign.Typography.micro.weight(.semibold))
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     }
@@ -734,7 +736,7 @@ struct LearningInsightsWorkspaceView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: AppDesign.Spacing.rowInset) {
+            VStack(alignment: .leading, spacing: AppDesign.Spacing.lg) {
                 header
 
                 if records.isEmpty {
@@ -746,6 +748,7 @@ struct LearningInsightsWorkspaceView: View {
                     .frame(maxWidth: .infinity, minHeight: 320)
                 } else {
                     metricStrip
+                    Hairline()
 
                     // 两列等高：不给 maxHeight 的话短的那张卡会缩成一半，
                     // 和右边的长卡片底边对不齐。
@@ -757,11 +760,13 @@ struct LearningInsightsWorkspaceView: View {
                     // 视图标识不同：断点一翻，两张卡连同所有子视图整个销毁重建。
                     // 侧栏开合时列宽逐帧变化，这一下会在动画中途触发——就是这一页
                     // 收放特别卡的原因。`AnyLayout` 只换排列方式，标识不变，卡片原地重排。
-                    twoCardLayout(alignment: .top, spacing: AppDesign.Spacing.rowInset) {
+                    twoCardLayout(alignment: .top, spacing: AppDesign.Spacing.xl) {
                         focusCard
                         topicCard
                     }
                     .fixedSize(horizontal: false, vertical: true)
+
+                    Hairline()
 
                     forecastCard
                 }
@@ -795,71 +800,40 @@ struct LearningInsightsWorkspaceView: View {
         return layout { content() }
     }
 
+    /// 页名已经在列头里了，这里不再放一行大号「学习洞察」，只留统计口径说明。
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("学习洞察")
-                .font(AppDesign.Typography.pageTitle)
-            Text("按掌握度、FSRS 到期时间与证据可信度统计，排序口径与「今日复习」一致")
-                .font(AppDesign.Typography.aux)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.bottom, AppDesign.Spacing.xxs)
+        Text("按掌握度、FSRS 到期时间与证据可信度统计，排序口径与「今日复习」一致")
+            .font(AppDesign.Typography.aux)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - 概览
 
-    /// 指标卡的列数。**不用 `GridItem(.adaptive(minimum:))`**：adaptive 是按
-    /// "最小宽度能塞下几列"算列数的，1600pt 宽会算出 8 列，4 张卡只填前 4 格、
-    /// 每张卡还是 200pt，右边空一半。列数自己按断点定，卡片才会撑满。
-    private var metricColumns: [GridItem] {
-        let count = contentWidth >= 820 ? 4 : (contentWidth >= 460 ? 2 : 1)
-        return Array(repeating: GridItem(.flexible(), spacing: AppDesign.Spacing.sm), count: count)
-    }
 
     private var metricStrip: some View {
-        LazyVGrid(columns: metricColumns, alignment: .leading, spacing: AppDesign.Spacing.sm) {
-            metric("学习项", value: records.count, detail: "累计沉淀", icon: "books.vertical", tint: .accentColor)
-            metric(
-                "已到期",
-                value: dataStore.dueCount,
+        // 一条带子四格，竖发丝线分隔；数字只在需要警示时着色。
+        MetricStrip {
+            MetricCell(title: "学习项", value: "\(records.count)", detail: "累计沉淀", showsDivider: false)
+            MetricCell(
+                title: "已到期",
+                value: "\(dataStore.dueCount)",
                 detail: dataStore.dueCount == 0 ? "进度正常" : "需要尽快复习",
-                icon: "clock.badge.exclamationmark",
-                tint: dataStore.dueCount == 0 ? .secondary : .orange
+                tint: dataStore.dueCount == 0 ? .primary : .orange
             )
-            metric(
-                "待巩固",
-                value: dataStore.weakCount,
+            MetricCell(
+                title: "待巩固",
+                value: "\(dataStore.weakCount)",
                 detail: "掌握度低于 \(Int(LearningInsights.weakThreshold))",
-                icon: "exclamationmark.triangle",
-                tint: dataStore.weakCount == 0 ? .secondary : .pink
+                tint: dataStore.weakCount == 0 ? .primary : .pink
             )
-            metric(
-                "证据",
-                value: records.reduce(0) { $0 + $1.evidenceCount },
-                detail: "对话与提交记录",
-                icon: "doc.text.magnifyingglass",
-                tint: .green
+            MetricCell(
+                title: "证据",
+                value: "\(records.reduce(0) { $0 + $1.evidenceCount })",
+                detail: "对话与提交记录"
             )
         }
-    }
-
-    private func metric(_ title: String, value: Int, detail: String, icon: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(AppDesign.Typography.iconCompact)
-                    .foregroundStyle(tint)
-                Text(title).font(AppDesign.Typography.aux).foregroundStyle(.secondary)
-            }
-            Text("\(value)").font(AppDesign.Typography.metricValue)
-            Text(detail)
-                .font(AppDesign.Typography.micro)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-        .padding(AppDesign.Spacing.md)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.floating)
+        .padding(.horizontal, -AppDesign.Spacing.md)
     }
 
     // MARK: - 优先巩固
@@ -1035,12 +1009,10 @@ struct LearningInsightsWorkspaceView: View {
         hint: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: AppDesign.Spacing.compact) {
+        // 不再是玻璃卡：标题 + 内容，区块之间靠留白与发丝线分开。
+        VStack(alignment: .leading, spacing: AppDesign.Spacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Image(systemName: systemImage)
-                    .font(AppDesign.Typography.iconCompact)
-                    .foregroundStyle(tint)
-                Text(title).font(AppDesign.Typography.sectionTitle)
+                Text(title).font(AppDesign.Typography.rowTitleEmphasis)
                 Spacer(minLength: AppDesign.Spacing.xs)
                 Text(hint)
                     .font(AppDesign.Typography.micro)
@@ -1049,9 +1021,7 @@ struct LearningInsightsWorkspaceView: View {
             }
             content()
         }
-        .padding(AppDesign.Spacing.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.floating)
     }
 
     private func emptyLine(_ text: String) -> some View {
@@ -1079,8 +1049,8 @@ struct LearningTemplatesWorkspaceView: View {
     }
 
     var body: some View {
-        // 不用 HSplitView：它给每个 pane 画不透明底，圆角卡外面会套出直角矩形。
-        HStack(alignment: .top, spacing: AppDesign.Spacing.sm) {
+        // 一张画布：列表 | 发丝线 | 文档。不再各套一张玻璃卡（见 `Design/Surfaces.swift`）。
+        HStack(alignment: .top, spacing: 0) {
             templateSidebar
                 .paneListColumn(
                     storageKey: "native.paneList.templates",
@@ -1101,7 +1071,6 @@ struct LearningTemplatesWorkspaceView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .padding(AppDesign.Spacing.sm)
         .background(AppDesign.ColorToken.canvas)
         .onAppear {
             selectedID = selectedID ?? templates.first?.id
@@ -1158,50 +1127,51 @@ struct LearningTemplatesWorkspaceView: View {
             }
             .floatingScrollIndicators()
         }
-        .navigationGlass(cornerRadius: AppDesign.Radius.floating)
     }
 
     private func templateDetail(_ template: LearningTemplate) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: AppDesign.Spacing.rowInset) {
+            VStack(alignment: .leading, spacing: AppDesign.Spacing.lg) {
                 templateHeader(template)
 
                 // 宽窗口分两栏：左边是"怎么想"（时机 / 步骤 / 陷阱），右边是"怎么写"（代码）。
-                // 原来单栏 860pt 封顶，右侧永远空一大片，代码又被挤在窄条里。
+                // 两栏之间只靠留白，不画框。
                 ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: AppDesign.Spacing.sm) {
-                        VStack(alignment: .leading, spacing: AppDesign.Spacing.sm) {
+                    HStack(alignment: .top, spacing: AppDesign.Spacing.xl) {
+                        VStack(alignment: .leading, spacing: AppDesign.Spacing.lg) {
                             reasoningSections(template)
                         }
-                        .frame(width: 340, alignment: .topLeading)
+                        .frame(width: AppDesign.Size.scaledControl(320), alignment: .topLeading)
 
                         codeSection(template)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .frame(minWidth: AppDesign.Size.scaledControl(420), maxWidth: .infinity, alignment: .topLeading)
                     }
 
-                    VStack(alignment: .leading, spacing: AppDesign.Spacing.sm) {
+                    VStack(alignment: .leading, spacing: AppDesign.Spacing.lg) {
                         reasoningSections(template)
                         codeSection(template)
                     }
                 }
             }
-            .padding(AppDesign.Spacing.md)
+            .padding(.horizontal, AppDesign.Spacing.xl)
+            .padding(.top, AppDesign.Spacing.lg)
+            .padding(.bottom, AppDesign.Spacing.xl)
+            .frame(maxWidth: AppDesign.Size.dashboardColumnMaximum, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .floatingScrollIndicators()
-        .navigationGlass(cornerRadius: AppDesign.Radius.floating)
     }
 
     @ViewBuilder
     private func reasoningSections(_ template: LearningTemplate) -> some View {
         if !template.applicableWhen.isEmpty {
-            templateSection("适用时机", systemImage: "target", tint: .accentColor) {
+            DocumentSection("适用时机") {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(Array(template.applicableWhen.enumerated()), id: \.offset) { _, value in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Image(systemName: "checkmark")
-                                .font(.appScaled(size: 10, weight: .bold))
-                                .foregroundStyle(Color.accentColor)
+                                .font(.appScaled(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
                                 .frame(width: 12)
                             Text(value)
                                 .font(AppDesign.Typography.body)
@@ -1213,7 +1183,7 @@ struct LearningTemplatesWorkspaceView: View {
         }
 
         if !template.steps.isEmpty {
-            templateSection("实现步骤", systemImage: "list.number", tint: .teal) {
+            DocumentSection("实现步骤") {
                 // 用真实序号，不再每行重复同一个 list.number 图标。
                 VStack(alignment: .leading, spacing: 9) {
                     ForEach(Array(template.steps.enumerated()), id: \.offset) { index, value in
@@ -1233,12 +1203,12 @@ struct LearningTemplatesWorkspaceView: View {
         }
 
         if !template.pitfalls.isEmpty {
-            templateSection("常见陷阱", systemImage: "exclamationmark.triangle", tint: .orange) {
+            DocumentSection("常见陷阱") {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(Array(template.pitfalls.enumerated()), id: \.offset) { _, value in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Circle()
-                                .fill(Color.orange.opacity(0.55))
+                                .fill(AppDesign.ColorToken.warning.opacity(0.7))
                                 .frame(width: 5, height: 5)
                                 .frame(width: 12)
                             Text(value)
@@ -1254,17 +1224,9 @@ struct LearningTemplatesWorkspaceView: View {
     private func codeSection(_ template: LearningTemplate) -> some View {
         // 代码块自带头部与圆角底，再套一层 section 卡就是三层嵌套盒。
         // 标题行裸排，代码块直接贴上去，少一层。
-        VStack(alignment: .leading, spacing: AppDesign.Spacing.xs) {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left.forwardslash.chevron.right")
-                    .font(AppDesign.Typography.iconCompact)
-                    .foregroundStyle(.purple)
-                Text("参考实现").font(AppDesign.Typography.rowTitleEmphasis)
-            }
+        DocumentSection("参考实现") {
             SyntaxHighlightedCodeView(code: template.code, language: template.language)
         }
-        .padding(AppDesign.Spacing.rowInset)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func templateHeader(_ template: LearningTemplate) -> some View {
@@ -1297,34 +1259,6 @@ struct LearningTemplatesWorkspaceView: View {
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-
-    private func templateSection<Content: View>(
-        _ title: String,
-        systemImage: String,
-        tint: Color,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: AppDesign.Spacing.xs) {
-            HStack(spacing: 6) {
-                Image(systemName: systemImage)
-                    .font(AppDesign.Typography.iconCompact)
-                    .foregroundStyle(tint)
-                Text(title).font(AppDesign.Typography.rowTitleEmphasis)
-            }
-            content()
-        }
-        .padding(AppDesign.Spacing.rowInset)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // 每段独立成卡，页面才有结构；原来所有小节堆在一张白底上，读起来是一篇长文档。
-        .background(
-            Color.primary.opacity(0.022),
-            in: RoundedRectangle(cornerRadius: AppDesign.Radius.card, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: AppDesign.Radius.card, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.055))
         }
     }
 
@@ -1375,8 +1309,8 @@ struct LearningTrashWorkspaceView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("回收站").font(.headline)
-                    Text("删除的学习快照保留 30 天").font(.caption).foregroundStyle(.secondary)
+                    Text("回收站").font(AppDesign.Typography.headline)
+                    Text("删除的学习快照保留 30 天").font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("清空", systemImage: "trash", role: .destructive) { showsEmptyConfirmation = true }
@@ -1391,7 +1325,7 @@ struct LearningTrashWorkspaceView: View {
             } else {
                 List(dataStore.deletedLearningRecords) { record in
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) { Text(record.title); Text(record.primaryKnowledge).font(.caption).foregroundStyle(.secondary) }
+                        VStack(alignment: .leading, spacing: 3) { Text(record.title); Text(record.primaryKnowledge).font(AppDesign.Typography.micro).foregroundStyle(.secondary) }
                         Spacer()
                         Button("恢复") { Task { try? await dataStore.restoreLearningRecord(record.id) } }.controlSize(.small)
                         Button("彻底删除", role: .destructive) { pendingPurge = record }.controlSize(.small)

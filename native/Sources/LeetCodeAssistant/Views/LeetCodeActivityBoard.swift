@@ -368,9 +368,7 @@ struct LeetCodeActivityHeatmapCard: View {
             grid
             footer
         }
-        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .navigationGlass(cornerRadius: AppDesign.Radius.floating)
         // 测卡片而不是测格子：格子宽度由 metrics 决定，测它自己会形成布局回环。
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { cardWidth = $0 }
     }
@@ -528,9 +526,7 @@ struct LeetCodeActivityHeatmapCard: View {
                 }
                 Text("多").font(AppDesign.Typography.micro).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .inlineGlass(cornerRadius: AppDesign.Radius.small)
+
 
             Spacer(minLength: 8)
 
@@ -602,34 +598,27 @@ struct LeetCodeActivityMetricsRow: View {
     }
 
     var body: some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4),
-            spacing: 12
-        ) {
+        // 一条带子四格，不再是四张玻璃卡。
+        MetricStrip {
             completionCard
-            metricCard(
+            MetricCell(
+                title: "连续学习",
                 value: "\(layout.currentStreak)",
                 unit: " 天",
-                title: "连续学习",
-                caption: "最长 \(layout.longestStreak) 天 · 本周 \(weekSubmissions) 次",
-                icon: "flame.fill",
-                tint: .orange
+                detail: "最长 \(layout.longestStreak) 天 · 本周 \(weekSubmissions) 次"
             )
-            metricCard(
+            MetricCell(
+                title: "通过提交占比",
                 value: "\(acceptanceRate)",
                 unit: "%",
-                title: "通过提交占比",
-                caption: "\(layout.totalAccepted) 次通过 / \(layout.totalSubmissions) 次",
-                icon: "checkmark.seal.fill",
-                tint: .green
+                detail: "\(layout.totalAccepted) 次通过 / \(layout.totalSubmissions) 次"
             )
-            metricCard(
+            MetricCell(
+                title: "等待复习",
                 value: "\(dueCount)",
                 unit: " 题",
-                title: "等待复习",
-                caption: weakCount > 0 ? "\(weakCount) 个薄弱知识点" : "复习进度良好",
-                icon: "clock.arrow.circlepath",
-                tint: dueCount > 0 ? .pink : .secondary
+                detail: weakCount > 0 ? "\(weakCount) 个薄弱知识点" : "复习进度良好",
+                tint: dueCount > 0 ? .pink : .primary
             )
         }
     }
@@ -667,39 +656,10 @@ struct LeetCodeActivityMetricsRow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.card)
+        .padding(.trailing, AppDesign.Spacing.md)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
-    private func metricCard(
-        value: String,
-        unit: String,
-        title: String,
-        caption: String,
-        icon: String,
-        tint: Color
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(AppDesign.Typography.iconCompact)
-                    .foregroundStyle(tint)
-                Text(title).font(AppDesign.Typography.aux).foregroundStyle(.secondary)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                Text(value).font(AppDesign.Typography.metricValue)
-                Text(unit).font(AppDesign.Typography.aux).foregroundStyle(.secondary)
-            }
-            Text(caption)
-                .font(AppDesign.Typography.micro)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.card)
-    }
 }
 
 // MARK: - 分布卡
@@ -771,7 +731,7 @@ struct LeetCodeActivityBreakdown: View {
                         }
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .inlineGlass(cornerRadius: AppDesign.Radius.small)
+                        .background(AppDesign.ColorToken.inlineFill, in: Capsule())
                     }
                 }
             }
@@ -877,8 +837,6 @@ struct ActivityInsightCard<Content: View>: View {
             }
             content
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.card)
     }
 }

@@ -25,15 +25,26 @@ struct PaneListColumnModifier: ViewModifier {
         content
             .frame(width: current)
             .frame(maxHeight: .infinity)
+            // 列与右侧内容之间一条发丝线（一体化：不再用圆角卡把列表框起来）。
+            .overlay(alignment: .trailing) {
+                Rectangle()
+                    .fill(AppDesign.ColorToken.separator)
+                    .frame(width: 1)
+                    .allowsHitTesting(false)
+            }
+            // 抓取带骑在分栏线上：本列里只占 `thickness`，另一半伸进右侧。
+            // 只挂在本列内侧的话要么太窄难抓，要么压住本列的滚动条。
             .overlay(alignment: .trailing) {
                 ColumnResizeHandle(
                     width: current,
                     range: range,
-                    growsOnDragRight: true
+                    growsOnDragRight: true,
+                    bandWidth: ColumnResizeHandle.thickness * 2
                 ) { newValue in
                     width = newValue
                     UserDefaults.standard.set(Double(newValue), forKey: storageKey)
                 }
+                .offset(x: ColumnResizeHandle.thickness)
             }
             .onAppear {
                 guard width == nil else { return }
@@ -100,7 +111,9 @@ struct ProportionalSplit<Leading: View, Trailing: View>: View {
                         ColumnResizeHandle(
                             width: width,
                             range: minLeading...max(minLeading, total - minTrailing),
-                            growsOnDragRight: true
+                            growsOnDragRight: true,
+                            // 居中骑在 1pt 分栏线上，两侧各伸进 `thickness`。
+                            bandWidth: ColumnResizeHandle.thickness * 2
                         ) { newValue in
                             guard total > 0 else { return }
                             // 夹在 10%–90%：拖到贴边之后列就再也拉不回来了。
@@ -117,13 +130,32 @@ struct ProportionalSplit<Leading: View, Trailing: View>: View {
     }
 
     /// 比例换算成宽度后仍要夹一次最小宽：窗口很窄时按比例算出来的值会小于任一栏的下限。
+    ///
+    /// 两栏下限加起来都放不下时（侧栏和第三列都开着），不能再硬守下限——
+    /// 守住左栏的 360 就得让右栏低于 380，右栏的工具条会溢出盖到别的列上。
+    /// 这时按比例分、两边各留至少三成。
     private func leadingWidth(total: CGFloat) -> CGFloat {
-        let upper = max(minLeading, total - minTrailing)
-        return min(max(total * (fraction ?? storedFraction), minLeading), upper)
+        ProportionalSplitLayout.leadingWidth(
+            total: total,
+            fraction: fraction ?? storedFraction,
+            minLeading: minLeading,
+            minTrailing: minTrailing
+        )
     }
 
     private var storedFraction: Double {
         let stored = UserDefaults.standard.double(forKey: storageKey)
         return stored > 0 ? stored : defaultFraction
+    }
+}
+
+enum ProportionalSplitLayout {
+    static func leadingWidth(total: CGFloat, fraction: Double, minLeading: CGFloat, minTrailing: CGFloat) -> CGFloat {
+        guard total > 0 else { return 0 }
+        guard total >= minLeading + minTrailing + 1 else {
+            return (total * min(max(fraction, 0.3), 0.7)).rounded()
+        }
+        let upper = total - minTrailing - 1
+        return min(max((total * fraction).rounded(), minLeading), upper)
     }
 }

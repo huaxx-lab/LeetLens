@@ -17,10 +17,10 @@ final class InterfaceMetrics {
     static let shared = InterfaceMetrics()
 
     enum FontScale: String, CaseIterable, Identifiable, Sendable {
+        case followDisplay
         case compact
         case standard
         case large
-        case followDisplay
 
         var id: String { rawValue }
 
@@ -40,7 +40,7 @@ final class InterfaceMetrics {
             case .compact: "紧凑"
             case .standard: "标准"
             case .large: "较大"
-            case .followDisplay: "跟随屏幕"
+            case .followDisplay: "自动"
             }
         }
     }
@@ -59,35 +59,39 @@ final class InterfaceMetrics {
     private(set) var displayScale: CGFloat = 1
 
     /// 实际生效的倍率。
-    ///
-    /// **默认不跟屏幕走**：按屏幕自动缩放只在用户明确选了「跟随屏幕」时才生效。
-    /// 实测把 Electron 那条曲线原样搬过来，1920×1080 的外接屏上会算出 1.38×——
-    /// 正文 13pt 变成 18pt，对原生版这套本来就更密的排版来说太冲了，
-    /// 而且列宽没跟着变，侧栏标题反而截得更狠。所以它是一个选项，不是默认值。
     var scale: CGFloat {
         fontScale == .followDisplay ? displayScale : fontScale.multiplier
     }
 
-    /// 屏幕自动缩放的口径，**照搬 Electron 1.x 客户端的 `src/platform/display-profile.js`**：
-    /// 以 1800pt 的工作区对角线为基准（约等于 1440×900 的笔记本屏），
-    /// 每超出 1% 就多放大 1.7%，封顶 1.5×。
+    /// 屏幕自动缩放的口径：以 1800pt 的工作区对角线为基准（约等于 1440×900 的笔记本屏），
+    /// 每超出 1% 放大 0.54%，封顶 1.18×。
     ///
-    /// 为什么要照搬而不是重新拍一组数：老客户端在这台机器的外接屏（1920×1080 @1x，
-    /// 对角线约 2200）上算出来是 ~1.37×，用户已经习惯了那个观感；
-    /// 原生版重写时把这套整个丢了，同一块屏上字就"忽然变小了"。
-    private static let baseWorkAreaDiagonal: CGFloat = 1_800
-    /// 封顶从 Electron 的 1.5 收到 1.25：原生版的字体阶梯基准比老客户端大，
-    /// 同一条曲线跑到 1.4 以上就明显过头了。
-    private static let maximumDisplayScale: CGFloat = 1.25
-    private static let displayScaleSlope: CGFloat = 1.7
+    /// **这条曲线改过两次，别再往陡里调**：
+    /// - 原样照搬 Electron 1.x（斜率 1.7、封顶 1.5）时，这台机器的 24" 1920×1080 外接屏
+    ///   算出 1.38×，正文 13pt → 18pt，用户当场否掉（"全屏下字太大、很难看"），
+    ///   于是 2026-08 把它降级成可选档、默认固定 ×1.0；
+    /// - 默认 ×1.0 之后又被反馈"大屏上字很小"——当时 215 处 `.font(.caption)` 不跟档位走、
+    ///   对话 / 题面 / 编辑器网页也不跟，自动档开了也只放大了一半界面。
+    /// 2026-09 覆盖面补齐后，用户选定"默认温和跟随"：笔记本 ×1.0、1080p 外接屏 ×1.12、
+    /// 2K 及以上封顶 ×1.18。字放大时列宽跟着放大（`AppDesign.Size`），不会挤。
+    static let baseWorkAreaDiagonal: CGFloat = 1_800
+    static let maximumDisplayScale: CGFloat = 1.18
+    static let displayScaleSlope: CGFloat = 0.54
 
     static func displayScale(for screen: NSScreen?) -> CGFloat {
         // 用 visibleFrame 而不是 frame：菜单栏和 Dock 占掉的地方本来就排不了界面，
         // 把它们算进对角线会让缩放偏大。
-        guard let area = screen?.visibleFrame, area.width > 0, area.height > 0 else { return 1 }
-        let diagonal = hypot(area.width, area.height)
+        guard let area = screen?.visibleFrame else { return 1 }
+        return displayScale(workAreaWidth: area.width, height: area.height)
+    }
+
+    /// 取到 0.01：窗口在两块屏之间拖动、Dock 自动隐藏时 visibleFrame 会抖几个点，
+    /// 不取整的话倍率跟着抖，整棵视图树和网页缩放一起重排。
+    static func displayScale(workAreaWidth width: CGFloat, height: CGFloat) -> CGFloat {
+        guard width > 0, height > 0 else { return 1 }
+        let diagonal = hypot(width, height)
         let proportional = 1 + ((diagonal / baseWorkAreaDiagonal) - 1) * displayScaleSlope
-        return min(maximumDisplayScale, max(1, proportional))
+        return (min(maximumDisplayScale, max(1, proportional)) * 100).rounded() / 100
     }
 
     /// 窗口所在的那块屏，而不是 `NSScreen.main`——把窗口从笔记本屏拖到外接屏时，
@@ -106,7 +110,8 @@ final class InterfaceMetrics {
     /// 再镜像一份就会出现两个真相源。
     private init() {
         let stored = UserDefaults.standard.string(forKey: Self.storageKey)
-        fontScale = stored.flatMap(FontScale.init(rawValue:)) ?? .standard
+        // 没选过就是「自动」。显式选过「标准」的人保留他的选择。
+        fontScale = stored.flatMap(FontScale.init(rawValue:)) ?? .followDisplay
         displayScale = Self.displayScale(for: NSScreen.main)
 
         // 接显示器、改分辨率、窗口挪到另一块屏——三件事都要重算。

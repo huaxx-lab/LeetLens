@@ -138,6 +138,25 @@ final class WebViewPopupBridge: NSObject, WKUIDelegate, NSWindowDelegate {
 }
 
 enum WebViewPresentation {
+    /// 应用自己渲染的网页（对话、题面、代码编辑器、题解）跟着「界面字号」一起缩放。
+    ///
+    /// 用 `pageZoom` 而不是改 CSS 字号：这几份页面里写死的 px 有上百处，逐个换成变量
+    /// 既改不全也容易漏；pageZoom 等价于浏览器缩放，版式按缩放后的视口重新排，
+    /// 所以 1100px 的正文列宽正好对上 SwiftUI 那边 `scaled(1100)` 的输入框。
+    /// 注意 Swift 往页面里传的**点数**要除以它才是 CSS px，页面报回来的 CSS px 要乘回去。
+    /// 第三方网页（内置浏览器）不走这里，那边有自己的缩放档。
+    @MainActor
+    static var interfaceZoom: CGFloat { InterfaceMetrics.shared.scale }
+
+    /// 只在真的变了时写：pageZoom 每写一次都是整页重排。
+    @MainActor
+    @discardableResult
+    static func applyInterfaceZoom(_ zoom: CGFloat, to webView: WKWebView) -> Bool {
+        guard zoom > 0, abs(webView.pageZoom - zoom) > 0.001 else { return false }
+        webView.pageZoom = zoom
+        return true
+    }
+
     /// 网页侧的悬浮滚动条。
     ///
     /// **为什么不是 `::-webkit-scrollbar`**：被样式化的滚动条在 WebKit/Chromium 里是"经典滚动条"，
@@ -152,7 +171,8 @@ enum WebViewPresentation {
       window.__leetcodeFloatingScrollbar = true;
 
       const THICKNESS = 6;
-      const INSET = 4;
+      // 离边 6px：分栏抓取带每侧伸进列里 5pt，thumb 必须躲开它，否则点不着。
+      const INSET = 6;
       const MINIMUM = 28;
       const FADE_DELAY = 900;
 

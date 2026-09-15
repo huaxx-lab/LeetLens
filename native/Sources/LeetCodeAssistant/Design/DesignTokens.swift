@@ -2,6 +2,11 @@ import SwiftUI
 
 enum AppDesign {
     /// 字体阶梯（G-T1）：全 App 只有这一组字号，View 层不再新增 `.system(size:)`。
+    ///
+    /// **也不要再写 `.font(AppDesign.Typography.micro)` 这类系统文字样式**：macOS 没有动态字体，
+    /// `.caption` 是写死的 10pt、`.subheadline` 11pt，既比阶梯最小档还小，
+    /// 又不跟「界面字号」走——曾经 215 处这么写，调大字号时这些地方纹丝不动，
+    /// 大屏上判题结果、提交记录一片 10pt 小灰字。`TypographyCoverageTests` 会拦住回退。
     /// 基准尺寸集合收敛为 26 / 22 / 17 / 15 / 13 / 12 / 11 七档，无半点字号。
     ///
     /// 每档都乘 `scale`（「设置 ▸ 外观 ▸ 界面字号」）。所以这里是**计算属性**而不是 `static let`：
@@ -24,6 +29,11 @@ enum AppDesign {
         static var aux: Font { .system(size: 12 * scale) }
         static var auxEmphasis: Font { .system(size: 12 * scale, weight: .medium) }
         static var micro: Font { .system(size: 11 * scale) }
+        /// 常规字重的标题档，对应系统 `.title3` / `.title2`：页面里"不加粗的大一号字"。
+        static var title3: Font { .system(size: 15 * scale) }
+        static var title2: Font { .system(size: 17 * scale) }
+        /// 对应系统 `.headline`：正文字号加粗，卡片小标题。
+        static var headline: Font { .system(size: 13 * scale, weight: .semibold) }
         static var mono: Font { .system(size: 12 * scale, design: .monospaced) }
         /// 行内 SF Symbol 的统一口径（G-T5）。
         static var icon: Font { .system(size: 15 * scale) }
@@ -62,6 +72,12 @@ enum AppDesign {
         /// 装文字的尺寸统一走它。取整到整数点，避免半点宽度在分栏线上抖。
         private static func scaled(_ value: CGFloat) -> CGFloat {
             (value * AppDesign.Typography.scale).rounded()
+        }
+
+        /// 页面里装文字的控件（分段控件、搜索框、菜单）的宽度：字放大了框也得跟着放大，
+        /// 否则「题目与提交」这种标签会被截成「题目与…」。
+        static func scaledControl(_ value: CGFloat) -> CGFloat {
+            scaled(value)
         }
 
         // MARK: 窗口 chrome —— 不缩放

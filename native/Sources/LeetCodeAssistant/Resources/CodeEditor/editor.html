@@ -481,10 +481,28 @@
     // 宿主要按内容高度自适应外框，否则写死的高度会把代码结尾裁掉。
     const contentHeight = () => Math.ceil(editor.getScrollInfo().height);
 
+    // 文档身份（题 + 语言）。每条回报都带上：换篇的瞬间旧文档可能还有一条消息在路上，
+    // 宿主据此丢掉，否则上一种语言的代码会被写进这一种语言的草稿。
+    let documentID = '';
+    let selectionTimer = null;
+
     editor.on('change', () => {
       clearTimeout(changeTimer); clearTimeout(diagnosticTimer);
-      changeTimer = setTimeout(() => post('editorChanged', { code: editor.getValue(), contentHeight: contentHeight() }), 40);
+      changeTimer = setTimeout(() => post('editorChanged', { code: editor.getValue(), contentHeight: contentHeight(), documentID }), 40);
       diagnosticTimer = setTimeout(updateDiagnostics, 160);
+    });
+
+    // 选中的代码报给宿主，问 AI 时作为"我说的是这几行"附带过去。
+    editor.on('cursorActivity', () => {
+      clearTimeout(selectionTimer);
+      selectionTimer = setTimeout(() => {
+        const text = editor.getSelection();
+        if (!text) { post('editorSelection', { documentID, text: '' }); return; }
+        const from = editor.getCursor('from'), to = editor.getCursor('to');
+        // 选区停在下一行行首时，那一行其实没选中。
+        const toLine = to.ch === 0 && to.line > from.line ? to.line - 1 : to.line;
+        post('editorSelection', { documentID, text: text.slice(0, 4000), fromLine: from.line + 1, toLine: toLine + 1 });
+      }, 150);
     });
 
     editor.on('inputRead', (cm, change) => {
@@ -499,14 +517,32 @@
     });
 
     window.editorBridge = {
-      setValue(value, lang) {
+      // 换题 / 换语言：整篇载入并清空撤销历史。
+      // CodeMirror 的 setValue 本身是可撤销的——不清历史，换题后 ⌘Z 会把上一题的代码撤回来。
+      load(value, lang, id) {
+        documentID = id || '';
         language = modes[lang] ? lang : 'java';
         editor.setOption('mode', modes[lang] || modes.java);
         if (editor.getValue() !== value) editor.setValue(value || '');
+        editor.clearHistory();
+        editor.scrollTo(0, 0);
         updateDiagnostics(); editor.refresh();
         // 值没变时不会触发 change，高度也就报不上去；这里补一次。
-        post('editorChanged', { code: editor.getValue(), contentHeight: contentHeight() });
+        post('editorChanged', { code: editor.getValue(), contentHeight: contentHeight(), documentID });
+        post('editorSelection', { documentID, text: '' });
       },
+      // 同一篇文档里由宿主改写（「重置为初始代码」与它的撤销）：作为一步可撤销的编辑，
+      // 用户在编辑器里按 ⌘Z 也能拿回原来的代码。
+      replace(value, id) {
+        if (id && id !== documentID) return;
+        if (editor.getValue() === value) return;
+        const last = editor.lastLine();
+        editor.operation(() => {
+          editor.replaceRange(value || '', CodeMirror.Pos(editor.firstLine(), 0), CodeMirror.Pos(last, editor.getLine(last).length), '+reset');
+        });
+        editor.focus();
+      },
+      setValue(value, lang) { this.load(value, lang, documentID); },
       setLanguage(lang) { language = modes[lang] ? lang : 'java'; editor.setOption('mode', modes[lang] || modes.java); updateDiagnostics(); },
       applyRemoteCompletions(requestID, items) {
         if (!completionSnapshot || completionSnapshot.requestID !== requestID || completionGeneration !== requestID) return;

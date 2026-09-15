@@ -8,15 +8,12 @@ struct StudyPlanWorkspaceView: View {
     @State private var editor: StudyTaskEditor?
 
     var body: some View {
+        // 一张画布：指标带 / 发丝线 / 日历列 | 发丝线 | 当日安排。不再是六张玻璃卡拼起来。
         VStack(spacing: 0) {
-            header
             summaryStrip
-            // 不再用 HSplitView：它给每个 pane 画自己的不透明底，
-            // 于是圆角玻璃卡外面又套出一个直角矩形，背景渐变也被挡住。
-            HStack(alignment: .top, spacing: 14) {
+            Hairline()
+            HStack(alignment: .top, spacing: 0) {
                 calendarPane
-                    // 左列也要吃满高度，否则它按内容取理想高度，
-                    // 底边就和右侧时间线差出一截（两根圆角矩形对不齐）。
                     // 下限比列表类高：日历是固定 7 列，压太窄日期会挤成一团。
                     .paneListColumn(
                         storageKey: "native.paneList.studyPlanCalendar",
@@ -26,10 +23,18 @@ struct StudyPlanWorkspaceView: View {
                 timelinePane
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 18)
         }
         .background(AppDesign.ColorToken.canvas.ignoresSafeArea())
+        // 标题、日期和三个动作并进列头那一行：原来列头写一遍「学习计划」，
+        // 下面 72pt 的页头再写一遍大号「学习计划」，动作按钮挤在第二行。
+        .workspaceHeader(id: "plan", hidesTitle: false) {
+            Text(selectedDate, format: .dateTime.month().day().weekday(.wide))
+                .font(AppDesign.Typography.aux)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        } trailing: {
+            headerActions
+        }
         .sheet(item: $editor) { editor in
             StudyTaskEditorView(
                 editor: editor,
@@ -50,22 +55,6 @@ struct StudyPlanWorkspaceView: View {
                 }
             )
         }
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("学习计划")
-                    .font(AppDesign.Typography.pageTitle)
-                Text(selectedDate, format: .dateTime.year().month().day().weekday(.wide))
-                    .font(AppDesign.Typography.aux)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            headerActions
-        }
-        .padding(.horizontal, 18)
-        .frame(height: 72)
     }
 
     /// 三个动作统一成一组胶囊：两个玻璃次要动作 + 一个实心主动作，
@@ -95,21 +84,9 @@ struct StudyPlanWorkspaceView: View {
                 visibleMonth = Calendar.current.dateInterval(of: .month, for: selectedDate)?.start ?? selectedDate
             }
 
-            Button {
+            PageActionButton(title: "新建任务", systemImage: "plus", isProminent: true, help: "新建学习任务") {
                 editor = .new(date: selectedDate, linkedRecordID: workspace.selectedLearningRecordID)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus").font(AppDesign.Typography.iconCompact)
-                    Text("新建任务").font(AppDesign.Typography.bodyEmphasis)
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .frame(height: 32)
-                .background(Color.accentColor, in: Capsule())
-                .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
-            .help("新建学习任务")
         }
     }
 
@@ -120,31 +97,13 @@ struct StudyPlanWorkspaceView: View {
         help: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if isBusy {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.7)
-                        .frame(width: 13, height: 13)
-                } else {
-                    Image(systemName: systemImage).font(AppDesign.Typography.iconCompact)
-                }
-                Text(title).font(AppDesign.Typography.bodyEmphasis)
-            }
-            .padding(.horizontal, 13)
-            .frame(height: 32)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .inlineGlass(cornerRadius: 16, interactive: true)
-        .help(help)
+        PageActionButton(title: title, systemImage: systemImage, isBusy: isBusy, help: help, action: action)
     }
 
     private var summaryStrip: some View {
         // `.top` + `fixedSize(vertical:)`：让这一排取最高卡片的高度，
         // 其余卡片再撑满它——四张卡上下沿才真正齐平。
-        HStack(alignment: .top, spacing: 12) {
+        MetricStrip {
             todayCard
             summaryMetric(
                 "本周完成",
@@ -171,9 +130,8 @@ struct StudyPlanWorkspaceView: View {
                 tint: overdueCount == 0 ? .secondary : .red
             )
         }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, 18)
-        .padding(.bottom, 16)
+        .padding(.vertical, AppDesign.Spacing.md)
+        .padding(.horizontal, AppDesign.Spacing.xs)
     }
 
     private var todayCard: some View {
@@ -205,11 +163,8 @@ struct StudyPlanWorkspaceView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(16)
+        .padding(.horizontal, AppDesign.Spacing.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        // 全页统一 floating 半径：概览卡原来是 10、日历/时间线是 16，
-        // 混在一屏里就是"圆角不规整"。
-        .inlineGlass(cornerRadius: AppDesign.Radius.floating)
     }
 
     private func summaryMetric(
@@ -220,29 +175,18 @@ struct StudyPlanWorkspaceView: View {
         icon: String,
         tint: Color
     ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(AppDesign.Typography.iconCompact)
-                    .foregroundStyle(tint)
-                Text(title).font(AppDesign.Typography.aux).foregroundStyle(.secondary)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                Text(value).font(AppDesign.Typography.metricValue)
-                Text(unit).font(AppDesign.Typography.aux).foregroundStyle(.secondary)
-            }
-            Text(detail)
-                .font(AppDesign.Typography.micro)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .inlineGlass(cornerRadius: AppDesign.Radius.floating)
+        // 图标去掉、数字只在需要警示时着色：四个彩色小图标并排是噪音。
+        MetricCell(
+            title: title,
+            value: value,
+            unit: unit,
+            detail: detail,
+            tint: tint == .red ? .red : .primary
+        )
     }
 
     private var calendarPane: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 0) {
             VStack(spacing: 0) {
                 HStack {
                     Text(visibleMonth, format: .dateTime.year().month(.wide))
@@ -259,8 +203,9 @@ struct StudyPlanWorkspaceView: View {
                 priorityLegend
                     .padding(.top, 10)
             }
-            .padding(16)
-            .navigationGlass(cornerRadius: AppDesign.Radius.floating)
+            .padding(AppDesign.Spacing.md)
+
+            Hairline()
 
             selectedDayAgenda
                 .frame(maxHeight: .infinity)
@@ -295,7 +240,7 @@ struct StudyPlanWorkspaceView: View {
                         .font(.appScaled(size: 19, weight: .light))
                         .foregroundStyle(.tertiary)
                     Text("当天没有安排")
-                        .font(.caption)
+                        .font(AppDesign.Typography.micro)
                         .foregroundStyle(.secondary)
                     Button("添加任务") {
                         editor = .new(date: selectedDate, linkedRecordID: workspace.selectedLearningRecordID)
@@ -316,16 +261,16 @@ struct StudyPlanWorkspaceView: View {
                                         .fill(task.isCompleted ? Color.secondary.opacity(0.35) : priorityColor(task.priority))
                                         .frame(width: 6, height: 6)
                                     Text(task.scheduledAt, format: .dateTime.hour().minute())
-                                        .font(.caption.monospacedDigit())
+                                        .font(AppDesign.Typography.micro.monospacedDigit())
                                         .foregroundStyle(.secondary)
                                         .frame(width: 42, alignment: .leading)
                                     Text(task.title)
-                                        .font(.callout)
+                                        .font(AppDesign.Typography.aux)
                                         .strikethrough(task.isCompleted)
                                         .lineLimit(1)
                                     Spacer(minLength: 0)
                                     Image(systemName: "chevron.right")
-                                        .font(.caption2.weight(.semibold))
+                                        .font(AppDesign.Typography.micro.weight(.semibold))
                                         .foregroundStyle(.tertiary)
                                 }
                                 .padding(.horizontal, 16)
@@ -340,7 +285,6 @@ struct StudyPlanWorkspaceView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationGlass(cornerRadius: AppDesign.Radius.floating)
     }
 
     private var calendarGrid: some View {
@@ -348,7 +292,7 @@ struct StudyPlanWorkspaceView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 4) {
                 ForEach(weekdayTitles, id: \.self) { title in
                     Text(title)
-                        .font(.caption2.weight(.medium))
+                        .font(AppDesign.Typography.micro.weight(.medium))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, minHeight: 24)
                 }
@@ -412,7 +356,7 @@ struct StudyPlanWorkspaceView: View {
             ForEach(StudyTaskPriority.allCases) { priority in
                 HStack(spacing: 5) {
                     Circle().fill(priorityColor(priority)).frame(width: 6, height: 6)
-                    Text(priority.title).font(.caption).foregroundStyle(.secondary)
+                    Text(priority.title).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
                 }
             }
             Spacer()
@@ -461,16 +405,15 @@ struct StudyPlanWorkspaceView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationGlass(cornerRadius: AppDesign.Radius.floating)
     }
 
     private func timelineRow(_ task: StudyPlanTask) -> some View {
         HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .trailing, spacing: 3) {
                 Text(task.scheduledAt, format: .dateTime.hour().minute())
-                    .font(.callout.monospacedDigit())
+                    .font(AppDesign.Typography.aux.monospacedDigit())
                 Text("\(task.durationMinutes) 分钟")
-                    .font(.caption2)
+                    .font(AppDesign.Typography.micro)
                     .foregroundStyle(.tertiary)
             }
             .frame(width: 66, alignment: .trailing)
@@ -491,12 +434,12 @@ struct StudyPlanWorkspaceView: View {
                         .font(.appScaled(size: 14, weight: .medium))
                         .strikethrough(task.isCompleted)
                     Text(task.priority.title)
-                        .font(.caption2.weight(.medium))
+                        .font(AppDesign.Typography.micro.weight(.medium))
                         .foregroundStyle(priorityColor(task.priority))
                 }
                 if !task.notes.isEmpty {
                     Text(task.notes)
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -506,7 +449,7 @@ struct StudyPlanWorkspaceView: View {
                         workspace.selectedSection = .library
                     } label: {
                         Label(record.title, systemImage: "books.vertical")
-                            .font(.caption)
+                            .font(AppDesign.Typography.micro)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
@@ -730,7 +673,7 @@ private struct StudyTaskEditorView: View {
         VStack(spacing: 0) {
             HStack {
                 Text(editor.task == nil ? "新建学习任务" : "编辑学习任务")
-                    .font(.headline)
+                    .font(AppDesign.Typography.headline)
                 Spacer()
                 Button("取消", action: onCancel).buttonStyle(.borderless)
                 Button("保存") { onSave(editor) }
@@ -806,9 +749,9 @@ private struct AIStudyPlanPreviewView: View {
                     .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("AI 学习计划预览")
-                        .font(.headline)
+                        .font(AppDesign.Typography.headline)
                     Text("从今天起按你设置的每日配额排；已有安排不会被删除")
-                        .font(.caption)
+                        .font(AppDesign.Typography.micro)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -826,14 +769,14 @@ private struct AIStudyPlanPreviewView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                     Text(suggestion.summary)
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
 
                     if !errorMessage.isEmpty {
                         Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .font(.callout)
+                            .font(AppDesign.Typography.aux)
                             .foregroundStyle(AppDesign.ColorToken.warning)
                             .padding(.horizontal, 20)
                             .padding(.bottom, 12)
@@ -881,10 +824,10 @@ private struct AIStudyPlanPreviewView: View {
     private func dayHeader(_ group: DayGroup) -> some View {
         HStack(spacing: 8) {
             Text(group.id, format: .dateTime.month().day().weekday(.abbreviated))
-                .font(.caption.weight(.semibold))
+                .font(AppDesign.Typography.micro.weight(.semibold))
             if Calendar.current.isDateInToday(group.id) {
                 Text("今天")
-                    .font(.caption2.weight(.semibold))
+                    .font(AppDesign.Typography.micro.weight(.semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
@@ -892,7 +835,7 @@ private struct AIStudyPlanPreviewView: View {
             }
             Spacer()
             Text("\(group.placements.count) 项 · \(group.minutes) 分钟")
-                .font(.caption.monospacedDigit())
+                .font(AppDesign.Typography.micro.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 20)
@@ -903,10 +846,10 @@ private struct AIStudyPlanPreviewView: View {
     private func footnote(icon: String, title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Label(title, systemImage: icon)
-                .font(.caption.weight(.medium))
+                .font(AppDesign.Typography.micro.weight(.medium))
                 .foregroundStyle(.secondary)
             Text(detail)
-                .font(.caption)
+                .font(AppDesign.Typography.micro)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -925,9 +868,9 @@ private struct AIStudyPlanPreviewRow: View {
         HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(task.scheduledAt, format: .dateTime.hour().minute())
-                    .font(.caption.monospacedDigit().weight(.medium))
+                    .font(AppDesign.Typography.micro.monospacedDigit().weight(.medium))
                 Text("\(task.durationMinutes) 分钟")
-                    .font(.caption2.monospacedDigit())
+                    .font(AppDesign.Typography.micro.monospacedDigit())
                     .foregroundStyle(.tertiary)
             }
             .frame(width: 48, alignment: .trailing)
@@ -943,7 +886,7 @@ private struct AIStudyPlanPreviewRow: View {
                         .font(.appScaled(size: 14, weight: .medium))
                     if isReschedule {
                         Text("改期")
-                            .font(.caption2.weight(.medium))
+                            .font(AppDesign.Typography.micro.weight(.medium))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -952,13 +895,13 @@ private struct AIStudyPlanPreviewRow: View {
                 }
                 if !task.notes.isEmpty {
                     Text(task.notes)
-                        .font(.callout)
+                        .font(AppDesign.Typography.aux)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let record {
                     Text("掌握 \(Int(record.masteryScore.rounded())) · 置信度 \(Int((record.confidence * 100).rounded()))% · FSRS \(record.dueAt.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.caption)
+                        .font(AppDesign.Typography.micro)
                         .foregroundStyle(.tertiary)
                 }
             }
