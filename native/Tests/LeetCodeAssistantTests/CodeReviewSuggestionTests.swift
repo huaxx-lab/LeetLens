@@ -80,6 +80,44 @@ final class CodeReviewSuggestionTests: XCTestCase {
         XCTAssertTrue(resolved.isEmpty, "\"int x\" 不是整行原文，定位不到就不标")
     }
 
+    /// 2026-09 用户截图：替换代码写成 `java.util.Map<...> map = new java.util.HashMap<>()`。
+    /// 力扣 Java 已默认导入 java.util.* 等包，全限定名和 import 都不该出现。
+    func testJavaReplacementDropsDefaultImportsAndQualifiedNames() {
+        let replacement = """
+        import java.util.*;
+        import java.util.function.Function;
+        java.util.Map<Integer, Integer> map = new java.util.HashMap<>();
+        java.util.Deque<Integer> stack = new java.util.ArrayDeque<>();
+        java.util.stream.IntStream.range(0, n).forEach(i -> {});
+        java.util.concurrent.ConcurrentHashMap<Integer, Integer> keep = null;
+        """
+        let simplified = LeetCodeJudgeEnvironment.simplify(replacement, language: "java")
+        XCTAssertFalse(simplified.contains("import java.util"))
+        XCTAssertTrue(simplified.contains("Map<Integer, Integer> map = new HashMap<>();"))
+        XCTAssertTrue(simplified.contains("Deque<Integer> stack = new ArrayDeque<>();"))
+        XCTAssertTrue(simplified.contains("IntStream.range(0, n)"))
+        XCTAssertTrue(simplified.contains("java.util.concurrent.ConcurrentHashMap"), "concurrent 不在默认导入里，不能删")
+        XCTAssertEqual(LeetCodeJudgeEnvironment.simplify("import java.util.*;", language: "python3"), "import java.util.*;", "只处理 Java")
+    }
+
+    func testResolvedJavaSuggestionUsesShortNames() throws {
+        let source = "class Solution {\n    public int subarraySum(int[] nums, int k) {\n        Map<Integer,Integer> map = new HashMap();\n        return 0;\n    }\n}"
+        let suggestion = try XCTUnwrap(CodeReviewPolicy.resolve([
+            CodeReviewRawIssue(startLine: 3, endLine: 3, original: "Map<Integer,Integer> map = new HashMap();",
+                               replacement: "java.util.Map<Integer,Integer> map = new java.util.HashMap<>();")
+        ], code: source, language: "java").first)
+        XCTAssertEqual(suggestion.replacement, "        Map<Integer,Integer> map = new HashMap<>();")
+    }
+
+    func testPromptsTellModelAboutLeetCodeImports() {
+        XCTAssertTrue(LeetCodeJudgeEnvironment.promptNote(language: "java").contains("不要写 import"))
+        let context = LeetCodeAssistantContext.prompt(.init(
+            frontendID: "560", title: "和为 K 的子数组", difficulty: "中等", statement: "", language: "java",
+            code: "class Solution {}", isPristine: false, selection: nil, judgeResult: nil, diagnostics: []
+        ))
+        XCTAssertTrue(context.contains("java.util.*、java.util.function.*") && context.contains("不要写 import"), "问 AI 的上下文里也要带上默认导入说明")
+    }
+
     func testDetectsRepliesThatPointAtSpecificLines() {
         XCTAssertTrue(CodeReviewPolicy.mentionsSpecificLines("① 第 8 行：for(int i = 0;i<plen;p++)"))
         XCTAssertTrue(CodeReviewPolicy.mentionsSpecificLines("看第3–5行的边界"))

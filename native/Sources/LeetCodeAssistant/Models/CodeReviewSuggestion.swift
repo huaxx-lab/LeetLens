@@ -81,6 +81,36 @@ struct CodeReviewResponse: Decodable, Sendable {
     }
 }
 
+/// 力扣判题环境里默认可用的东西。代码是提交到力扣跑的，不是本地工程：
+/// Java 已经 `import java.util.*` 等常用包，写 `java.util.HashMap` 或补 import 都是噪音。
+enum LeetCodeJudgeEnvironment {
+    /// 写进提示词的一句话，按语言给。
+    static func promptNote(language: String) -> String {
+        switch LeetCodeEditorLanguage.normalized(language) {
+        case "java":
+            "代码提交到力扣判题环境运行：java.util.*、java.util.function.*、java.util.stream.* 已默认导入。不要写 import，不要用全限定类名（写 Map、HashMap、Deque，不写 java.util.Map）。"
+        case "cpp", "c":
+            "代码提交到力扣判题环境运行：已包含 <bits/stdc++.h> 且 using namespace std。不要写 #include，不要加 std:: 前缀。"
+        case "python3":
+            "代码提交到力扣判题环境运行：typing、collections、heapq、bisect、math、functools、itertools 已可直接使用。不要写 import。"
+        default:
+            "代码提交到力扣判题环境运行，常用标准库已默认导入，不要写 import。"
+        }
+    }
+
+    /// 模型还是写了的话，客户端兜底清掉：只动确定安全的部分。
+    /// Java 去掉 `java.util.` / `java.util.function.` / `java.util.stream.` 限定名（后面紧跟大写类名），
+    /// 删掉这几个包的 import 行；`java.util.concurrent` 这类子包不在默认导入里，保持原样。
+    static func simplify(_ code: String, language: String) -> String {
+        guard LeetCodeEditorLanguage.normalized(language) == "java", !code.isEmpty else { return code }
+        let lines = code.components(separatedBy: "\n").filter { line in
+            line.range(of: #"^\s*import\s+java\.util\.(?:\*|[A-Z]\w*|function\.(?:\*|[A-Z]\w*)|stream\.(?:\*|[A-Z]\w*))\s*;\s*$"#, options: .regularExpression) == nil
+        }
+        return lines.joined(separator: "\n")
+            .replacingOccurrences(of: #"\bjava\.util\.(?:function\.|stream\.)?(?=[A-Z])"#, with: "", options: .regularExpression)
+    }
+}
+
 /// 建议的校验、落位与应用。全是纯函数。
 enum CodeReviewPolicy {
     static let maximumSuggestions = 5
@@ -90,7 +120,7 @@ enum CodeReviewPolicy {
     /// 把模型给的原始建议变成能放进编辑器的建议：
     /// 原文找不到位置的丢掉（多半是模型抄错了代码）；替换后和原文一样的丢掉；
     /// 区间与前面已收下的重叠的丢掉——两条建议改同一行，接受一条另一条就错位了。
-    static func resolve(_ issues: [CodeReviewRawIssue], code: String, idPrefix: String = UUID().uuidString) -> [CodeReviewSuggestion] {
+    static func resolve(_ issues: [CodeReviewRawIssue], code: String, language: String = "", idPrefix: String = UUID().uuidString) -> [CodeReviewSuggestion] {
         let lines = splitLines(code)
         var accepted: [CodeReviewSuggestion] = []
         for (index, issue) in issues.enumerated() {
@@ -101,7 +131,7 @@ enum CodeReviewPolicy {
                 : issue.original
             guard let range = locate(original: original, near: start, span: end - start + 1, in: lines) else { continue }
             let exactOriginal = lines[(range.lowerBound - 1)...(range.upperBound - 1)].joined(separator: "\n")
-            let replacement = reindent(issue.replacement, like: exactOriginal)
+            let replacement = reindent(LeetCodeJudgeEnvironment.simplify(issue.replacement, language: language), like: exactOriginal)
             guard normalized(replacement) != normalized(exactOriginal) else { continue }
             guard !accepted.contains(where: { $0.startLine <= range.upperBound && range.lowerBound <= $0.endLine }) else { continue }
             accepted.append(CodeReviewSuggestion(

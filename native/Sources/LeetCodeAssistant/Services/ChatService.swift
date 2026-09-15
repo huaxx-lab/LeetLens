@@ -543,12 +543,12 @@ final class ChatService: @unchecked Sendable {
             guidance: guidance.map { String($0.prefix(3_000)) } ?? ""
         )
         let response: CodeReviewResponse = try await requestJSONObject(
-            system: Self.codeReviewPrompt,
+            system: Self.codeReviewPrompt + "\n" + LeetCodeJudgeEnvironment.promptNote(language: language),
             payload: payload,
             providerID: providerID,
             taskRoute: .codingHint
         )
-        return CodeReviewPolicy.resolve(response.issues, code: code)
+        return CodeReviewPolicy.resolve(response.issues, code: code, language: language)
     }
 
     func requestCodingHint(

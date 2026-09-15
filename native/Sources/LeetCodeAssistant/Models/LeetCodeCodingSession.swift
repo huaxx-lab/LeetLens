@@ -776,6 +776,7 @@ enum LeetCodeAssistantContext {
         下面是他此刻的题面、代码与评测状态，由应用自动附带，不是用户说的话。
         回答规则：先针对他自己的代码说问题出在哪、为什么；除非他明确要完整解法，否则给改动方向和关键片段，\
         不要直接贴出整份 AC 代码。引用代码时标注行号。
+        \(LeetCodeJudgeEnvironment.promptNote(language: input.language))
         """)
 
         let statement = clipped(input.statement, limit: statementLimit)
