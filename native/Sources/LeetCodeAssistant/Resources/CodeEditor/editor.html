@@ -38,6 +38,38 @@
     .diagnostic-marker { color: #e45649; font: 11px/1 -apple-system,sans-serif; cursor: default; }
     .diagnostic-line { background: color-mix(in srgb, #e45649 8%, transparent); }
 
+    /* AI 就地标注：行首 ✦ + 淡色底 + 原文划掉，下面一块"虚的"替换代码，点接受才真正改。 */
+    .ai-gutter { width: 14px; }
+    .ai-gutter-marker { display: inline-block; width: 14px; text-align: center; font: 10px/1.58 -apple-system,sans-serif; color: #d97706; cursor: default; }
+    .ai-gutter-marker.ai-error { color: #e45649; }
+    .ai-gutter-marker.ai-hint { color: #0a84ff; }
+    /* 要压过 CodeMirror 自己的 `.CodeMirror pre.CodeMirror-line { background: transparent }`。 */
+    .CodeMirror pre.CodeMirror-line.ai-issue-line { background: color-mix(in srgb, #f59e0b 8%, transparent); }
+    .CodeMirror pre.CodeMirror-line.ai-issue-line.ai-error { background: color-mix(in srgb, #e45649 8%, transparent); }
+    .CodeMirror pre.CodeMirror-line.ai-issue-line.ai-hint { background: color-mix(in srgb, #0a84ff 6%, transparent); }
+    .ai-removed { text-decoration: line-through; text-decoration-color: color-mix(in srgb, #e45649 55%, transparent); opacity: .6; }
+    /* 左侧 2px 色条画在内边距里（inset 阴影），替换代码的左缘和编辑器正文的 4px 内边距对齐，
+       虚影正好落在被划掉的原文正下方。 */
+    .ai-fix { margin: 2px 16px 10px 0; padding: 7px 12px 8px 4px; border-radius: 0 8px 8px 0; background: color-mix(in srgb, CanvasText 3.5%, transparent); box-shadow: inset 2px 0 0 color-mix(in srgb, #0a84ff 60%, transparent); font: 12px/1.5 -apple-system,BlinkMacSystemFont,sans-serif; color: CanvasText; cursor: default; }
+    .ai-fix.ai-error { box-shadow: inset 2px 0 0 color-mix(in srgb, #e45649 70%, transparent); }
+    .ai-fix.ai-warning { box-shadow: inset 2px 0 0 color-mix(in srgb, #d97706 70%, transparent); }
+    .ai-fix-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding-left: 8px; }
+    .ai-fix-badge { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .3px; color: #0a84ff; }
+    .ai-fix.ai-error .ai-fix-badge { color: #e45649; }
+    .ai-fix.ai-warning .ai-fix-badge { color: #d97706; }
+    .ai-fix-title { flex: none; font-weight: 600; }
+    .ai-fix-why { min-width: 0; color: color-mix(in srgb, CanvasText 58%, transparent); overflow-wrap: anywhere; }
+    /* "虚的"：和正文同字体同字号（逐列对齐），只把颜色压淡；不用斜体，斜体会让列看起来错位。 */
+    .ai-fix-code { margin: 5px 0 7px; padding: 0; white-space: pre; overflow-x: auto; font: 13px/1.58 ui-monospace,SFMono-Regular,Menlo,monospace; color: color-mix(in srgb, CanvasText 42%, transparent); }
+    .ai-fix-code.is-delete { padding-left: 8px; font: italic 12px/1.5 -apple-system,sans-serif; }
+    .ai-fix-actions { display: flex; align-items: center; gap: 6px; padding-left: 8px; }
+    .ai-fix-actions button { font: 500 11.5px/1 -apple-system,sans-serif; border: 0; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+    .ai-fix-accept { color: #fff; background: #0a84ff; }
+    .ai-fix-accept:hover { background: #0071e3; }
+    .ai-fix-dismiss { color: CanvasText; background: color-mix(in srgb, CanvasText 8%, transparent); }
+    .ai-fix-dismiss:hover { background: color-mix(in srgb, CanvasText 13%, transparent); }
+    .ai-fix-keys { margin-left: 2px; font-size: 10.5px; color: color-mix(in srgb, CanvasText 42%, transparent); }
+
     /* 补全弹层：无轨道悬浮卡片，限高保证优先在光标下方展开 */
     .CodeMirror-hints {
       z-index: 10000 !important;
@@ -200,7 +232,7 @@
     let completionSnapshot = null;
     const editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
       lineNumbers: true,
-      gutters: ['CodeMirror-linenumbers', 'diagnostic-gutter'],
+      gutters: ['CodeMirror-linenumbers', 'diagnostic-gutter', 'ai-gutter'],
       mode: modes.java,
       indentUnit: 4,
       tabSize: 4,
@@ -215,7 +247,10 @@
         'Tab': cm => cm.somethingSelected() ? cm.indentSelection('add') : cm.replaceSelection(' '.repeat(cm.getOption('indentUnit')), 'end', '+input'),
         'Shift-Tab': cm => cm.indentSelection('subtract'),
         'Cmd-Space': complete,
-        'Ctrl-Space': complete
+        'Ctrl-Space': complete,
+        // 光标停在 AI 标注的行上：⌥↩ 接受、Esc 忽略；不在就照常。
+        'Alt-Enter': cm => acceptSuggestionAtCursor() ? undefined : CodeMirror.Pass,
+        'Esc': cm => dismissSuggestionAtCursor() ? undefined : CodeMirror.Pass
       }
     });
 
@@ -466,7 +501,10 @@
 
     function updateDiagnostics() {
       editor.clearGutter('diagnostic-gutter');
-      editor.eachLine(handle => editor.removeLineClass(handle, 'background', 'diagnostic-line'));
+      // 回调必须没有返回值：CodeMirror 的 eachLine 遇到回调返回真值就停止遍历，
+      // 而 removeLineClass 删成功时返回行句柄（真值）——写成箭头表达式时只清掉第一条红行，
+      // 后面的红行永远留着（两处以上括号错误、修好之后仍有一行发红）。
+      editor.eachLine(handle => { editor.removeLineClass(handle, 'background', 'diagnostic-line'); });
       const issues = scanDiagnostics(editor.getValue());
       const seen = new Set();
       issues.forEach(issue => {
@@ -485,6 +523,155 @@
     // 宿主据此丢掉，否则上一种语言的代码会被写进这一种语言的草稿。
     let documentID = '';
     let selectionTimer = null;
+
+    // ---------- AI 就地标注 ----------
+    //
+    // 每条建议记住它占的行句柄：CodeMirror 的行句柄会跟着插入删除自动挪位，
+    // 行被删掉时 getLineNumber 返回 null。接受时按句柄现在的位置替换，所以用户在
+    // 上面加了几行也不会改错地方；这几行本身被改过（和原文对不上）就作废。
+    let suggestionEntries = [];
+    let staleTimer = 0;
+    const squash = value => String(value || '').replace(/\s+/g, '');
+
+    function locateSuggestion(s) {
+      const target = String(s.original || '').split('\n').map(squash);
+      const total = editor.lineCount(), count = target.length;
+      if (!count || count > total) return -1;
+      const at = start => {
+        if (start < 0 || start + count > total) return false;
+        for (let i = 0; i < count; i++) if (squash(editor.getLine(start + i)) !== target[i]) return false;
+        return true;
+      };
+      const anchor = Math.min(Math.max((s.startLine || 1) - 1, 0), total - 1);
+      if (at(anchor)) return anchor;
+      for (let d = 1; d <= 8; d++) { if (at(anchor - d)) return anchor - d; if (at(anchor + d)) return anchor + d; }
+      return -1;
+    }
+
+    function entryRange(entry) {
+      const from = editor.getLineNumber(entry.handles[0]);
+      const to = editor.getLineNumber(entry.handles[entry.handles.length - 1]);
+      return from == null || to == null ? null : { from, to };
+    }
+
+    function entryIntact(entry) {
+      const range = entryRange(entry);
+      if (!range) return false;
+      const lines = [];
+      for (let l = range.from; l <= range.to; l++) lines.push(editor.getLine(l));
+      return squash(lines.join('\n')) === squash(entry.s.original);
+    }
+
+    function clearEntry(entry) {
+      entry.marks.forEach(mark => mark.clear());
+      if (entry.widget) entry.widget.clear();
+      // 用 text 层而不是 background 层：background 会连同挂在这一行下面的建议块一起染色。
+      entry.handles.forEach(handle => { editor.removeLineClass(handle, 'text', 'ai-issue-line'); editor.removeLineClass(handle, 'text', 'ai-' + entry.s.severity); });
+      if (editor.getLineNumber(entry.handles[0]) != null) editor.setGutterMarker(entry.handles[0], 'ai-gutter', null);
+    }
+
+    function resolveEntry(entry, action) {
+      clearEntry(entry);
+      suggestionEntries = suggestionEntries.filter(item => item !== entry);
+      post('suggestionResolved', { id: entry.s.id, action, documentID });
+    }
+
+    function renderSuggestion(s) {
+      const from = locateSuggestion(s);
+      if (from < 0) return null;
+      const to = from + String(s.original).split('\n').length - 1;
+      const severity = ['error', 'warning', 'hint'].includes(s.severity) ? s.severity : 'warning';
+      const entry = { s: { ...s, severity }, marks: [], widget: null, handles: [] };
+      for (let l = from; l <= to; l++) {
+        const handle = editor.getLineHandle(l);
+        editor.addLineClass(handle, 'text', 'ai-issue-line ai-' + severity);
+        entry.handles.push(handle);
+      }
+      const firstText = editor.getLine(from).search(/\S/);
+      entry.marks.push(editor.markText({ line: from, ch: Math.max(0, firstText) }, { line: to, ch: editor.getLine(to).length }, { className: 'ai-removed' }));
+
+      const marker = document.createElement('span');
+      marker.className = 'ai-gutter-marker ai-' + severity;
+      marker.textContent = '✦';
+      marker.title = s.title || 'AI 建议';
+      editor.setGutterMarker(entry.handles[0], 'ai-gutter', marker);
+
+      const node = document.createElement('div');
+      node.className = 'ai-fix ai-' + severity;
+      const head = document.createElement('div'); head.className = 'ai-fix-head';
+      const badge = document.createElement('span'); badge.className = 'ai-fix-badge'; badge.textContent = 'AI';
+      const title = document.createElement('span'); title.className = 'ai-fix-title'; title.textContent = s.title || '建议修改';
+      const why = document.createElement('span'); why.className = 'ai-fix-why'; why.textContent = s.explanation || '';
+      head.append(badge, title, why);
+      const code = document.createElement('pre');
+      if (s.replacement) { code.className = 'ai-fix-code'; code.textContent = s.replacement; }
+      else { code.className = 'ai-fix-code is-delete'; code.textContent = '删除这几行'; }
+      const actions = document.createElement('div'); actions.className = 'ai-fix-actions';
+      const accept = document.createElement('button'); accept.className = 'ai-fix-accept'; accept.textContent = '接受';
+      const dismiss = document.createElement('button'); dismiss.className = 'ai-fix-dismiss'; dismiss.textContent = '忽略';
+      const keys = document.createElement('span'); keys.className = 'ai-fix-keys'; keys.textContent = '⌥↩ 接受 · Esc 忽略';
+      accept.addEventListener('mousedown', event => { event.preventDefault(); event.stopPropagation(); acceptEntry(entry); });
+      dismiss.addEventListener('mousedown', event => { event.preventDefault(); event.stopPropagation(); resolveEntry(entry, 'dismissed'); editor.focus(); });
+      actions.append(accept, dismiss, keys);
+      node.append(head, code, actions);
+      entry.widget = editor.addLineWidget(to, node, { handleMouseEvents: true });
+      return entry;
+    }
+
+    function acceptEntry(entry, focus = true) {
+      if (!entryIntact(entry)) { resolveEntry(entry, 'stale'); return false; }
+      const range = entryRange(entry);
+      let from = { line: range.from, ch: 0 };
+      let to = { line: range.to, ch: editor.getLine(range.to).length };
+      const replacement = entry.s.replacement || '';
+      if (!replacement) {
+        // 删除整行：连换行一起删，不留空行。
+        if (range.to + 1 < editor.lineCount()) to = { line: range.to + 1, ch: 0 };
+        else if (range.from > 0) from = { line: range.from - 1, ch: editor.getLine(range.from - 1).length };
+      }
+      clearEntry(entry);
+      suggestionEntries = suggestionEntries.filter(item => item !== entry);
+      editor.operation(() => editor.replaceRange(replacement, from, to, '+aiFix'));
+      post('suggestionResolved', { id: entry.s.id, action: 'accepted', documentID });
+      if (focus) {
+        const last = range.from + Math.max(0, replacement.split('\n').length - 1);
+        editor.setCursor({ line: Math.min(last, editor.lineCount() - 1), ch: editor.getLine(Math.min(last, editor.lineCount() - 1)).length });
+        editor.focus();
+      }
+      return true;
+    }
+
+    function entryAtCursor() {
+      const line = editor.getCursor().line;
+      return suggestionEntries.find(entry => { const range = entryRange(entry); return range && line >= range.from && line <= range.to; });
+    }
+    function acceptSuggestionAtCursor() { const entry = entryAtCursor(); return entry ? acceptEntry(entry) : false; }
+    function dismissSuggestionAtCursor() { const entry = entryAtCursor(); if (!entry) return false; resolveEntry(entry, 'dismissed'); return true; }
+
+    function setSuggestions(list) {
+      suggestionEntries.forEach(clearEntry);
+      suggestionEntries = [];
+      (Array.isArray(list) ? list : []).forEach(s => {
+        const entry = renderSuggestion(s);
+        if (entry) suggestionEntries.push(entry);
+        else post('suggestionResolved', { id: s.id, action: 'stale', documentID });
+      });
+    }
+
+    function acceptAllSuggestions() {
+      // 从下往上接受：上面的行数变化不会影响下面还没接受的位置判断（其实句柄会自动挪，这里只是更稳）。
+      const ordered = suggestionEntries.slice().sort((a, b) => (entryRange(b)?.from ?? 0) - (entryRange(a)?.from ?? 0));
+      editor.operation(() => ordered.forEach(entry => acceptEntry(entry, false)));
+      editor.focus();
+    }
+
+    editor.on('change', (_, change) => {
+      if (change.origin === '+aiFix' || change.origin === 'setValue' || !suggestionEntries.length) return;
+      clearTimeout(staleTimer);
+      staleTimer = setTimeout(() => {
+        suggestionEntries.slice().forEach(entry => { if (!entryIntact(entry)) resolveEntry(entry, 'stale'); });
+      }, 250);
+    });
 
     editor.on('change', () => {
       clearTimeout(changeTimer); clearTimeout(diagnosticTimer);
@@ -520,6 +707,7 @@
       // 换题 / 换语言：整篇载入并清空撤销历史。
       // CodeMirror 的 setValue 本身是可撤销的——不清历史，换题后 ⌘Z 会把上一题的代码撤回来。
       load(value, lang, id) {
+        setSuggestions([]);
         documentID = id || '';
         language = modes[lang] ? lang : 'java';
         editor.setOption('mode', modes[lang] || modes.java);
@@ -543,6 +731,8 @@
         editor.focus();
       },
       setValue(value, lang) { this.load(value, lang, documentID); },
+      setSuggestions(list, id) { if (id && id !== documentID) return; setSuggestions(list); },
+      acceptAllSuggestions() { acceptAllSuggestions(); },
       setLanguage(lang) { language = modes[lang] ? lang : 'java'; editor.setOption('mode', modes[lang] || modes.java); updateDiagnostics(); },
       applyRemoteCompletions(requestID, items) {
         if (!completionSnapshot || completionSnapshot.requestID !== requestID || completionGeneration !== requestID) return;

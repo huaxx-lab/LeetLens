@@ -318,6 +318,28 @@ final class LeetCodeCodingSession {
     private(set) var isHinting = false
     private(set) var hintError = ""
 
+    // MARK: AI 就地标注
+
+    /// 当前文档上的 AI 修改建议。跟着代码编辑重新定位，原文被改掉的自动作废。
+    private(set) var reviewSuggestions: [CodeReviewSuggestion] = []
+    /// 建议属于哪篇文档：换题 / 换语言后旧建议一律不显示。
+    private(set) var reviewDocumentID = ""
+    /// 建议列表整体换了一批时加一：编辑器据此重画。单纯随编辑挪位置不加（编辑器里的标注自己会跟着文字走）。
+    private(set) var reviewRevision = 0
+    private(set) var isReviewing = false
+    private(set) var reviewError = ""
+    /// 「全部接受」请求计数，编辑器侧执行（保留撤销历史与滚动位置）。
+    private(set) var acceptAllRequest = 0
+    /// 运行 / 提交没通过时自动标注。设置项存在 UserDefaults。
+    var autoReviewOnFailure: Bool = UserDefaults.standard.object(forKey: "leetcode.autoReviewOnFailure") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(autoReviewOnFailure, forKey: "leetcode.autoReviewOnFailure") }
+    }
+    @ObservationIgnored private var reviewTask: Task<Void, Never>?
+
+    var visibleSuggestions: [CodeReviewSuggestion] {
+        reviewDocumentID == documentID ? reviewSuggestions : []
+    }
+
     @ObservationIgnored let drafts = LeetCodeDraftStore()
     @ObservationIgnored private var isLoadingDocument = false
 
@@ -391,6 +413,7 @@ final class LeetCodeCodingSession {
         discardedCode = nil
         selection = nil
         diagnostics = LeetCodeEditorDiagnostics()
+        clearReview()
     }
 
     func documentIdentity(slug: String, language: String) -> String {
@@ -405,6 +428,107 @@ final class LeetCodeCodingSession {
         guard !isLoadingDocument, reported == documentID, value != code else { return }
         code = value
         persistCurrentCode()
+        relocateSuggestions()
+    }
+
+    // MARK: - AI 就地标注
+
+    enum ReviewTrigger: Sendable {
+        /// 工具条上点「AI 检查」。
+        case manual
+        /// 运行 / 提交没通过。
+        case judgeFailure
+        /// AI 问答里点到了具体行，把它落到代码上。
+        case assistantReply(String)
+    }
+
+    func requestReview(
+        _ trigger: ReviewTrigger,
+        question: LeetCodeQuestion?,
+        workspace: LeetCodeQuestionWorkspace,
+        dataStore: LegacyDataStore
+    ) {
+        guard documentID.hasPrefix(workspace.titleSlug + "|"),
+              !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !isPristine
+        else { return }
+        reviewTask?.cancel()
+        let requestedDocument = documentID
+        let requestedCode = code
+        let judgeSummary = Self.judgeSummary(judgeState(for: workspace.titleSlug).result)
+        let guidance: String? = if case .assistantReply(let text) = trigger { text } else { nil }
+        isReviewing = true
+        reviewError = ""
+        reviewTask = Task { [weak self] in
+            do {
+                let suggestions = try await ChatService(dataDirectory: dataStore.dataDirectory).requestCodeReview(
+                    title: question?.title ?? workspace.titleSlug,
+                    content: LeetCodeQuestionActionBar.plainText(workspace.htmlContent),
+                    code: requestedCode,
+                    language: self?.language ?? "java",
+                    judgeSummary: judgeSummary,
+                    guidance: guidance,
+                    providerID: AITaskRoute.codingHint.providerID(in: dataStore.settings)
+                )
+                guard let self, !Task.isCancelled, self.documentID == requestedDocument else { return }
+                self.isReviewing = false
+                // 请求期间用户又改了代码：按新代码重新定位，改没了的丢掉。
+                let current = self.code
+                self.reviewSuggestions = suggestions.compactMap { CodeReviewPolicy.relocate($0, in: current) }
+                self.reviewDocumentID = requestedDocument
+                self.reviewRevision &+= 1
+                if self.reviewSuggestions.isEmpty, case .manual = trigger {
+                    self.reviewError = "没有发现需要修改的地方"
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                self.isReviewing = false
+                self.reviewError = error.localizedDescription
+            }
+        }
+    }
+
+    /// 编辑器里点了「接受」或「忽略」，或者建议所在的行被改掉了。
+    func resolveSuggestion(id: String) {
+        guard reviewSuggestions.contains(where: { $0.id == id }) else { return }
+        reviewSuggestions.removeAll { $0.id == id }
+    }
+
+    func acceptAllSuggestions() {
+        guard !visibleSuggestions.isEmpty else { return }
+        acceptAllRequest &+= 1
+    }
+
+    func clearReview() {
+        reviewTask?.cancel()
+        reviewTask = nil
+        isReviewing = false
+        reviewError = ""
+        guard !reviewSuggestions.isEmpty else { return }
+        reviewSuggestions = []
+        reviewRevision &+= 1
+    }
+
+    private func relocateSuggestions() {
+        guard !reviewSuggestions.isEmpty else { return }
+        let current = code
+        let moved = reviewSuggestions.compactMap { CodeReviewPolicy.relocate($0, in: current) }
+        if moved != reviewSuggestions { reviewSuggestions = moved }
+    }
+
+    static func judgeSummary(_ result: LeetCodeJudgeResult?) -> String {
+        guard let result else { return "" }
+        var lines = ["状态：\(result.status)"]
+        if result.totalTestCases > 0 { lines.append("通过用例：\(result.totalCorrect)/\(result.totalTestCases)") }
+        for (label, value) in [
+            ("编译错误", result.compileError), ("运行错误", result.runtimeError),
+            ("失败用例输入", result.input), ("实际输出", result.output), ("预期输出", result.expectedOutput)
+        ] where !value.isEmpty {
+            lines.append("\(label)：\(LeetCodeAssistantContext.clipped(value, limit: 600))")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func persistCurrentCode() {
@@ -540,6 +664,10 @@ final class LeetCodeCodingSession {
                 }
             }
             judgeResult = result
+            // 没通过就自动把问题标到代码上（设置里可以关）。
+            if !result.accepted, autoReviewOnFailure, selectedQuestionSlug == slug {
+                requestReview(.judgeFailure, question: question, workspace: workspace, dataStore: dataStore)
+            }
             if action == .submit {
                 _ = try await dataStore.refreshLeetCodeQuestionHistory(
                     slug,

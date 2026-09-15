@@ -111,6 +111,30 @@ actor RemoteCodeCompletionService {
     private var tunnelTask: Task<RemoteSSHTunnel, Error>?
     private var activeRequests = 0
     private var cache: [String: CacheEntry] = [:]
+    /// 最近一次远端成功返回的时间。服务端的 JDT LS 按需拉起、空闲 8 分钟回收，
+    /// 超过这个时长就当它已经冷了。
+    private var lastSuccessAt: Date = .distantPast
+
+    /// 远端的冷热判断与超时口径。
+    ///
+    /// 原来固定 14s 超时、超时就拆隧道：离开一会儿回来写代码，第一次补全要等 JDT LS
+    /// 冷启动（实测 7s，上次被强杀、要先恢复工作区时更久），一慢就超时 → 显示「本地兜底」，
+    /// 隧道也被拆了，下一次还得重新 SSH 握手。
+    enum Timing {
+        static let warmTimeout: TimeInterval = 14
+        static let coldTimeout: TimeInterval = 50
+        static let serverIdleWindow: TimeInterval = 7 * 60
+
+        static func isCold(lastSuccessAt: Date, now: Date = .now) -> Bool {
+            now.timeIntervalSince(lastSuccessAt) > serverIdleWindow
+        }
+
+        /// 服务端报"JDT LS 中途退出"：网关下一次请求会重新拉起它，值得立刻重试一次。
+        static func isRestartable(_ message: String) -> Bool {
+            let lowered = message.lowercased()
+            return lowered.contains("jdt ls stopped") || lowered.contains("not running") || lowered.contains("closed stdout")
+        }
+    }
 
     private struct CacheEntry: Sendable {
         let response: RemoteCompletionResponse
@@ -147,10 +171,17 @@ actor RemoteCodeCompletionService {
         let tunnel = try await ensureTunnel()
         do {
             let body = try JSONEncoder().encode(CompletionRequest(language: "java", code: code, line: line, character: character))
-            let payload = try await Self.requestJSON(port: tunnel.port, path: "/complete", method: "POST", body: body, timeout: 14)
+            let timeout = Timing.isCold(lastSuccessAt: lastSuccessAt) ? Timing.coldTimeout : Timing.warmTimeout
+            var payload = try await Self.requestJSON(port: tunnel.port, path: "/complete", method: "POST", body: body, timeout: timeout)
+            if payload.statusCode == 503, Timing.isRestartable(payload.message) {
+                // 冷启动途中 JDT LS 退出过（服务端回收线程的竞态），网关会在下一次请求时重拉。
+                try await Task.sleep(for: .milliseconds(400))
+                payload = try await Self.requestJSON(port: tunnel.port, path: "/complete", method: "POST", body: body, timeout: Timing.coldTimeout)
+            }
             guard payload.statusCode == 200 else {
                 throw RemoteCompletionError.unavailable(payload.message.isEmpty ? "远程 Java 补全暂不可用" : payload.message)
             }
+            lastSuccessAt = .now
             let response = RemoteCompletionResponse(
                 engine: payload.engine.isEmpty ? "eclipse-jdt-ls" : String(payload.engine.prefix(80)),
                 items: Self.normalizedItems(payload.items)
@@ -160,8 +191,36 @@ actor RemoteCodeCompletionService {
                 cache = cache.filter { $0.value.expires > Date.now }
             }
             return response
+        } catch let error as URLError where error.code == .timedOut && tunnel.process.isRunning {
+            // 超时多半是服务端还在冷启动，隧道本身是好的：留着，下次不用重新握手。
+            lastSuccessAt = .distantPast
+            throw RemoteCompletionError.unavailable("远程 Java 服务启动较慢，稍后自动重试")
         } catch {
             if error is URLError { stopTunnel() }
+            throw error
+        }
+    }
+
+    /// 打开 Java 编辑器时提前唤醒远端：建隧道 + 发一次最小补全把 JDT LS 拉起来。
+    /// 用户开始敲代码时它已经是热的，第一下补全就能用上语义结果。返回引擎名。
+    func warmUp() async throws -> String {
+        guard configuration.isConfigured else { throw RemoteCompletionError.unavailable("远程 Java 补全未配置") }
+        guard Timing.isCold(lastSuccessAt: lastSuccessAt) else { return "eclipse-jdt-ls" }
+        let tunnel = try await ensureTunnel()
+        let body = try JSONEncoder().encode(CompletionRequest(language: "java", code: "class Solution {\n}\n", line: 1, character: 0))
+        do {
+            var payload = try await Self.requestJSON(port: tunnel.port, path: "/complete", method: "POST", body: body, timeout: Timing.coldTimeout)
+            if payload.statusCode == 503, Timing.isRestartable(payload.message) {
+                try await Task.sleep(for: .milliseconds(400))
+                payload = try await Self.requestJSON(port: tunnel.port, path: "/complete", method: "POST", body: body, timeout: Timing.coldTimeout)
+            }
+            guard payload.statusCode == 200 else {
+                throw RemoteCompletionError.unavailable(payload.message.isEmpty ? "远程 Java 补全暂不可用" : payload.message)
+            }
+            lastSuccessAt = .now
+            return payload.engine.isEmpty ? "eclipse-jdt-ls" : String(payload.engine.prefix(80))
+        } catch let error as URLError where error.code != .timedOut {
+            stopTunnel()
             throw error
         }
     }

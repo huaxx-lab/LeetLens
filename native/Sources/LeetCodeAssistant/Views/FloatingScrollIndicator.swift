@@ -78,7 +78,8 @@ struct FloatingScrollIndicatorModifier: ViewModifier {
     }
 
     private func dragGesture(vertical: Bool, proxySize: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+        // 全局坐标：thumb 随滚动在移动，局部坐标量出来的位移会和它自己的位置互相打架。
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
                 let start = dragStartOffset ?? metrics.offset
                 if dragStartOffset == nil { dragStartOffset = start }

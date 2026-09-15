@@ -23,11 +23,26 @@ struct LeetCodeQuestionActionBar: View {
                 tint: meta.isLiked == true ? Color.accentColor : .secondary
             )
 
+            // 写明「题解」：原来只有气泡图标 + 数字，看着像评论数，找不到题解入口。
             Button(action: onOpenSolutions) {
-                chipLabel(systemImage: "bubble.left", text: Self.compactCount(meta.solutionCount), tint: .secondary)
+                HStack(spacing: 5) {
+                    Image(systemName: "book.pages")
+                        .font(AppDesign.Typography.iconCompact)
+                    Text("题解")
+                        .font(AppDesign.Typography.auxEmphasis)
+                    if meta.solutionCount > 0 {
+                        Text(Self.compactCount(meta.solutionCount))
+                            .font(AppDesign.Typography.micro.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .foregroundStyle(Color.primary)
+                .padding(.horizontal, 8)
+                .frame(height: 24)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .buttonStyle(.plain)
-            .help("查看题解")
+            .help("查看题解（\(meta.solutionCount) 篇）")
 
             Divider().frame(height: 14)
 

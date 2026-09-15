@@ -39,7 +39,7 @@ enum LeetCodeCompletionStatus: Hashable, Sendable {
     var detail: String {
         switch self {
         case .localOnly: "未配置远程 Java 语义服务"
-        case .connecting: "正在连接远程 Java 语义服务"
+        case .connecting: "正在唤醒远程 Java 语义服务（冷启动约 10 秒）"
         case .online(let engine): engine
         case .offline(let reason): reason
         }
@@ -81,6 +81,12 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
     var onCodeChange: ((String, String) -> Void)? = nil
     var onSelectionChange: ((LeetCodeEditorSelection?) -> Void)? = nil
     var pageZoom: CGFloat = WebViewPresentation.interfaceZoom
+    /// AI 就地标注。只在 `suggestionsRevision` 变化（换了一批）或换篇时整体重画；
+    /// 单条被接受 / 忽略由编辑器自己处理，再经 `onSuggestionResolved` 回报。
+    var suggestions: [CodeReviewSuggestion] = []
+    var suggestionsRevision = 0
+    var acceptAllSuggestionsRequest = 0
+    var onSuggestionResolved: ((String, String) -> Void)? = nil
     /// 想按内容自适应高度的宿主传这个；刷题页那种固定分栏不用传。
     var contentHeight: Binding<CGFloat>? = nil
 
@@ -94,6 +100,7 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
         controller.add(context.coordinator, name: "editorDiagnostics")
         controller.add(context.coordinator, name: "remoteCompletionRequested")
         controller.add(context.coordinator, name: "editorSelection")
+        controller.add(context.coordinator, name: "suggestionResolved")
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController = controller
@@ -125,7 +132,7 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
         let controller = webView.configuration.userContentController
-        ["editorReady", "editorFailed", "editorChanged", "editorDiagnostics", "remoteCompletionRequested", "editorSelection"]
+        ["editorReady", "editorFailed", "editorChanged", "editorDiagnostics", "remoteCompletionRequested", "editorSelection", "suggestionResolved"]
             .forEach(controller.removeScriptMessageHandler(forName:))
         coordinator.completionTask?.cancel()
         webView.navigationDelegate = nil
@@ -139,6 +146,9 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
         private var lastWebCode = ""
         private var lastLanguage = ""
         private var lastDocumentID: String?
+        private var lastSuggestionsRevision = -1
+        /// 从当前值起算：页面切回来重建编辑器时，不能把会话里累积的计数当成新请求再执行一遍。
+        private var lastAcceptAllRequest: Int
         private var lastFormatRequest = 0
         private var lastUndoRequest = 0
         private var lastRedoRequest = 0
@@ -146,6 +156,7 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
 
         init(parent: LeetCodeCodeEditor) {
             self.parent = parent
+            self.lastAcceptAllRequest = parent.acceptAllSuggestionsRequest
         }
 
         /// CodeMirror 报上来的内容总高度。抖动小于 1pt 就不写回，
@@ -167,6 +178,7 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
                 updateLoadStatus(.ready)
                 updateContentHeight((message.body as? [String: Any])?["contentHeight"])
                 synchronize(force: true)
+                warmUpRemoteCompletion()
             case "editorFailed":
                 let detail = (message.body as? [String: Any])?["message"] as? String ?? "本地编辑器脚本加载失败"
                 updateLoadStatus(.failed(String(detail.prefix(240))))
@@ -181,6 +193,12 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
                 } else if parent.code != value {
                     parent.code = value
                 }
+            case "suggestionResolved":
+                guard let body = message.body as? [String: Any],
+                      (body["documentID"] as? String ?? "") == (lastDocumentID ?? ""),
+                      let id = body["id"] as? String
+                else { return }
+                parent.onSuggestionResolved?(id, body["action"] as? String ?? "")
             case "editorSelection":
                 guard let onSelectionChange = parent.onSelectionChange,
                       let body = message.body as? [String: Any],
@@ -211,6 +229,27 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
                 handleRemoteCompletion(message.body)
             default:
                 break
+            }
+        }
+
+        /// Java 编辑器一就绪就把远端 JDT LS 唤醒，别等用户敲第一个字母时才冷启动。
+        private func warmUpRemoteCompletion() {
+            guard RemoteCodeCompletionService.shared.isConfigured,
+                  LeetCodeEditorLanguage.normalized(parent.language) == "java",
+                  completionTask == nil
+            else { return }
+            updateCompletionStatus(.connecting)
+            completionTask = Task { @MainActor [weak self] in
+                do {
+                    let engine = try await RemoteCodeCompletionService.shared.warmUp()
+                    guard !Task.isCancelled else { return }
+                    self?.updateCompletionStatus(.online(engine))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self?.updateCompletionStatus(.offline(error.localizedDescription))
+                }
+                self?.completionTask = nil
             }
         }
 
@@ -278,9 +317,16 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
                 lastLanguage = normalizedLanguage
                 lastDocumentID = parent.documentID
                 lastWebCode = parent.code
+                // 载入和标注放在同一段脚本里：分两次调用的话顺序不保证，标注可能先画到旧文档上。
+                lastSuggestionsRevision = parent.suggestionsRevision
                 callJavaScript(
-                    "window.editorBridge.load(code, language, id)",
-                    arguments: ["code": parent.code, "language": normalizedLanguage, "id": parent.documentID]
+                    "window.editorBridge.load(code, language, id); window.editorBridge.setSuggestions(suggestions, id)",
+                    arguments: [
+                        "code": parent.code,
+                        "language": normalizedLanguage,
+                        "id": parent.documentID,
+                        "suggestions": Self.suggestionPayload(parent.suggestions)
+                    ]
                 )
             } else if parent.code != lastWebCode {
                 lastWebCode = parent.code
@@ -288,6 +334,17 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
                     "window.editorBridge.replace(code, id)",
                     arguments: ["code": parent.code, "id": parent.documentID]
                 )
+            }
+            if parent.suggestionsRevision != lastSuggestionsRevision {
+                lastSuggestionsRevision = parent.suggestionsRevision
+                callJavaScript(
+                    "window.editorBridge.setSuggestions(suggestions, id)",
+                    arguments: ["suggestions": Self.suggestionPayload(parent.suggestions), "id": parent.documentID]
+                )
+            }
+            if parent.acceptAllSuggestionsRequest != lastAcceptAllRequest {
+                lastAcceptAllRequest = parent.acceptAllSuggestionsRequest
+                callJavaScript("window.editorBridge.acceptAllSuggestions()")
             }
             if parent.formatRequest != lastFormatRequest {
                 lastFormatRequest = parent.formatRequest
@@ -300,6 +357,21 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
             if parent.redoRequest != lastRedoRequest {
                 lastRedoRequest = parent.redoRequest
                 callJavaScript("window.editorBridge.redo()")
+            }
+        }
+
+        private static func suggestionPayload(_ suggestions: [CodeReviewSuggestion]) -> [[String: Any]] {
+            suggestions.map {
+                [
+                    "id": $0.id,
+                    "startLine": $0.startLine,
+                    "endLine": $0.endLine,
+                    "severity": $0.severity.rawValue,
+                    "title": $0.title,
+                    "explanation": $0.explanation,
+                    "original": $0.original,
+                    "replacement": $0.replacement
+                ]
             }
         }
 

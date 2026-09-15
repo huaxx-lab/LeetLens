@@ -13,6 +13,8 @@ struct LeetCodeWorkspaceView: View {
     @State private var activityLayout = LeetCodeActivityCalendar.Layout.empty
     @State private var activityInsight = LeetCodeActivityInsight.empty
     @GestureState private var bottomPanelDragTranslation: CGFloat = 0
+    /// 结果区里内容的实际高度（样例输入 + 判题结果），用来在出结果时自动撑开。
+    @State private var resultContentHeight: CGFloat = 0
     @State private var workspaceLoadingSlug: String?
     @State private var workspaceError: String?
     @State private var submissionDetailLoadingIDs: Set<String> = []
@@ -985,6 +987,12 @@ struct LeetCodeWorkspaceView: View {
                     },
                     onSelectionChange: { selection in
                         if session.selection != selection { session.selection = selection }
+                    },
+                    suggestions: session.visibleSuggestions,
+                    suggestionsRevision: session.reviewRevision,
+                    acceptAllSuggestionsRequest: session.acceptAllRequest,
+                    onSuggestionResolved: { id, _ in
+                        session.resolveSuggestion(id: id)
                     }
                 )
                 .id(editorReloadRequest)
@@ -993,12 +1001,40 @@ struct LeetCodeWorkspaceView: View {
                     editorLoadOverlay
                 }
                 .overlay(alignment: .bottom) {
-                    resetNotice
+                    VStack(spacing: AppDesign.Spacing.xs) {
+                        reviewBar
+                        resetNotice
+                    }
                 }
                 panelResizeHandle(slug: slug, availableHeight: proxy.size.height)
                 testCasePanel(slug: slug)
                     .frame(height: panelHeight)
             }
+            // 结果出来时把结果区撑到能看全（不超过可用高度的六成），不用手动去拖。
+            // 只往大里撑：用户自己拖得更大的保留。
+            .onChange(of: judgeLayoutSignature) { _, _ in
+                growResultsPanelToFit(slug: slug, availableHeight: proxy.size.height)
+            }
+            .onChange(of: resultContentHeight) { _, _ in
+                growResultsPanelToFit(slug: slug, availableHeight: proxy.size.height)
+            }
+        }
+    }
+
+    /// 判题状态每变一次（开始 / 进度 / 出结果 / 出错）签名就变。
+    private var judgeLayoutSignature: String {
+        let judge = judge
+        return "\(judge.action != nil)|\(judge.result?.taskID ?? "")|\(judge.error ?? "")"
+    }
+
+    private func growResultsPanelToFit(slug: String, availableHeight: CGFloat) {
+        let judge = judge
+        guard judge.action != nil || judge.result != nil || judge.error != nil, resultContentHeight > 0 else { return }
+        let current = session.bottomPanelHeightsBySlug[slug] ?? LeetCodeBottomPanelLayout.defaultHeight
+        let wanted = LeetCodeBottomPanelLayout.heightToFit(content: resultContentHeight, availableHeight: availableHeight)
+        guard wanted > current + 4 else { return }
+        withAnimation(AppDesign.Motion.panel) {
+            session.bottomPanelHeightsBySlug[slug] = wanted
         }
     }
 
@@ -1062,6 +1098,7 @@ struct LeetCodeWorkspaceView: View {
                 .layoutPriority(-1)
                 .help(completionStatus.detail)
             Spacer(minLength: AppDesign.Spacing.sm)
+            reviewButton
             HStack(spacing: 4) {
                 editorToolButton("arrow.uturn.backward", help: "撤销") { editorUndoRequest &+= 1 }
                 editorToolButton("arrow.uturn.forward", help: "重做") { editorRedoRequest &+= 1 }
@@ -1082,6 +1119,93 @@ struct LeetCodeWorkspaceView: View {
         }
         .padding(.horizontal, AppDesign.Spacing.sm)
         .frame(height: AppDesign.Size.pageHeader - 2)
+    }
+
+    // MARK: - AI 就地标注
+
+    /// 「AI 检查」：读当前代码和最近一次评测，把问题标到具体行上，下面给可接受的修改。
+    private var reviewButton: some View {
+        Button {
+            startReview()
+        } label: {
+            HStack(spacing: 5) {
+                if session.isReviewing {
+                    ProgressView().controlSize(.mini).frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: "sparkles")
+                        .font(AppDesign.Typography.aux.weight(.semibold))
+                }
+                Text(session.isReviewing ? "检查中" : (session.visibleSuggestions.isEmpty ? "AI 检查" : "标注 \(session.visibleSuggestions.count)"))
+                    .font(AppDesign.Typography.auxEmphasis)
+            }
+            .foregroundStyle(session.visibleSuggestions.isEmpty ? Color.primary : Color.accentColor)
+            .padding(.horizontal, 10)
+            .frame(height: AppDesign.Size.toolbarControl)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .quietCapsule()
+        .disabled(session.isReviewing || session.isPristine)
+        .help(session.isPristine ? "先写点代码再检查" : "AI 读当前代码和评测结果，把问题标到具体行上，给出可以一键接受的修改")
+        .contextMenu {
+            Toggle("运行或提交没通过时自动标注", isOn: $session.autoReviewOnFailure)
+            if !session.visibleSuggestions.isEmpty {
+                Button("清除全部标注", systemImage: "xmark.circle") { session.clearReview() }
+            }
+        }
+    }
+
+    private func startReview() {
+        guard let questionWorkspace = selectedWorkspace else { return }
+        session.requestReview(.manual, question: selectedQuestion, workspace: questionWorkspace, dataStore: dataStore)
+    }
+
+    /// 编辑器底部一条：标注了几处、全部接受、清除；检查中 / 出错时也在这里说。
+    @ViewBuilder
+    private var reviewBar: some View {
+        let count = session.visibleSuggestions.count
+        if session.isReviewing || count > 0 || !session.reviewError.isEmpty {
+            HStack(spacing: AppDesign.Spacing.xs) {
+                if session.isReviewing {
+                    ProgressView().controlSize(.small)
+                    Text("AI 正在把问题标到代码上…")
+                        .font(AppDesign.Typography.aux)
+                } else if count > 0 {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(Color.accentColor)
+                    Text("标注了 \(count) 处，下面是修改建议")
+                        .font(AppDesign.Typography.aux)
+                    Button("全部接受") { session.acceptAllSuggestions() }
+                        .buttonStyle(.plain)
+                        .font(AppDesign.Typography.auxEmphasis)
+                        .foregroundStyle(Color.accentColor)
+                    Button("清除") { session.clearReview() }
+                        .buttonStyle(.plain)
+                        .font(AppDesign.Typography.aux)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.secondary)
+                    Text(session.reviewError)
+                        .font(AppDesign.Typography.aux)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Button {
+                        session.clearReview()
+                    } label: {
+                        Image(systemName: "xmark").font(.appScaled(size: 9, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: AppDesign.Size.toolbarControl + 4)
+            .navigationGlass(cornerRadius: AppDesign.Radius.floating)
+            .padding(.bottom, session.discardedCode == nil ? AppDesign.Spacing.sm : 0)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .animation(AppDesign.Motion.selection, value: count)
+        }
     }
 
     private var questionWorkspaceSlug: String {
@@ -1161,8 +1285,9 @@ struct LeetCodeWorkspaceView: View {
         }
         .frame(height: 9)
         .contentShape(Rectangle())
+        // 全局坐标：把手本身跟着拖动在移动，用局部坐标量位移会一帧顶一帧地抖。
         .gesture(
-            DragGesture(minimumDistance: 1)
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .updating($bottomPanelDragTranslation) { value, state, _ in
                     state = value.translation.height
                 }
@@ -1230,6 +1355,9 @@ struct LeetCodeWorkspaceView: View {
                     // 给右下角浮着的运行 / 提交让出位置，最后一行结果不被压住。
                     .padding(.bottom, 56)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        (proxy.size.height / 8).rounded(.up) * 8
+                    } action: { resultContentHeight = $0 }
                 }
                 .floatingScrollIndicators()
             }
@@ -1537,12 +1665,25 @@ enum LeetCodeTestCaseWorkspace {
 enum LeetCodeBottomPanelLayout {
     static let minimumHeight: CGFloat = 172
     static let defaultHeight: CGFloat = 236
+    /// 固定上限的下限。大屏上按可用高度放宽（见 `maximumHeight(for:)`）：
+    /// 原来钉死 430，1080p 全屏时一长串失败用例只能在一小格里滚。
     static let maximumHeight: CGFloat = 430
     static let minimumEditorHeight: CGFloat = 220
+    /// 样例标签那一行的高度，自动撑开时要算进去。
+    static let tabsHeight: CGFloat = 36
+
+    static func maximumHeight(for availableHeight: CGFloat) -> CGFloat {
+        max(maximumHeight, (availableHeight * 0.6).rounded())
+    }
 
     static func clampedHeight(_ requestedHeight: CGFloat, availableHeight: CGFloat) -> CGFloat {
         let availableMaximum = max(minimumHeight, availableHeight - minimumEditorHeight - 52)
-        return min(maximumHeight, availableMaximum, max(minimumHeight, requestedHeight))
+        return min(maximumHeight(for: availableHeight), availableMaximum, max(minimumHeight, requestedHeight))
+    }
+
+    /// 刚好放下结果内容的高度（再夹进可拖范围）。
+    static func heightToFit(content: CGFloat, availableHeight: CGFloat) -> CGFloat {
+        clampedHeight(content + tabsHeight + 1, availableHeight: availableHeight)
     }
 }
 
@@ -1644,7 +1785,7 @@ struct LeetCodeProblemWebView: NSViewRepresentable {
         <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
         <style>
         \(Self.sharedCodeBlockCSS)
-        :root{color-scheme:light dark}body{margin:0;padding:24px 26px \(Int(bottomPadding))px;background:transparent;color:CanvasText;font:14px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:0}p{margin:0 0 15px}img{display:block;max-width:100%;height:auto;margin:16px auto}li{margin:6px 0}strong{font-weight:650}a{color:#0a7aff;text-decoration:none}
+        :root{color-scheme:light dark}body{margin:0;padding:24px 26px \(Int(bottomPadding))px;background:transparent;color:CanvasText;font:14px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:0;overflow-wrap:anywhere;word-break:break-word}pre:not(.code-block pre){white-space:pre-wrap}code{overflow-wrap:anywhere}table{display:block;max-width:100%;overflow-x:auto}p{margin:0 0 15px}img{display:block;max-width:100%;height:auto;margin:16px auto}li{margin:6px 0}strong{font-weight:650}a{color:#0a7aff;text-decoration:none}
         </style></head><body>\(html)</body></html>
         """
     }

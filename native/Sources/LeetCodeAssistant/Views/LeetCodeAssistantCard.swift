@@ -135,7 +135,16 @@ struct LeetCodeAssistantCard: View {
                 },
                 contextPrompt: contextPrompt,
                 emptyState: AnyView(emptyState),
-                composerAccessory: AnyView(attachmentBar)
+                composerAccessory: AnyView(composerAccessory),
+                onAssistantReply: { reply in
+                    // 回答里点到了具体行（"第 8 行 p++ 应为 i++"），就把它落到编辑器里：
+                    // 标出位置、给出可一键接受的修改，不用自己对着行号去找。
+                    guard let questionWorkspace,
+                          CodeReviewPolicy.mentionsSpecificLines(reply),
+                          session.documentID.hasPrefix(slug + "|")
+                    else { return }
+                    session.requestReview(.assistantReply(reply), question: question, workspace: questionWorkspace, dataStore: dataStore)
+                }
             )
         )
         // 换题时整块重建：WebView 里还渲染着上一题的对话。
@@ -206,6 +215,42 @@ struct LeetCodeAssistantCard: View {
         .padding(.horizontal, AppDesign.Spacing.md)
         .padding(.bottom, AppDesign.Spacing.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var composerAccessory: some View {
+        VStack(alignment: .leading, spacing: AppDesign.Spacing.xxs) {
+            reviewStatus
+            attachmentBar
+        }
+    }
+
+    /// 回答被标到代码上之后，在问答这边也给个回音，免得用户不知道编辑器里多了东西。
+    @ViewBuilder
+    private var reviewStatus: some View {
+        let count = session.visibleSuggestions.count
+        if session.isReviewing || count > 0 {
+            HStack(spacing: 6) {
+                if session.isReviewing {
+                    ProgressView().controlSize(.mini).frame(width: 12, height: 12)
+                    Text("正在把建议标到代码里…")
+                } else {
+                    Image(systemName: "sparkles").foregroundStyle(Color.accentColor)
+                    Text("已在代码中标注 \(count) 处")
+                    if !session.isSolving {
+                        Button("去作答查看") { session.isSolving = true }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.accentColor)
+                    } else {
+                        Button("全部接受") { session.acceptAllSuggestions() }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+            }
+            .font(AppDesign.Typography.micro)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, AppDesign.Spacing.md)
+        }
     }
 
     /// 输入框上方一条"这次会带上什么"。点一下切换，不想附带代码时关掉就行。

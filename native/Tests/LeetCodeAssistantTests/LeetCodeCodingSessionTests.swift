@@ -298,3 +298,32 @@ final class LayoutOverflowTests: XCTestCase {
         XCTAssertTrue(ContextPanelPresentationPolicy.fits(columnWidth: 0, panelWidth: panel), "还没量到宽度时不闪")
     }
 }
+
+/// 远端补全冷热判断：服务端空闲 8 分钟回收 JDT LS，客户端 7 分钟没成功过就按冷启动放宽超时。
+final class RemoteCompletionTimingTests: XCTestCase {
+    func testColdStartUsesLongTimeoutAndRestartableErrorsRetry() {
+        let now = Date()
+        XCTAssertTrue(RemoteCodeCompletionService.Timing.isCold(lastSuccessAt: .distantPast, now: now))
+        XCTAssertFalse(RemoteCodeCompletionService.Timing.isCold(lastSuccessAt: now.addingTimeInterval(-60), now: now))
+        XCTAssertTrue(RemoteCodeCompletionService.Timing.isCold(lastSuccessAt: now.addingTimeInterval(-8 * 60), now: now))
+        XCTAssertGreaterThan(RemoteCodeCompletionService.Timing.coldTimeout, 45, "冷启动实测 7s，恢复工作区时更久；网关自己的 initialize 超时是 45s")
+        XCTAssertTrue(RemoteCodeCompletionService.Timing.isRestartable("JDT LS stopped"))
+        XCTAssertTrue(RemoteCodeCompletionService.Timing.isRestartable("JDT LS closed stdout"))
+        XCTAssertFalse(RemoteCodeCompletionService.Timing.isRestartable("invalid document or cursor"))
+    }
+}
+
+/// CodeMirror 的 `eachLine` 遇到回调返回真值就停止遍历。编辑器清红行时写成
+/// `eachLine(h => editor.removeLineClass(...))`，删成功返回行句柄（真值）→ 只清第一条，
+/// 后面的红行一直留着（2026-09 用户截图：括号修好后第 3 行仍然发红）。
+final class CodeEditorScriptTests: XCTestCase {
+    func testEachLineCallbacksNeverReturnAValue() throws {
+        let editor = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Sources/LeetCodeAssistant/Resources/CodeEditor/editor.html")
+        let source = try String(contentsOf: editor, encoding: .utf8)
+        let expressionCallback = try NSRegularExpression(pattern: #"eachLine\(\s*\w+\s*=>(?!\s*\{)"#)
+        let range = NSRange(source.startIndex..., in: source)
+        XCTAssertNil(expressionCallback.firstMatch(in: source, range: range), "eachLine 的回调要写成 { ...; } 块，不能返回值")
+    }
+}

@@ -20,6 +20,8 @@ struct ConversationEmbedding {
     var emptyState: AnyView
     /// 输入框上方的一条附件条（附带了哪些上下文）。
     var composerAccessory: AnyView?
+    /// 一条回答完整生成完之后回调（刷题页据此把回答里点到的行标到代码上）。
+    var onAssistantReply: (@MainActor (String) -> Void)? = nil
 }
 
 struct ConversationWorkspaceView: View {
@@ -57,6 +59,61 @@ struct ConversationWorkspaceView: View {
     }
 
     var body: some View {
+        if let embedding {
+            embeddedBody(embedding)
+        } else {
+            primaryBody
+        }
+    }
+
+    /// 嵌在浮窗里：上面是对话、下面是输入区，**上下排而不是叠在一起**。
+    /// 对话页的输入框是浮在正文上的玻璃（正文底部留了位）；浮窗里照搬的话，
+    /// 半透明输入框和附件条直接压在回答最后几行上，字透过来叠成一团。
+    private func embeddedBody(_ embedding: ConversationEmbedding) -> some View {
+        VStack(spacing: 0) {
+            ZStack {
+                conversationWebView
+                    .opacity(isEmptyConversation ? 0 : 1)
+                    .allowsHitTesting(!isEmptyConversation)
+                if isEmptyConversation {
+                    embedding.emptyState
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            VStack(alignment: .leading, spacing: AppDesign.Spacing.xxs) {
+                embedding.composerAccessory
+                composer
+            }
+            .padding(.top, AppDesign.Spacing.xs)
+            .padding(.bottom, AppDesign.Spacing.compact)
+            .background(AppDesign.ColorToken.canvas)
+            .overlay(alignment: .top) { Hairline() }
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            (proxy.size.width / 20).rounded(.down) * 20
+        } action: { measuredWidth = $0 }
+    }
+
+    private var conversationWebView: some View {
+        RichConversationWebView(
+            messages: conversationMessages,
+            conversationRevision: selectedConversation?.revision,
+            generation: visibleGeneration,
+            scrollTargetID: nil,
+            scrollTargetRevision: 0,
+            onQuestionActivity: { _, _ in },
+            onOpenURL: { url in workspace.openURL(url) },
+            onRetry: retryGeneration,
+            onAgentJump: handleAgentJump,
+            contentTrailingInset: 0,
+            contentLeadingInset: 0
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var primaryBody: some View {
         ZStack(alignment: .bottom) {
             RichConversationWebView(
                 messages: conversationMessages,
@@ -81,21 +138,7 @@ struct ConversationWorkspaceView: View {
             .opacity(isEmptyConversation ? 0 : 1)
             .allowsHitTesting(!isEmptyConversation)
 
-            if let embedding {
-                VStack(spacing: 0) {
-                    if isEmptyConversation {
-                        embedding.emptyState
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        Spacer(minLength: 0)
-                    }
-                    VStack(spacing: AppDesign.Spacing.xxs) {
-                        embedding.composerAccessory
-                        composer
-                    }
-                    .padding(.bottom, AppDesign.Spacing.compact)
-                }
-            } else if isEmptyConversation {
+            if isEmptyConversation {
                 ConversationEmptyStateView {
                     composer
                         .padding(.leading, contentLeadingInset)
@@ -336,8 +379,10 @@ struct ConversationWorkspaceView: View {
                 batcher.flush()
                 try Task.checkCancellation()
                 try persistGeneratedMessage(conversationID: conversationID, messageID: assistantID)
+                let finishedReply = workspace.conversationGeneration?.content ?? ""
                 workspace.conversationGenerationTask = nil
                 workspace.conversationGeneration = nil
+                embedding?.onAssistantReply?(finishedReply)
                 if dispatchQueuedFollowUps(conversationID: conversationID) { return }
                 await analyzeLearningIfNeeded(conversationID)
                 await archiveConversationIfNeeded(conversationID)

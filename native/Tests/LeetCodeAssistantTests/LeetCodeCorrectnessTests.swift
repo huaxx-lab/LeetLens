@@ -110,8 +110,15 @@ final class LeetCodeCorrectnessTests: XCTestCase {
             LeetCodeBottomPanelLayout.minimumHeight
         )
         XCTAssertEqual(
-            LeetCodeBottomPanelLayout.clampedHeight(900, availableHeight: 800),
+            LeetCodeBottomPanelLayout.clampedHeight(900, availableHeight: 716),
             LeetCodeBottomPanelLayout.maximumHeight
+        )
+        // 大屏上上限按可用高度放宽到六成，但仍给编辑器留足下限。
+        XCTAssertEqual(LeetCodeBottomPanelLayout.clampedHeight(2_000, availableHeight: 1_000), 600)
+        XCTAssertEqual(
+            LeetCodeBottomPanelLayout.heightToFit(content: 300, availableHeight: 1_000),
+            337,
+            "结果内容 300 + 样例标签行 36 + 分隔线 1"
         )
         XCTAssertEqual(
             LeetCodeBottomPanelLayout.clampedHeight(900, availableHeight: 480),
