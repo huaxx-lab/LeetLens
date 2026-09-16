@@ -1148,7 +1148,7 @@ struct LeetCodeWorkspaceView: View {
         .disabled(session.isReviewing || session.isPristine)
         .help(session.isPristine ? "先写点代码再检查" : "AI 读当前代码和评测结果，把问题标到具体行上，给出可以一键接受的修改")
         .contextMenu {
-            Toggle("运行或提交没通过时自动标注", isOn: $session.autoReviewOnFailure)
+            Toggle("没通过时自动标注（默认关，先自己想）", isOn: $session.autoReviewOnFailure)
             if !session.visibleSuggestions.isEmpty {
                 Button("清除全部标注", systemImage: "xmark.circle") { session.clearReview() }
             }
@@ -1481,14 +1481,7 @@ struct LeetCodeWorkspaceView: View {
                     }
                 }
                 if !result.accepted {
-                    Button {
-                        askAssistant("我的代码为什么没通过？请结合失败用例指出问题所在，先不要给完整代码。")
-                    } label: {
-                        Label("问 AI 为什么没通过", systemImage: "sparkles")
-                            .font(AppDesign.Typography.auxEmphasis)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.accentColor)
+                    failureActions
                 }
                 if !result.aiJudgeMessage.isEmpty {
                     Text(result.aiJudgeMessage).font(AppDesign.Typography.micro).foregroundStyle(.secondary)
@@ -1498,6 +1491,60 @@ struct LeetCodeWorkspaceView: View {
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(judge.result?.accepted == true ? Color.green.opacity(0.08) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    /// 没通过之后给的台阶：先自己找，想不出来要方向，再不行才把问题标到行上。
+    /// 不一上来就标——那等于替他把题做了。
+    @ViewBuilder
+    private var failureActions: some View {
+        let hasHints = !session.hints(for: session.selectedQuestionSlug).isEmpty
+        VStack(alignment: .leading, spacing: 6) {
+            Text(hasHints ? "还是不行就把问题标到代码上。" : "先自己对着失败用例走一遍；想不出来再要提示。")
+                .font(AppDesign.Typography.micro)
+                .foregroundStyle(.secondary)
+            HStack(spacing: AppDesign.Spacing.xs) {
+                failureAction("给个方向", systemImage: "lightbulb.max", prominent: !hasHints) {
+                    requestDirection()
+                }
+                failureAction("问 AI", systemImage: "sparkles") {
+                    askAssistant("我的代码为什么没通过？请结合失败用例指出问题所在，先不要给完整代码。")
+                }
+                // 只有要过提示还是没解决时才露出来：它给的是具体行和改法，是最后一级。
+                if hasHints {
+                    failureAction("标到代码上", systemImage: "text.badge.checkmark", prominent: true) {
+                        startReview()
+                    }
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private func failureAction(
+        _ title: String,
+        systemImage: String,
+        prominent: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(AppDesign.Typography.auxEmphasis)
+                .foregroundStyle(prominent ? Color.accentColor : Color.secondary)
+                .padding(.horizontal, 9)
+                .frame(height: AppDesign.Size.toolbarControl - 4)
+                .background(prominent ? Color.accentColor.opacity(0.12) : AppDesign.ColorToken.inlineFill, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 打开分级提示并要第一级：只给方向，不给代码。
+    private func requestDirection() {
+        guard let questionWorkspace = selectedWorkspace else { return }
+        session.assistantMode = .hints
+        withAnimation(AppDesign.Motion.selection) { session.isAssistantPresented = true }
+        guard session.hints(for: session.selectedQuestionSlug).isEmpty else { return }
+        Task { await session.requestHint(question: selectedQuestion, workspace: questionWorkspace, dataStore: dataStore) }
     }
 
     private func startJudge(_ action: LeetCodeJudgeAction) {

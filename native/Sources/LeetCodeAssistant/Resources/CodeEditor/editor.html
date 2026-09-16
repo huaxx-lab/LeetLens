@@ -433,6 +433,37 @@
         .replace(/\$\d+/g, '');
     }
 
+    /// 括号里那段的范围。`sort(int[] a)` → 参数从 `(` 之后到配对的 `)`。
+    /// 按深度配对，不用正则：`max(a, min(b, c))` 的外层右括号在最后。
+    function parameterSpan(text) {
+      const open = text.indexOf('(');
+      if (open < 0) return null;
+      let depth = 0;
+      for (let i = open; i < text.length; i++) {
+        if (text[i] === '(') depth++;
+        else if (text[i] === ')') {
+          depth--;
+          if (depth === 0) return { open, close: i };
+        }
+      }
+      return { open, close: -1 };
+    }
+
+    /// 接受函数类补全后，光标落在括号里；括号里已经有参数名（JDT 给的
+    /// `sort(int[] a)` 这种）就整段选中，直接打字覆盖，不用自己退回去删。
+    function applyCompletion(cm, data, completion) {
+      const text = String(completion.text || '');
+      cm.replaceRange(text, data.from, data.to, 'complete');
+      if (text.includes('\n')) return;
+      const span = parameterSpan(text);
+      if (!span) return;
+      const line = data.from.line;
+      const inside = data.from.ch + span.open + 1;
+      const end = span.close < 0 ? inside : data.from.ch + span.close;
+      if (end > inside) cm.setSelection({ line, ch: inside }, { line, ch: end });
+      else cm.setCursor({ line, ch: inside });
+    }
+
     function mergeRemoteCompletions(local, remoteItems) {
       const seen = new Set();
       const list = [];
@@ -440,7 +471,8 @@
         const text = typeof item === 'string' ? item : item && item.text;
         if (!text || seen.has(text)) continue;
         seen.add(text);
-        list.push(item);
+        // 本地候选多半是裸标识符；万一带括号（片段模板），也走同一套光标处理。
+        list.push(text.includes('(') && typeof item !== 'string' ? { ...item, hint: applyCompletion } : item);
       }
       for (const item of Array.isArray(remoteItems) ? remoteItems : []) {
         const text = remoteCompletionText(item);
@@ -452,7 +484,8 @@
           detail: String(item.detail || 'Java 语义'),
           kind: remoteCompletionKind(item.kind),
           render: renderCodeCompletion,
-          className: 'is-remote-completion'
+          className: 'is-remote-completion',
+          hint: applyCompletion
         });
       }
       return { ...local, list };
@@ -464,9 +497,16 @@
         extraKeys: {
           Enter: (instance, handle) => {
             const before = instance.getValue();
+            const cursorBefore = instance.getCursor();
             handle.pick();
             // show-hint normally consumes Enter even for an identical candidate.
-            if (instance.getValue() === before) instance.execCommand('newlineAndIndent');
+            // 但"文本没变"也可能是我们把光标挪进了括号（`size()` 这种），
+            // 那一下不能再补换行，否则换行会插到括号中间。
+            const cursorAfter = instance.getCursor();
+            const moved = cursorAfter.line !== cursorBefore.line || cursorAfter.ch !== cursorBefore.ch;
+            if (instance.getValue() === before && !moved && !instance.somethingSelected()) {
+              instance.execCommand('newlineAndIndent');
+            }
           }
         },
         completeSingle: false,

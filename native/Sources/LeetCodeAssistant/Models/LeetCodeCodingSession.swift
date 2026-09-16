@@ -330,8 +330,10 @@ final class LeetCodeCodingSession {
     private(set) var reviewError = ""
     /// 「全部接受」请求计数，编辑器侧执行（保留撤销历史与滚动位置）。
     private(set) var acceptAllRequest = 0
-    /// 运行 / 提交没通过时自动标注。设置项存在 UserDefaults。
-    var autoReviewOnFailure: Bool = UserDefaults.standard.object(forKey: "leetcode.autoReviewOnFailure") as? Bool ?? true {
+    /// 运行 / 提交没通过时自动标注。**默认关**：没通过的第一反应应该是自己对着失败用例
+    /// 再走一遍，直接把答案标到行上等于替他想。想不出来时结果区有「给个方向」，
+    /// 再不行才是「标到代码上」。愿意让它自动标的人可以在这里打开。
+    var autoReviewOnFailure: Bool = UserDefaults.standard.object(forKey: "leetcode.autoReviewOnFailure") as? Bool ?? false {
         didSet { UserDefaults.standard.set(autoReviewOnFailure, forKey: "leetcode.autoReviewOnFailure") }
     }
     @ObservationIgnored private var reviewTask: Task<Void, Never>?

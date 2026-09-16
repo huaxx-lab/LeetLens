@@ -65,7 +65,7 @@ flowchart TD
 - Sign in to leetcode.cn in the built-in browser (WeChat / QQ popups work), import a list, and sync submissions per problem.
 - Run samples and submit in-app. Compile errors, failing cases, pass counts, time and memory are all parsed.
 - Ask AI without leaving the editor (⌘L). The panel floats over the statement and carries the statement, your current code, the selected lines, and the last judge result; the thread lands in recent chats and can be continued there.
-- When a run or submit fails, AI marks the exact lines: the original struck through, a dimmed replacement underneath, applied only when you accept (and undoable). You can also trigger a review any time.
+- When a run or submit fails, you get a nudge before an answer: the result panel offers a direction-only hint first, and only after that offers to mark the lines. Marking strikes through the original and shows a dimmed replacement, applied only when you accept (and undoable). A review is always one click away in the toolbar.
 - Code is kept per problem and per language: switch pages, switch languages, or quit and reopen — it is still there. One click restores LeetCode's starter code, with undo.
 - The editor supports Java, C++, Python, JavaScript, and TypeScript, with local syntax checks and formatting. Wire up Eclipse JDT LS for Java type and API completion.
 - Official and community editorials open in place, images go into a carousel, editorial videos play inline.

@@ -327,3 +327,28 @@ final class CodeEditorScriptTests: XCTestCase {
         XCTAssertNil(expressionCallback.firstMatch(in: source, range: range), "eachLine 的回调要写成 { ...; } 块，不能返回值")
     }
 }
+
+/// 编辑器里的两条交互约定，改动时容易顺手删掉，用源码守卫钉住。
+/// 行为本身在 WKWebView harness 里验证过（本地 `sort()` 光标进括号、
+/// 远端 `sort(int[] a)` 参数整段选中、普通标识符不受影响）。
+final class CompletionInsertionScriptTests: XCTestCase {
+    private func editorSource() throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Sources/LeetCodeAssistant/Resources/CodeEditor/editor.html")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    func testRemoteCompletionsInsertThroughApplyCompletion() throws {
+        let source = try editorSource()
+        XCTAssertTrue(source.contains("function applyCompletion(cm, data, completion)"))
+        XCTAssertTrue(source.contains("hint: applyCompletion"), "远端候选必须走 applyCompletion，否则光标停在末尾")
+        XCTAssertTrue(source.contains("function parameterSpan(text)"))
+    }
+
+    /// 补全候选和已输入内容一样时回车要换行（PR #5），但我们把光标挪进括号时不能再补换行。
+    func testEnterFallbackChecksCursorMovement() throws {
+        let source = try editorSource()
+        XCTAssertTrue(source.contains("!moved && !instance.somethingSelected()"))
+    }
+}
