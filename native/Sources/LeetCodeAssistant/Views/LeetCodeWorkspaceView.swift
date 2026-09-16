@@ -1470,7 +1470,9 @@ struct LeetCodeWorkspaceView: View {
                     // 用例与输出按纯文本显示：给几万个数字着色没有阅读价值。
                     ("失败用例", result.input, "text"),
                     ("实际输出", result.output, "text"),
-                    ("预期输出", result.expectedOutput, "text")
+                    ("预期输出", result.expectedOutput, "text"),
+                    // 运行样例时函数返回值在 code_answer、print 出来的在 code_output，分开显示（#3）。
+                    ("控制台输出", result.stdOutput, "text")
                 ].filter { !$0.1.isEmpty }
                 ForEach(diagnostics, id: \.0) { label, value, language in
                     VStack(alignment: .leading, spacing: 3) {

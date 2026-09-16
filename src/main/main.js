@@ -2124,8 +2124,24 @@ async function leetcodeRestJson(pathname, { method = 'GET', body, referer = 'htt
 
 function boundedJudgeText(value, maximum = 50000) {
   if (value === undefined || value === null) return '';
-  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-  return String(text).slice(0, maximum);
+  if (typeof value === 'string') return value.slice(0, maximum);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '';
+    const elements = value
+      .map(item => boundedJudgeText(item, maximum))
+      .filter(item => item.trim().length > 0);
+    if (elements.length === 0) return '';
+    return elements.join('\n').slice(0, maximum);
+  }
+  if (typeof value === 'object') {
+    if (Object.keys(value).length === 0) return '';
+    try {
+      return JSON.stringify(value, null, 2).slice(0, maximum);
+    } catch {
+      return '';
+    }
+  }
+  return String(value).slice(0, maximum);
 }
 
 function normalizeLeetCodeJudgeResult(raw, taskId, kind) {
@@ -2136,6 +2152,24 @@ function normalizeLeetCodeJudgeResult(raw, taskId, kind) {
   const accepted = statusCode === 10 || /accepted|通过|答案正确/i.test(status);
   const totalCorrect = Math.max(0, Number(source.total_correct) || 0);
   const totalTestcases = Math.max(0, Number(source.total_testcases) || 0);
+
+  const answer = boundedJudgeText(source.code_answer, 50000);
+  const output = boundedJudgeText(source.code_output, 50000);
+  const stdOutputList = boundedJudgeText(source.std_output_list, 50000);
+  const stdOutputStr = boundedJudgeText(source.std_output, 50000);
+
+  let resolvedOutput = '';
+  let resolvedStdOutput = '';
+  if (answer) {
+    resolvedOutput = answer;
+    resolvedStdOutput = output || stdOutputList || stdOutputStr;
+  } else {
+    resolvedOutput = output || stdOutputList || stdOutputStr;
+    resolvedStdOutput = (resolvedOutput === stdOutputStr || resolvedOutput === stdOutputList) ? '' : (stdOutputStr || stdOutputList);
+  }
+
+  const expectedOutput = boundedJudgeText(source.expected_output || source.expected_code_answer, 50000);
+
   return {
     kind,
     taskId: String(taskId || ''),
@@ -2150,10 +2184,11 @@ function normalizeLeetCodeJudgeResult(raw, taskId, kind) {
     compileError: boundedJudgeText(source.compile_error || source.full_compile_error),
     runtimeError: boundedJudgeText(source.runtime_error || source.full_runtime_error),
     input: boundedJudgeText(source.input || source.last_testcase),
-    output: boundedJudgeText(source.code_output || source.std_output_list || source.std_output),
-    expectedOutput: boundedJudgeText(source.expected_output),
+    output: resolvedOutput,
+    expectedOutput,
     compareResult: boundedJudgeText(source.compare_result, 10000),
-    aiJudgeMessage: boundedJudgeText(source.ai_judge_message, 4000)
+    aiJudgeMessage: boundedJudgeText(source.ai_judge_message, 4000),
+    stdOutput: resolvedStdOutput
   };
 }
 

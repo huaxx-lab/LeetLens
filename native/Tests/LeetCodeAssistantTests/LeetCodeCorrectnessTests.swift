@@ -163,6 +163,48 @@ final class LeetCodeCorrectnessTests: XCTestCase {
         XCTAssertTrue(BrowserMediaLifecycle.shutdownScript.contains("media.load()"))
     }
 
+    func testNormalizeJudgeResultExtractsCodeAnswerAndExpectedAnswerOnRunCode() {
+        let raw: [String: Any] = [
+            "state": "SUCCESS",
+            "status_code": 10,
+            "status_msg": "Accepted",
+            "code_answer": ["[7,0,8]"],
+            "code_output": [] as [String],
+            "std_output_list": [""] as [String],
+            "expected_code_answer": ["[7,0,8]"]
+        ]
+
+        let result = LeetCodeAPIClient.normalizeJudgeResult(raw, taskID: "run-123", kind: "run")
+        XCTAssertTrue(result.accepted)
+        XCTAssertEqual(result.output, "[7,0,8]")
+        XCTAssertEqual(result.expectedOutput, "[7,0,8]")
+        XCTAssertEqual(result.stdOutput, "")
+    }
+
+    func testNormalizeJudgeResultSeparatesActualOutputAndStdOutput() {
+        let raw: [String: Any] = [
+            "state": "SUCCESS",
+            "status_code": 10,
+            "status_msg": "Accepted",
+            "code_answer": ["[7,0,8]"],
+            "code_output": ["debug print\n"],
+            "expected_code_answer": ["[7,0,8]"]
+        ]
+
+        let result = LeetCodeAPIClient.normalizeJudgeResult(raw, taskID: "run-456", kind: "run")
+        XCTAssertEqual(result.output, "[7,0,8]")
+        XCTAssertEqual(result.expectedOutput, "[7,0,8]")
+        XCTAssertEqual(result.stdOutput, "debug print\n")
+    }
+
+    func testBoundedTextHandlesEmptyArraysAndNestedValues() {
+        XCTAssertEqual(LeetCodeAPIClient.boundedText([] as [Any]), "")
+        XCTAssertEqual(LeetCodeAPIClient.boundedText([""] as [String]), "")
+        XCTAssertEqual(LeetCodeAPIClient.boundedText(["[7,0,8]"]), "[7,0,8]")
+        XCTAssertEqual(LeetCodeAPIClient.boundedText(["[7,0,8]", "[0]"]), "[7,0,8]\n[0]")
+        XCTAssertEqual(LeetCodeAPIClient.boundedText([:] as [String: Any]), "")
+    }
+
     private func remoteSubmission(id: String) -> LeetCodeRemoteSubmission {
         LeetCodeRemoteSubmission(
             id: id,
