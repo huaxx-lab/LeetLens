@@ -114,8 +114,8 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
         context.coordinator.updateCompletionStatus(
             RemoteCodeCompletionService.shared.isConfigured ? .offline("远程服务等待首次补全请求") : .localOnly
         )
-        if let editorURL = Bundle.module.url(forResource: "editor", withExtension: "html"),
-           let resourceURL = Bundle.module.resourceURL {
+        if let editorURL = Bundle.appResources.url(forResource: "editor", withExtension: "html"),
+           let resourceURL = Bundle.appResources.resourceURL {
             webView.loadFileURL(editorURL, allowingReadAccessTo: resourceURL)
         } else {
             context.coordinator.updateLoadStatus(.failed("代码编辑器资源未打包"))
