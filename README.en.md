@@ -86,15 +86,15 @@ The right column is a real browser: tabs, logins, restored after relaunch. Backg
 <table>
 <tr>
 <td width="50%" align="center"><img src="docs/screenshots/ask-ai-in-editor.png" alt="Ask AI while coding"><br><sub>Ask AI without leaving the editor: the statement, your code and the last judge result come along; the panel is draggable</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/ai-inline-fixes.png" alt="Inline AI fixes"><br><sub>Problems marked on the exact lines: original struck through, a dimmed fix below, applied only when you accept</sub></td>
+</tr>
+<tr>
 <td width="50%" align="center"><img src="docs/screenshots/problem-and-submission.png" alt="Problem and submissions"><br><sub>Each submission reviewed on its own, ending in what to reinforce and what to do next</sub></td>
-</tr>
-<tr>
 <td width="50%" align="center"><img src="docs/screenshots/ai-hint.png" alt="Graded hints"><br><sub>Practice-page hints: direction first, then the sticking point, never the full solution</sub></td>
-<td width="50%" align="center"><img src="docs/screenshots/java-completion.png" alt="Code completion"><br><sub>An editor you can write in; JDT LS adds Java type completion</sub></td>
 </tr>
 <tr>
+<td width="50%" align="center"><img src="docs/screenshots/java-completion.png" alt="Code completion"><br><sub>An editor you can write in; JDT LS adds Java type completion</sub></td>
 <td width="50%" align="center"><img src="docs/screenshots/agent-video-cards.png" alt="Bilibili search"><br><sub>Search walkthrough videos against how you actually failed the problem</sub></td>
-<td width="50%" align="center"><img src="docs/screenshots/provider-settings.png" alt="Model providers"><br><sub>Route each task to its own model: chat, hints, analysis, exercises</sub></td>
 </tr>
 <tr>
 <td width="50%" align="center"><img src="docs/screenshots/study-plan.png" alt="Study plan"><br><sub>Edit the calendar yourself, or let AI fill a week against your quota</sub></td>

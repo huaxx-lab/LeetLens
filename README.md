@@ -85,15 +85,15 @@ flowchart TD
 <table>
 <tr>
 <td width="50%" align="center"><img src="docs/screenshots/ask-ai-in-editor.png" alt="刷题页问 AI"><br><sub>写代码时就地问 AI：题面、当前代码和评测结果自动带上，浮窗可拖动</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/ai-inline-fixes.png" alt="AI 就地标注"><br><sub>问题标到具体行：原文划掉，下面是"虚的"修改，点「接受」才写进代码</sub></td>
+</tr>
+<tr>
 <td width="50%" align="center"><img src="docs/screenshots/problem-and-submission.png" alt="题面与提交轨迹"><br><sub>每次提交单独复盘，最后落到待巩固和下一步</sub></td>
-</tr>
-<tr>
 <td width="50%" align="center"><img src="docs/screenshots/ai-hint.png" alt="AI 分级提示"><br><sub>刷题页的提示：先方向，再卡点，不给完整解法</sub></td>
-<td width="50%" align="center"><img src="docs/screenshots/java-completion.png" alt="代码补全"><br><sub>能写代码的编辑器；配好 JDT LS 后 Java 有类型补全</sub></td>
 </tr>
 <tr>
+<td width="50%" align="center"><img src="docs/screenshots/java-completion.png" alt="代码补全"><br><sub>能写代码的编辑器；配好 JDT LS 后 Java 有类型补全</sub></td>
 <td width="50%" align="center"><img src="docs/screenshots/agent-video-cards.png" alt="B 站视频检索"><br><sub>可以按你这题栽过的点去搜讲解视频</sub></td>
-<td width="50%" align="center"><img src="docs/screenshots/provider-settings.png" alt="模型供应商"><br><sub>按任务分别指定模型：主对话、提示、分析、出题各走各的</sub></td>
 </tr>
 <tr>
 <td width="50%" align="center"><img src="docs/screenshots/study-plan.png" alt="学习计划"><br><sub>日历上手改，也可以让 AI 按配额给一份本周安排</sub></td>
