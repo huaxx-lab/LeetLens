@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-15%2B-292E33?logo=apple&logoColor=white" alt="macOS 15+">
-  <img src="https://img.shields.io/badge/version-v2.1.0-2563EB" alt="v2.1.0">
+  <img src="https://img.shields.io/badge/version-v2.6.0-2563EB" alt="v2.6.0">
   <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F766E" alt="MIT License"></a>
   <a href="https://github.com/huaxx-lab/LeetLens/stargazers"><img src="https://img.shields.io/github/stars/huaxx-lab/LeetLens?style=flat&color=F59E0B" alt="Stars"></a>
@@ -64,6 +64,9 @@ flowchart TD
 
 - 内置浏览器登录力扣中国站（微信 / QQ 等弹窗登录可用），导入题单，按题同步提交。
 - 应用内跑样例、交判题：编译错误、失败用例、通过数、耗时内存都会解析出来。
+- 写代码时就地问 AI（⌘L）：浮窗压在题面上，题面、当前代码、选中的行和最近一次评测自动带上；这段问答照常进最近会话，也能在对话页接着聊。
+- 没通过时 AI 直接标到行上：出问题的行划掉原文，下面给一份"虚的"修改，点「接受」才写进代码（可撤销）。也可以随时点「AI 检查」。
+- 代码按题目和语言各自存草稿：切页面、换语言、退出重开都还在。一键恢复力扣初始代码，点错了能撤销。
 - 编辑器支持 Java、C++、Python、JavaScript、TypeScript；本地有语法检查和格式化。接上 Eclipse JDT LS 之后，Java 能做类型和 API 补全。
 - 官方和社区题解可以直接看，带图的收进轮播，题解视频就地播。
 - 提交热力图、连击、难度分布。
@@ -81,20 +84,24 @@ flowchart TD
 
 <table>
 <tr>
+<td width="50%" align="center"><img src="docs/screenshots/ask-ai-in-editor.png" alt="刷题页问 AI"><br><sub>写代码时就地问 AI：题面、当前代码和评测结果自动带上，浮窗可拖动</sub></td>
 <td width="50%" align="center"><img src="docs/screenshots/problem-and-submission.png" alt="题面与提交轨迹"><br><sub>每次提交单独复盘，最后落到待巩固和下一步</sub></td>
+</tr>
+<tr>
 <td width="50%" align="center"><img src="docs/screenshots/ai-hint.png" alt="AI 分级提示"><br><sub>刷题页的提示：先方向，再卡点，不给完整解法</sub></td>
-</tr>
-<tr>
-<td width="50%" align="center"><img src="docs/screenshots/agent-solution-cards.png" alt="题解检索"><br><sub>官方题解在前，其余按浏览量；卡片点开在右侧读正文</sub></td>
-<td width="50%" align="center"><img src="docs/screenshots/agent-video-cards.png" alt="B 站视频检索"><br><sub>可以按你这题栽过的点去搜讲解视频</sub></td>
-</tr>
-<tr>
 <td width="50%" align="center"><img src="docs/screenshots/java-completion.png" alt="代码补全"><br><sub>能写代码的编辑器；配好 JDT LS 后 Java 有类型补全</sub></td>
-<td width="50%" align="center"><img src="docs/screenshots/study-plan.png" alt="学习计划"><br><sub>日历上手改，也可以让 AI 按配额给一份本周安排</sub></td>
 </tr>
 <tr>
+<td width="50%" align="center"><img src="docs/screenshots/agent-video-cards.png" alt="B 站视频检索"><br><sub>可以按你这题栽过的点去搜讲解视频</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/provider-settings.png" alt="模型供应商"><br><sub>按任务分别指定模型：主对话、提示、分析、出题各走各的</sub></td>
+</tr>
+<tr>
+<td width="50%" align="center"><img src="docs/screenshots/study-plan.png" alt="学习计划"><br><sub>日历上手改，也可以让 AI 按配额给一份本周安排</sub></td>
 <td width="50%" align="center"><img src="docs/screenshots/knowledge-graph.png" alt="知识图谱"><br><sub>百分比是现在大概还记得多少，不是当初学会时的分数</sub></td>
+</tr>
+<tr>
 <td width="50%" align="center"><img src="docs/screenshots/chat-and-browser.png" alt="对话与内置浏览器"><br><sub>左边对话，右边浏览器，题解和网页不用跳出去</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/agent-solution-cards.png" alt="题解检索"><br><sub>官方题解在前，其余按浏览量；卡片点开在右侧读正文</sub></td>
 </tr>
 </table>
 

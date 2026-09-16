@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-15%2B-292E33?logo=apple&logoColor=white" alt="macOS 15+">
-  <img src="https://img.shields.io/badge/version-v2.1.0-2563EB" alt="v2.1.0">
+  <img src="https://img.shields.io/badge/version-v2.6.0-2563EB" alt="v2.6.0">
   <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F766E" alt="MIT License"></a>
   <a href="https://github.com/huaxx-lab/LeetLens/stargazers"><img src="https://img.shields.io/github/stars/huaxx-lab/LeetLens?style=flat&color=F59E0B" alt="Stars"></a>
@@ -64,6 +64,9 @@ flowchart TD
 
 - Sign in to leetcode.cn in the built-in browser (WeChat / QQ popups work), import a list, and sync submissions per problem.
 - Run samples and submit in-app. Compile errors, failing cases, pass counts, time and memory are all parsed.
+- Ask AI without leaving the editor (⌘L). The panel floats over the statement and carries the statement, your current code, the selected lines, and the last judge result; the thread lands in recent chats and can be continued there.
+- When a run or submit fails, AI marks the exact lines: the original struck through, a dimmed replacement underneath, applied only when you accept (and undoable). You can also trigger a review any time.
+- Code is kept per problem and per language: switch pages, switch languages, or quit and reopen — it is still there. One click restores LeetCode's starter code, with undo.
 - The editor supports Java, C++, Python, JavaScript, and TypeScript, with local syntax checks and formatting. Wire up Eclipse JDT LS for Java type and API completion.
 - Official and community editorials open in place, images go into a carousel, editorial videos play inline.
 - Submission heatmap, streaks, difficulty spread.
@@ -82,20 +85,24 @@ The right column is a real browser: tabs, logins, restored after relaunch. Backg
 
 <table>
 <tr>
+<td width="50%" align="center"><img src="docs/screenshots/ask-ai-in-editor.png" alt="Ask AI while coding"><br><sub>Ask AI without leaving the editor: the statement, your code and the last judge result come along; the panel is draggable</sub></td>
 <td width="50%" align="center"><img src="docs/screenshots/problem-and-submission.png" alt="Problem and submissions"><br><sub>Each submission reviewed on its own, ending in what to reinforce and what to do next</sub></td>
+</tr>
+<tr>
 <td width="50%" align="center"><img src="docs/screenshots/ai-hint.png" alt="Graded hints"><br><sub>Practice-page hints: direction first, then the sticking point, never the full solution</sub></td>
-</tr>
-<tr>
-<td width="50%" align="center"><img src="docs/screenshots/agent-solution-cards.png" alt="Editorial search"><br><sub>Official editorial first, the rest by views; open a card to read it on the right</sub></td>
-<td width="50%" align="center"><img src="docs/screenshots/agent-video-cards.png" alt="Bilibili search"><br><sub>Search walkthrough videos against how you actually failed the problem</sub></td>
-</tr>
-<tr>
 <td width="50%" align="center"><img src="docs/screenshots/java-completion.png" alt="Code completion"><br><sub>An editor you can write in; JDT LS adds Java type completion</sub></td>
-<td width="50%" align="center"><img src="docs/screenshots/study-plan.png" alt="Study plan"><br><sub>Edit the calendar yourself, or let AI fill a week against your quota</sub></td>
 </tr>
 <tr>
+<td width="50%" align="center"><img src="docs/screenshots/agent-video-cards.png" alt="Bilibili search"><br><sub>Search walkthrough videos against how you actually failed the problem</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/provider-settings.png" alt="Model providers"><br><sub>Route each task to its own model: chat, hints, analysis, exercises</sub></td>
+</tr>
+<tr>
+<td width="50%" align="center"><img src="docs/screenshots/study-plan.png" alt="Study plan"><br><sub>Edit the calendar yourself, or let AI fill a week against your quota</sub></td>
 <td width="50%" align="center"><img src="docs/screenshots/knowledge-graph.png" alt="Knowledge graph"><br><sub>Percentages are roughly how much you'd still remember today, not the score when you learned it</sub></td>
+</tr>
+<tr>
 <td width="50%" align="center"><img src="docs/screenshots/chat-and-browser.png" alt="Chat and built-in browser"><br><sub>Chat on the left, browser on the right — editorials stay in the app</sub></td>
+<td width="50%" align="center"><img src="docs/screenshots/agent-solution-cards.png" alt="Editorial search"><br><sub>Official editorial first, the rest by views; open a card to read it on the right</sub></td>
 </tr>
 </table>
 
