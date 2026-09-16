@@ -104,6 +104,24 @@ final class LeetCodeCorrectnessTests: XCTestCase {
         XCTAssertEqual(LeetCodeTestCaseWorkspace.clampedIndex(-2, caseCount: official.count), 0)
     }
 
+    /// 提交返回 expected_output、运行样例返回 expected_code_answer；两个键可能同时存在，
+    /// 其中一个是空的。必须取第一个非空的，不能只看键在不在。
+    func testExpectedOutputPrefersFirstNonEmptyField() {
+        let run = LeetCodeAPIClient.normalizeJudgeResult(
+            ["state": "SUCCESS", "status_msg": "Finished", "expected_output": "", "expected_code_answer": ["[1,2]"], "code_answer": ["[2,1]"]],
+            taskID: "t", kind: "run"
+        )
+        XCTAssertEqual(run.expectedOutput, "[1,2]")
+        XCTAssertEqual(run.output, "[2,1]", "函数返回值取 code_answer，不是 stdout")
+
+        let submit = LeetCodeAPIClient.normalizeJudgeResult(
+            ["state": "SUCCESS", "status_msg": "Wrong Answer", "expected_output": "[1,2]", "code_output": "[9,9]"],
+            taskID: "t", kind: "submit"
+        )
+        XCTAssertEqual(submit.expectedOutput, "[1,2]")
+        XCTAssertEqual(submit.output, "[9,9]")
+    }
+
     func testBottomPanelHeightPreservesEditorAndClampsDragRange() {
         XCTAssertEqual(
             LeetCodeBottomPanelLayout.clampedHeight(20, availableHeight: 800),

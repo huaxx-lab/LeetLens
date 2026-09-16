@@ -527,7 +527,12 @@ final class LeetCodeAPIClient {
             resolvedStdOutput = (resolvedOutput == stdOutputStr || resolvedOutput == stdOutputList) ? "" : (!stdOutputStr.isEmpty ? stdOutputStr : stdOutputList)
         }
 
-        let expected = boundedText(raw["expected_output"] ?? raw["expected_code_answer"])
+        // 取第一个**非空**的：提交返回 expected_output，运行样例返回 expected_code_answer，
+        // 而两个键都可能存在且其中一个是空数组／空串（`??` 只看键在不在，会挑到空的那个）。
+        let expected = [raw["expected_output"], raw["expected_code_answer"], raw["expected_code_output"]]
+            .lazy
+            .map { boundedText($0) }
+            .first { !$0.isEmpty } ?? ""
 
         return LeetCodeJudgeResult(
             kind: kind,
