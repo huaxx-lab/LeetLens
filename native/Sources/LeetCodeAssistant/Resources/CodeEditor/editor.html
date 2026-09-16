@@ -461,6 +461,14 @@
     function showCompletion(cm, remoteItems = []) {
       cm.showHint({
         hint: instance => mergeRemoteCompletions(codeCompletionHint(instance, language), remoteItems),
+        extraKeys: {
+          Enter: (instance, handle) => {
+            const before = instance.getValue();
+            handle.pick();
+            // show-hint normally consumes Enter even for an identical candidate.
+            if (instance.getValue() === before) instance.execCommand('newlineAndIndent');
+          }
+        },
         completeSingle: false,
         closeOnUnfocus: true,
         alignWithWord: true,
@@ -721,6 +729,14 @@
       if (/[\w$.]$/.test(inserted) && (prefix.length >= 1 || before.endsWith('.'))) complete(cm);
       else if (/\s$/.test(inserted) && constructorContext) complete(cm);
       else { completionGeneration += 1; clearTimeout(remoteTimer); }
+    });
+
+    editor.on('keydown', (cm, event) => {
+      if (event.isComposing || event.keyCode === 229) {
+        cm.closeHint();
+        // Let the browser/IME commit its composition, without a completion pick.
+        event.codemirrorIgnore = true;
+      }
     });
 
     window.editorBridge = {
