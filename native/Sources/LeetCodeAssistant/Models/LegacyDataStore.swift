@@ -586,27 +586,33 @@ final class LegacyDataStore {
         limit: Int = 4
     ) async -> [ConversationMemoryMatch] {
         await waitForMemoryIndex()
-        let local = await conversationMemoryIndex.search(
-            query: query,
-            currentConversationID: currentConversationID,
-            limit: max(limit, 8)
-        )
-        // 四维置信度闸门：够不上就整批丢弃。
-        // 把无关记忆塞进回答，用户读到的是"监控感"而不是"贴心"——
-        // 宁可这一轮不注入，也不要注入一段跑题的旧对话。
         let indexedChunks = await conversationMemoryIndex.documentCount
-        guard RetrievalConfidence.evaluate(local, indexedChunkCount: indexedChunks).isAcceptable else {
-            return []
-        }
-        guard settings.cloudMemoryRerankingEnabled else { return Array(local.prefix(limit)) }
 
-        // Reranker 看宽候选池，失败时无感回退本地 RRF / BM25，绝不让记忆服务拖垮主对话。
+        // 精排关着：只能拿 BM25 / RRF 的近似分做整批弃权。这些分数没有绝对含义
+        // （融合两路垃圾也会排得很整齐），所以要靠四维置信度从名次差、支持条数
+        // 这些相对量去推"够不够可信"。
+        guard settings.cloudMemoryRerankingEnabled else {
+            let local = await conversationMemoryIndex.search(
+                query: query,
+                currentConversationID: currentConversationID,
+                limit: max(limit, 8)
+            )
+            guard RetrievalConfidence.evaluate(local, indexedChunkCount: indexedChunks).isAcceptable
+            else { return [] }
+            return Array(local.prefix(limit))
+        }
+
+        // 精排开着：候选池直接交给 cross-encoder，再拿它的真实相关度整批准入。
+        //
+        // 这个顺序不能反。先用 BM25 的近似分弃权，会在精排看到候选之前就误杀；
+        // 精排之后再逐条套平阈值，又会把"排在后面但确实相关"的会话砍掉——真实
+        // 语料上 recall@5 就是这么从 100% 掉到 96.2% 的。
         let candidates = await conversationMemoryIndex.candidates(
             query: query,
             currentConversationID: currentConversationID,
             limit: 24
         )
-        guard !candidates.isEmpty else { return Array(local.prefix(limit)) }
+        guard !candidates.isEmpty else { return [] }
         do {
             let reranker = try await ChatService(dataDirectory: dataDirectory)
                 .makeTextReranker(
@@ -621,33 +627,37 @@ final class LegacyDataStore {
                 topN: candidates.count
             )
             var seenConversations = Set<String>()
-            return hits.compactMap { hit -> ConversationMemoryMatch? in
-                guard hit.relevanceScore >= Self.memoryRerankThreshold,
-                      candidates.indices.contains(hit.originalIndex)
-                else { return nil }
+            var scored: [ConversationMemoryMatch] = []
+            for hit in hits where candidates.indices.contains(hit.originalIndex) {
                 let candidate = candidates[hit.originalIndex]
-                guard seenConversations.insert(candidate.conversationID).inserted else { return nil }
-                return ConversationMemoryMatch(
+                guard seenConversations.insert(candidate.conversationID).inserted else { continue }
+                scored.append(ConversationMemoryMatch(
                     conversationID: candidate.conversationID,
                     title: candidate.title,
                     content: candidate.content,
                     score: Int((hit.relevanceScore * 100).rounded()),
-                    messageIDs: candidate.messageIDs
-                )
+                    messageIDs: candidate.messageIDs,
+                    relevance: hit.relevanceScore,
+                    coverage: candidate.coverage
+                ))
             }
-            .prefix(limit)
-            .map { $0 }
+            guard RetrievalConfidence.admitsReranked(scored) else { return [] }
+            return Array(scored.prefix(limit))
         } catch is CancellationError {
             return []
         } catch {
+            // 精排不可用时退回本地排序，但闸门必须补上——否则这一轮等于没有任何准入判断。
             NSLog("Conversation reranking unavailable; using local ranking: %@", error.localizedDescription)
+            let local = await conversationMemoryIndex.search(
+                query: query,
+                currentConversationID: currentConversationID,
+                limit: max(limit, 8)
+            )
+            guard RetrievalConfidence.evaluate(local, indexedChunkCount: indexedChunks).isAcceptable
+            else { return [] }
             return Array(local.prefix(limit))
         }
     }
-
-    /// qwen3.7 relevance_score 是请求内相对分，官方不提供阈值；该值由
-    /// `RetrievalBenchmarkTests` 对正例 recall 与负例拒绝率共同校准。
-    static let memoryRerankThreshold = 0.30
 
     /// Rebuilds the conversation index off the main actor. Supersedes any in-flight
     /// rebuild so rapid edits collapse into one pass instead of queueing.

@@ -29,10 +29,17 @@ final class ConversationIntentTests: XCTestCase {
 
     // MARK: - 不该检索的轮次
 
-    func testGeneralKnowledgeDoesNotTriggerRetrieval() {
+    /// 这里曾经断言"通用知识不检索"。真实语料把它推翻了：规则层分不清
+    /// "快排怎么写"和"先排序再用左右两个指针往中间夹"——后者是用户在改述自己
+    /// 上一轮的写法，字面上同样没有任何历史线索。那版兜底误拦 20/26 条正当检索，
+    /// recall@5 从 98.1% 塌到 23.1%（`RerankImpactTests`）。
+    ///
+    /// 判断权交给 cross-encoder：精排后的整批准入在同一份语料上挡住 20/20 负例
+    /// 且零误杀。规则层只负责排除明显不需要检索的轮次。
+    func testGeneralKnowledgeDefersToTheReranker() {
         let result = resolve("快排怎么写")
         XCTAssertEqual(result.intent, .knowledge)
-        XCTAssertFalse(result.wantsRetrieval, "通用知识问题不该去翻旧会话")
+        XCTAssertTrue(result.wantsRetrieval, "规则层认不出来的，交给精排闸门判，别自己先毙掉")
         XCTAssertEqual(result.confidence, .confident, "确定的事不该再花一次模型调用")
     }
 
@@ -99,18 +106,24 @@ final class ConversationIntentTests: XCTestCase {
         XCTAssertEqual(followUp.confidence, .ambiguous, "继承只是先验，值得交给模型复核")
     }
 
-    func testTheSameFollowUpAfterAKnowledgeTurnDoesNotRetrieve() {
-        let previous = resolve("快排怎么写")
+    /// 继承机制本身还在，但"不检索"的来源只剩闲聊与 meta：
+    /// 知识轮次现在也要检索，所以跟在它后面的追问同样要检索。
+    func testFollowUpAfterSmalltalkStaysRetrievalFree() {
+        let previous = resolve("你好")
+        XCTAssertFalse(previous.wantsRetrieval)
         let followUp = resolve("那这个呢", previous: previous)
         XCTAssertEqual(followUp.intent, .followUp)
-        XCTAssertFalse(followUp.wantsRetrieval, "跟在通用知识后面就不必检索")
+        XCTAssertFalse(followUp.wantsRetrieval, "跟在闲聊后面的追问没有可检索的东西")
     }
 
-    func testFollowUpWithoutAnyHistoryDoesNotInventANeed() {
+    /// 没有上一轮可继承时兜底成"要检索"。首轮就说"力扣 42 那道题"的人，
+    /// 指代的必然在别的会话里，判成不检索必然答错。
+    func testFollowUpWithoutAnyHistoryRetrieves() {
         let result = resolve("再详细点")
         XCTAssertEqual(result.intent, .followUp)
-        XCTAssertFalse(result.wantsRetrieval)
+        XCTAssertTrue(result.wantsRetrieval, "无上文可继承时，宁可检索也不要凭空断定不需要")
         XCTAssertTrue(result.mentionsReference)
+        XCTAssertEqual(result.confidence, .ambiguous, "指代谁仍然要上文，交给模型层复核")
     }
 
     /// 本句自带强信号时，继承必须被覆盖。

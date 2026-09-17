@@ -59,6 +59,25 @@ struct RetrievalConfidence: Equatable, Sendable {
 
     var isAcceptable: Bool { score >= Self.acceptanceThreshold }
 
+    /// 精排之后的准入。**不要在这里套四维打分**——那套维度是为 BM25 设计的：
+    /// BM25 / RRF 的分数没有绝对含义（融合两路垃圾也能排得很整齐），只能靠
+    /// 名次差、支持条数这些相对量去推"够不够可信"。cross-encoder 给的是绝对
+    /// 相关度，第一名分数本身就是答案。
+    ///
+    /// 真实语料实测（26 正 / 20 负，qwen3.7-text-rerank）：
+    ///   正例 top 分最低 0.844，负例 top 分最高 0.742 —— 中间 0.1 宽的空隙，取中点。
+    /// margin 在这里没有判别力：多条正例的一二名差是 0.000（同一会话的相邻 chunk）。
+    ///
+    /// 整批准入，不逐条筛：够格就把前 N 名原样交出去。逐条套阈值会把"排在后面
+    /// 但确实相关"的会话砍掉，recall@5 就是这么丢的。
+    static let rerankedAdmissionScore = 0.79
+
+    /// `matches` 的 `relevance` 必须已经换成 cross-encoder 的分数，且按分数降序。
+    static func admitsReranked(_ matches: [ConversationMemoryMatch]) -> Bool {
+        guard let top = matches.first?.relevance else { return false }
+        return top >= rerankedAdmissionScore
+    }
+
     static func evaluate(
         _ matches: [ConversationMemoryMatch],
         indexedChunkCount: Int = Int.max

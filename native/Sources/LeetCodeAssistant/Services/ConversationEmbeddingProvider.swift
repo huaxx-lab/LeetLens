@@ -75,7 +75,9 @@ enum ConversationEmbeddingError: LocalizedError, Equatable {
 final class QwenConversationEmbeddingProvider: ConversationEmbeddingProvider, @unchecked Sendable {
     let model: String
     let dimension: Int
-    let maximumBatchSize = 20
+    /// 服务端硬上限是 10：超了整批回 400 `batch size is invalid`，
+    /// 而 `synchronize` 的 catch 会把整个索引退回纯 BM25——写大了等于悄悄关掉 dense 那一路。
+    let maximumBatchSize = 10
     let identity: String
 
     private let endpoint: URL
@@ -207,7 +209,8 @@ final class QwenConversationEmbeddingProvider: ConversationEmbeddingProvider, @u
 actor DeferredQwenConversationEmbeddingProvider: ConversationEmbeddingProvider {
     nonisolated let identity: String
     nonisolated let dimension = 1_024
-    nonisolated let maximumBatchSize = 20
+    /// 必须和 `QwenConversationEmbeddingProvider` 一致：服务端上限 10。
+    nonisolated let maximumBatchSize = 10
 
     private let dataDirectory: URL
     private let providerID: String

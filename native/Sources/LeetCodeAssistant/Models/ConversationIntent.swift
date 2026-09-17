@@ -129,7 +129,9 @@ enum ConversationIntentPolicy {
         let hasReference = referenceCues.contains(where: trimmed.contains)
             || (isShort && trimmed.hasSuffix("呢"))
         if hasReference {
-            let inherited = previous?.needs ?? .none
+            // 没有上一轮可继承时兜底成"要检索"：首轮就说"力扣 42 那道题"的人，
+            // 指代的必然是别的会话里的东西，判成不检索必然答错。
+            let inherited = previous?.needs ?? .crossConversationRAG
             return ConversationIntentResolution(
                 intent: .followUp,
                 needs: inherited,
@@ -144,9 +146,17 @@ enum ConversationIntentPolicy {
                 intent: .codeDebug, needs: .none, confidence: .confident, mentionsReference: false
             )
         }
-        // 剩下的是通用知识问题："快排怎么写"不该去翻一遍旧会话。
+        // 兜底要检索。这里曾经返回 `.none`，理由是"快排怎么写"不该翻旧会话——
+        // 但规则层分不清"快排怎么写"和"先排序再用左右两个指针往中间夹"：后者是
+        // 用户在改述自己上一轮的写法，字面上同样没有任何历史线索。真实语料实测，
+        // 那版兜底误拦 20/26 条正当检索，recall@5 从 98.1% 塌到 23.1%。
+        //
+        // 能分辨这两者的是 cross-encoder，不是关键词表。精排后的整批准入在同一份
+        // 语料上挡住 20/20 负例且零误杀，所以判断权交给它，规则层只负责排除
+        // 明显不需要检索的轮次（闲聊、问模型自身）。
         return ConversationIntentResolution(
-            intent: .knowledge, needs: .none, confidence: .confident, mentionsReference: false
+            intent: .knowledge, needs: .crossConversationRAG,
+            confidence: .confident, mentionsReference: false
         )
     }
 }
