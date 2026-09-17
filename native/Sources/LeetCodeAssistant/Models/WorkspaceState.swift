@@ -170,12 +170,12 @@ final class WorkspaceState {
     /// 而它本来按"最近更新"排序——别的会话一动就重排，等于每轮把整段历史
     /// 踢出前缀缓存。冻结不损语义：目录只是一张"存在哪些历史"的地图。
     @ObservationIgnored var frozenMemoryDirectory: [String: [ConversationMemoryDirectoryEntry]] = [:]
-    /// 上一轮的最终意图判定。`followUp`（"再详细点"）先继承它作为规则先验，
-    /// 再由一次性意图小调用结合上文复核；闲聊 / meta 后通常不检索，其余交给精排闸门。
-    @ObservationIgnored var lastConversationIntent: [String: ConversationIntentResolution] = [:]
-    /// `(conversationID, userMessageID)` 级的一次性意图 / 指代消解结果。
+    /// 上一轮走的是哪条路线。只用于界面展示与诊断——路由本身每轮独立重算，
+    /// 不做跨轮继承：继承会让一次误判沿着整个会话传下去。
+    @ObservationIgnored var lastConversationRoute: [String: ConversationRoute] = [:]
+    /// `(conversationID, userMessageID)` 级的消解 + 分类结果。
     /// 只活在当前进程内，不写 transcript；重试 assistant 时复用，绝不再次付费。
-    @ObservationIgnored var conversationIntentDecisionCache = ConversationIntentDecisionCache()
+    @ObservationIgnored var conversationTurnPlanCache = ConversationTurnPlanCache()
     var queuedConversationID: String?
     @ObservationIgnored var conversationGenerationTask: Task<Void, Never>?
     var studyPlanSuggestion: AIStudyPlanSuggestion?

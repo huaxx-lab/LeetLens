@@ -117,21 +117,21 @@ final class ChatService: @unchecked Sendable {
         )
     }
 
-    /// 歧义轮次的一次性小调用：同一次完成“要不要跨会话检索”与指代消解。
-    /// 返回值只交给检索器，调用方不得把它追加进 transcript。
-    func resolveConversationRetrievalIntent(
+    /// 一次便宜调用同时完成**指代消解**与**意图识别**，顺序由 prompt 固定。
+    /// 返回值只用于本轮路由与检索，调用方不得把它追加进 transcript。
+    func resolveConversationTurn(
         context: ConversationIntentContextProjection,
         providerID: String,
         conversationID: String
-    ) async throws -> ConversationIntentModelDecision {
-        let response: ConversationIntentModelResponse = try await requestJSONObject(
+    ) async throws -> ConversationTurnResolution {
+        let response: ConversationTurnResponse = try await requestJSONObject(
             system: ConversationIntentContextProjection.systemPrompt,
             payload: context,
             providerID: providerID,
             taskRoute: .memoryQueryResolution,
             usageConversationID: conversationID
         )
-        return try response.decision()
+        return try response.resolution(originalQuery: context.currentQuery)
     }
 
     func stream(

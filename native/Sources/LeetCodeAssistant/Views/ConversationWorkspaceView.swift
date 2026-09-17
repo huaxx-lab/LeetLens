@@ -821,8 +821,10 @@ struct ConversationWorkspaceView: View {
         var didRetrieve = false
     }
 
-    /// 分层注入：目录常驻；歧义轮次先用一次便宜调用完成“是否检索 + 指代消解”，
-    /// 再把**独立检索句**交给两路召回。小模型的输出只存在内存里，绝不进对话历史。
+    /// 固定编排：**指代消解 → 意图识别 → 路线分流 → 按路线执行**。
+    ///
+    /// 稳定前缀（长期事实 + 会话目录）对所有路线恒定——它们按路线增删会让 prompt
+    /// 前缀每轮都变，缓存全废。路线只决定易变段：宿主上下文、检索结果。
     private func memoryPrompts(
         conversationID: String,
         userMessageID: String,
@@ -839,82 +841,119 @@ struct ConversationWorkspaceView: View {
         else { return MemoryInjection() }
 
         var injection = MemoryInjection()
-
-        // L0：极小且稳定，每轮都相关，不值得为它做一次判断。
         let facts = await ConversationMemoryFactStore.shared.facts(dataDirectory: dataStore.dataDirectory)
         if let factPrompt = ConversationMemoryFactPrompt.prompt(for: facts) {
             injection.stable.append(factPrompt)
         }
-
-        // 目录常驻且按会话冻结，避免别的会话更新导致稳定前缀每轮重排。
         let directory = frozenDirectory(for: conversationID)
         if let index = ConversationMemoryDirectory.prompt(for: directory) {
             injection.stable.append(index)
         }
 
-        let isHistoricalReplay = ledgerSequenceLimit < ConversationLedger.latestSequence(conversation.ledgerEvents)
-        let rule = ConversationIntentPolicy.resolve(
+        let turn = await resolveTurnPlan(
+            conversation: conversation,
+            boundedMessages: boundedMessages,
+            userMessage: userMessage,
+            ledgerSequenceLimit: ledgerSequenceLimit,
+            directory: directory,
+            service: service,
+            providerID: providerID
+        )
+        workspace.lastConversationRoute[conversationID] = turn.route
+
+        // 按路线执行。每一步都是这条路线声明过的，执行层不再自己判断要不要做。
+        for step in turn.plan.steps {
+            switch step {
+            case .attachHostContext:
+                break   // 宿主上下文由 startGeneration 在发送那一刻冻结后传入
+            case .retrieveMemory, .rerankMemory, .admitMemory:
+                // 检索 / 精排 / 准入是 searchMemory 内部的连续三步，只在第一步触发一次。
+                guard step == .retrieveMemory else { continue }
+                let matches = await dataStore.searchMemory(
+                    query: turn.resolvedQuery,
+                    currentConversationID: conversationID
+                )
+                if let retrieved = ConversationMemoryIndex.prompt(for: matches) {
+                    injection.volatileContext.append(retrieved)
+                    injection.didRetrieve = true
+                }
+            }
+        }
+        return injection
+    }
+
+    /// 消解 + 分类 + 分流。规则能定案就不花钱；定不了才问一次便宜模型，
+    /// 结果按 `(会话, 消息)` 缓存，重试同一条回答不重复付费。
+    private func resolveTurnPlan(
+        conversation: ConversationSummary,
+        boundedMessages: [ConversationTranscriptMessage],
+        userMessage: ConversationTranscriptMessage,
+        ledgerSequenceLimit: Int,
+        directory: [ConversationMemoryDirectoryEntry],
+        service: ChatService,
+        providerID: String
+    ) async -> ConversationTurnPlan {
+        let key = ConversationIntentCacheKey(
+            conversationID: conversation.id,
+            messageID: userMessage.id
+        )
+        if let cached = await workspace.conversationTurnPlanCache.value(for: key) { return cached }
+
+        let rerankAvailable = dataStore.settings.cloudMemoryRerankingEnabled
+        let rules = ConversationIntentPolicy.classify(
             query: userMessage.content,
-            previous: isHistoricalReplay ? nil : workspace.lastConversationIntent[conversationID],
             directory: directory,
             hasHostContext: embedding?.contextPrompt() != nil
         )
-        let key = ConversationIntentCacheKey(
-            conversationID: conversationID,
-            messageID: userMessage.id
-        )
 
-        let decision: ConversationRetrievalDecision
-        if let cached = await workspace.conversationIntentDecisionCache.value(for: key) {
-            decision = cached
-        } else if rule.confidence == .ambiguous,
-                  let context = ConversationIntentContextProjection.build(
-                    messages: boundedMessages,
-                    currentMessageID: userMessage.id,
-                    // 摘要若覆盖到本轮 ledger 上界之后，可能含“未来消息”，恢复时不能使用。
-                    contextSummary: conversation.archivedLedgerSequence <= ledgerSequenceLimit
-                        ? conversation.contextSummary
-                        : "",
-                    directory: directory,
-                    availableInputTokens: ChatService.availableInputTokens(dataDirectory: dataStore.dataDirectory)
-                  ) {
+        func ruleOnly() -> ConversationTurnPlan {
+            let route = ConversationRoute.route(for: rules.intent)
+            return ConversationTurnPlan(
+                resolvedQuery: userMessage.content.trimmingCharacters(in: .whitespacesAndNewlines),
+                intent: rules.intent,
+                plan: ConversationRoutePlan(route: route, rerankAvailable: rerankAvailable),
+                usedModel: false
+            )
+        }
+
+        var plan = ruleOnly()
+        if rules.certainty == .needsModel,
+           let context = ConversationIntentContextProjection.build(
+            messages: boundedMessages,
+            currentMessageID: userMessage.id,
+            // 摘要若覆盖到本轮 ledger 上界之后，可能含"未来消息"，恢复时不能用。
+            contextSummary: conversation.archivedLedgerSequence <= ledgerSequenceLimit
+                ? conversation.contextSummary
+                : "",
+            directory: directory,
+            availableInputTokens: ChatService.availableInputTokens(dataDirectory: dataStore.dataDirectory)
+           ) {
             do {
-                let model = try await service.resolveConversationRetrievalIntent(
+                let resolved = try await service.resolveConversationTurn(
                     context: context,
                     // 固定跟随本轮主对话供应商：不把历史投影扩散到另一家服务。
                     providerID: providerID,
-                    conversationID: conversationID
+                    conversationID: conversation.id
                 )
-                decision = .modelResolved(
-                    rule: rule,
-                    model: model,
-                    originalQuery: userMessage.content
+                plan = ConversationTurnPlan(
+                    resolvedQuery: resolved.resolvedQuery,
+                    intent: resolved.intent,
+                    plan: ConversationRoutePlan(
+                        route: ConversationRoute.route(for: resolved.intent),
+                        rerankAvailable: rerankAvailable
+                    ),
+                    usedModel: true
                 )
             } catch is CancellationError {
-                return injection
+                return plan
             } catch {
-                // 小调用是优化而不是单点故障。失败时保留规则层的召回优先策略；
-                // 同一消息的重试也复用这个最终降级结果，不制造失败风暴。
-                NSLog("Conversation intent fallback unavailable; using rule decision: %@", error.localizedDescription)
-                decision = .ruleOnly(resolution: rule, originalQuery: userMessage.content)
+                // 路由是优化不是单点故障：模型不可用就按规则先验走，并把这个降级结果
+                // 一并缓存，避免同一条消息反复重试制造失败风暴。
+                NSLog("Turn routing unavailable; using rule classification: %@", error.localizedDescription)
             }
-            await workspace.conversationIntentDecisionCache.insert(decision, for: key)
-        } else {
-            decision = .ruleOnly(resolution: rule, originalQuery: userMessage.content)
-            await workspace.conversationIntentDecisionCache.insert(decision, for: key)
         }
-
-        workspace.lastConversationIntent[conversationID] = decision.resolution
-        guard decision.resolution.wantsRetrieval else { return injection }
-        let matches = await dataStore.searchMemory(
-            query: decision.retrievalQuery,
-            currentConversationID: conversationID
-        )
-        if let retrieved = ConversationMemoryIndex.prompt(for: matches) {
-            injection.volatileContext.append(retrieved)
-            injection.didRetrieve = true
-        }
-        return injection
+        await workspace.conversationTurnPlanCache.insert(plan, for: key)
+        return plan
     }
 
     /// 会话目录在进入会话时冻结。

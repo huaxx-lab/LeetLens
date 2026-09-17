@@ -62,21 +62,27 @@ final class RerankImpactTests: XCTestCase {
         say("语料 \(conversations.count) 会话 / \(chunks) chunk，向量 \(embedded) 条（\(embedModel)）")
         say("查询 \(positives) 正 + \(negatives) 负，精排 \(rerankModel)")
 
-        // 意图闸门只跳过闲聊与 meta。现状那道闸把 .knowledge 也判成不检索，
-        // 会误拦 20/26 正例——见报告末尾。
+        // 规则层只分类。这里量两件事：规则能当场定案的有多少（省掉的模型调用），
+        // 以及规则先验直接判成"不检索"的里面有没有误伤。
         let directory = ConversationMemoryDirectory.entries(from: conversations, excluding: "")
         var narrowSkipped = Set<String>(), productionSkipped = Set<String>()
         var wronglySkipped: [String] = []
+        var settledCount = 0
         for testCase in cases {
-            let resolved = ConversationIntentPolicy.resolve(query: testCase.query, directory: directory)
-            if resolved.intent == .smalltalk || resolved.intent == .meta { narrowSkipped.insert(testCase.query) }
-            if !resolved.wantsRetrieval {
+            let c = ConversationIntentPolicy.classify(query: testCase.query, directory: directory)
+            if c.certainty == .settled { settledCount += 1 }
+            if c.intent == .smalltalk || c.intent == .meta { narrowSkipped.insert(testCase.query) }
+            let prior = ConversationRoutePlan(
+                route: ConversationRoute.route(for: c.intent), rerankAvailable: true
+            )
+            if c.certainty == .settled, !prior.retrievesMemory {
                 productionSkipped.insert(testCase.query)
                 if !testCase.relevant.isEmpty {
-                    wronglySkipped.append("[\(resolved.intent.rawValue)] \(testCase.query)")
+                    wronglySkipped.append("[\(c.intent.rawValue)] \(testCase.query)")
                 }
             }
         }
+        say("规则当场定案 \(settledCount)/\(cases.count)，其余交给模型路由")
 
         var bm25: [Run] = [], fused: [Run] = [], full: [Run] = [], production: [Run] = []
         var dump: [[String: Any]] = []
@@ -133,14 +139,14 @@ final class RerankImpactTests: XCTestCase {
         say("")
         say("方案                       hit@1 rec@1 rec@3 rec@5    MRR 负例挡 误杀")
         for (name, m) in [("① BM25 单路", a), ("② 两路 RRF 融合", b),
-                          ("③ ②＋精排＋精排后闸门", c), ("④ ③＋现状意图闸", d)] {
+                          ("③ ②＋精排＋精排后闸门", c), ("④ ③＋规则先验", d)] {
             say(name.padding(toLength: 26, withPad: " ", startingAt: 0)
                 + [m.h1, m.r1, m.r3, m.r5].map { String(format: "%6.1f%%", $0 * 100) }.joined()
                 + String(format: "%7.3f", m.mrr) + String(format: "%6.1f%%", m.neg * 100)
                 + String(format: "%5d", m.lost))
         }
         say("")
-        say("现状意图闸误拦的正例 \(wronglySkipped.count)/\(positives)：")
+        say("规则先验直接判成不检索、但其实有答案的 \(wronglySkipped.count)/\(positives)：")
         for q in wronglySkipped { say("  ✗ \(q)") }
 
         if let dumpPath = env["LEETLENS_RERANK_DUMP"] {
