@@ -202,6 +202,9 @@
         map: ['size()', 'isEmpty()', 'put()', 'putAll()', 'get()', 'getOrDefault()', 'containsKey()', 'containsValue()', 'computeIfAbsent()', 'keySet()', 'values()', 'entrySet()', 'remove()', 'clear()'],
         set: ['size()', 'isEmpty()', 'add()', 'addAll()', 'contains()', 'remove()', 'retainAll()', 'stream()', 'clear()'],
         deque: ['size()', 'isEmpty()', 'offer()', 'offerFirst()', 'offerLast()', 'peek()', 'peekFirst()', 'peekLast()', 'poll()', 'pollFirst()', 'pollLast()', 'push()', 'pop()', 'clear()'],
+        treenode: ['val', 'left', 'right'],
+        listnode: ['val', 'next'],
+        node: ['val', 'left', 'right', 'next', 'children', 'neighbors'],
         '*': ['size()', 'isEmpty()', 'add()', 'get()', 'set()', 'put()', 'remove()', 'contains()', 'containsKey()', 'getOrDefault()', 'computeIfAbsent()', 'peek()', 'poll()', 'offer()', 'push()', 'pop()', 'clear()']
       },
       javascript: {
@@ -342,22 +345,157 @@
       return base;
     }
 
+    /// 屏蔽注释与字面量但保留长度 / 换行，后续正则的索引仍能对应原源码。
+    /// 力扣模板把 TreeNode 定义放在块注释里；旧实现会把注释里的 val/left/right
+    /// 误认成当前方法的局部变量，同时又无法可靠标记真正的方法参数 root。
+    function maskJavaNonCode(source) {
+      let result = '', state = 'code', escaped = false;
+      for (let i = 0; i < source.length; i++) {
+        const ch = source[i], next = source[i + 1];
+        if (state === 'line') {
+          if (ch === '\n') { result += '\n'; state = 'code'; } else result += ' ';
+          continue;
+        }
+        if (state === 'block') {
+          if (ch === '*' && next === '/') { result += '  '; i++; state = 'code'; }
+          else result += ch === '\n' ? '\n' : ' ';
+          continue;
+        }
+        if (state === 'string' || state === 'char') {
+          result += ch === '\n' ? '\n' : ' ';
+          if (escaped) { escaped = false; continue; }
+          if (ch === '\\') { escaped = true; continue; }
+          if ((state === 'string' && ch === '"') || (state === 'char' && ch === "'")) state = 'code';
+          continue;
+        }
+        if (ch === '/' && next === '/') { result += '  '; i++; state = 'line'; continue; }
+        if (ch === '/' && next === '*') { result += '  '; i++; state = 'block'; continue; }
+        if (ch === '"') { result += ' '; state = 'string'; continue; }
+        if (ch === "'") { result += ' '; state = 'char'; continue; }
+        result += ch;
+      }
+      return result;
+    }
+
+    /// 泛型里的逗号不是参数分隔符：`Map<String, List<Integer>> graph` 必须保留成一个参数。
+    function splitJavaParameters(source) {
+      const result = [];
+      let start = 0, angle = 0, square = 0, round = 0;
+      for (let i = 0; i < source.length; i++) {
+        const ch = source[i];
+        if (ch === '<') angle++;
+        else if (ch === '>') angle = Math.max(0, angle - 1);
+        else if (ch === '[') square++;
+        else if (ch === ']') square = Math.max(0, square - 1);
+        else if (ch === '(') round++;
+        else if (ch === ')') round = Math.max(0, round - 1);
+        else if (ch === ',' && angle === 0 && square === 0 && round === 0) {
+          result.push(source.slice(start, i)); start = i + 1;
+        }
+      }
+      result.push(source.slice(start));
+      return result.map(value => value.trim()).filter(Boolean);
+    }
+
+    function parseJavaParameter(source) {
+      const clean = source
+        .replace(/@[A-Za-z_$][\w$.]*(?:\s*\([^)]*\))?\s*/g, '')
+        .replace(/\b(?:final|volatile|transient)\s+/g, '')
+        .trim();
+      const match = clean.match(/^(.+?)\s+([A-Za-z_$][\w$]*)(\s*\[\])?$/);
+      if (!match) return null;
+      let type = match[1].trim().replace(/\s*\.\.\.\s*$/, '[]');
+      if (match[3]) type += '[]';
+      return { name: match[2], type, detail: '方法参数' };
+    }
+
+    /// 找到光标所在（仍未闭合）的最后一个方法，避免上一方法的参数泄漏到下一方法。
+    function activeJavaMethod(maskedSource) {
+      const pattern = /(?:^|[;{}]\s*)(?:(?:public|protected|private|static|final|synchronized|abstract|native|default|strictfp)\s+)*(?:<[^>{}]+>\s*)?((?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*(?:\s*<[^>{};]+>)?(?:\s*\[\])*)\s+([A-Za-z_$][\w$]*)\s*\(([^;{}]*)\)\s*\{/gm;
+      let active = null;
+      for (const match of maskedSource.matchAll(pattern)) {
+        const open = match.index + match[0].lastIndexOf('{');
+        let depth = 0;
+        for (let i = open; i < maskedSource.length; i++) {
+          if (maskedSource[i] === '{') depth++;
+          else if (maskedSource[i] === '}') depth--;
+        }
+        if (depth > 0) active = { name: match[2], parameters: match[3], bodyStart: open + 1 };
+      }
+      return active;
+    }
+
+    /// 纯函数版本，测试可直接喂源码；wrapper 再从 CodeMirror 截到光标。
+    function javaSymbolsInSource(source) {
+      const masked = maskJavaNonCode(source);
+      const variables = new Map();
+      const active = activeJavaMethod(masked);
+      if (active) {
+        for (const raw of splitJavaParameters(active.parameters)) {
+          const parameter = parseJavaParameter(raw);
+          if (parameter) variables.set(parameter.name, parameter);
+        }
+
+        // 只扫当前方法体。后出现的同名局部变量覆盖参数，符合 Java 的就近解析。
+        const body = masked.slice(active.bodyStart);
+        const declaration = /\b((?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*(?:\s*<[^;{}()=]+>)?(?:\s*\[\])*)\s+([A-Za-z_$][\w$]*)\s*(?=[=,;:)])/g;
+        const primitives = new Set(['byte', 'short', 'int', 'long', 'float', 'double', 'boolean', 'char', 'var']);
+        for (const match of body.matchAll(declaration)) {
+          const rawType = match[1].trim();
+          const baseType = rawType.replace(/<.*>/, '').replace(/\[\]$/, '').trim().split('.').pop();
+          if (!primitives.has(baseType) && !/^[A-Z]/.test(baseType)) continue;
+          variables.set(match[2], { name: match[2], type: rawType, detail: '局部变量' });
+        }
+      }
+
+      const methods = new Set();
+      const methodPattern = /\b(?:public|protected|private|static|final|synchronized|abstract|native|default|strictfp|\s)+[A-Za-z_$][\w$<>, ?\[\].]*\s+([A-Za-z_$][\w$]*)\s*\([^;{}]*\)\s*\{/g;
+      for (const match of masked.matchAll(methodPattern)) methods.add(match[1]);
+      return { source, variables, methods };
+    }
+
     function javaSymbolsBeforeCursor(cm, cursor) {
       const lines = cm.getValue().split('\n');
       const source = [...lines.slice(0, cursor.line), lines[cursor.line].slice(0, cursor.ch)].join('\n');
-      const variables = new Map();
-      const declaration = /\b([A-Za-z_$][\w$]*(?:\s*<[^;{}()=]+>)?(?:\s*\[\])*)\s+([A-Za-z_$][\w$]*)\s*(?=[=,;:)])/g;
-      const primitives = new Set(['byte', 'short', 'int', 'long', 'float', 'double', 'boolean', 'char', 'var']);
-      for (const match of source.matchAll(declaration)) {
-        const rawType = match[1].trim();
-        const baseType = rawType.replace(/<.*>/, '').replace(/\[\]$/, '').trim();
-        if (!primitives.has(baseType) && !/^[A-Z]/.test(baseType)) continue;
-        variables.set(match[2], { name: match[2], type: rawType, detail: match[0].trim().endsWith(')') ? '方法参数' : '局部变量' });
+      return javaSymbolsInSource(source);
+    }
+
+    function javaIdentifierCompletionItems(source, prefix) {
+      const needle = String(prefix || '').toLowerCase();
+      const symbols = javaSymbolsInSource(source);
+      const result = [];
+      for (const symbol of symbols.variables.values()) {
+        if (!needle || symbol.name.toLowerCase().startsWith(needle)) {
+          result.push({
+            text: symbol.name,
+            displayText: symbol.name,
+            detail: `${symbol.type.replace(/\s+/g, ' ')} · ${symbol.detail}`,
+            kind: 'variable'
+          });
+        }
       }
-      const methods = new Set();
-      const methodPattern = /\b(?:public|protected|private|static|final|synchronized|abstract|native|\s)+[A-Za-z_$][\w$<>, ?\[\].]*\s+([A-Za-z_$][\w$]*)\s*\([^;{}]*\)\s*\{/g;
-      for (const match of source.matchAll(methodPattern)) methods.add(match[1]);
-      return { source, variables, methods };
+      for (const method of symbols.methods) {
+        if (!needle || method.toLowerCase().startsWith(needle)) {
+          result.push({ text: `${method}()`, displayText: `${method}()`, detail: '当前类', kind: 'method' });
+        }
+      }
+      return result;
+    }
+
+    function javaMemberCompletionItems(source, ownerName, prefix) {
+      const symbol = javaSymbolsInSource(source).variables.get(ownerName);
+      const owner = symbol ? normalizedJavaType(symbol.type) : ownerName.toLowerCase();
+      const detail = symbol ? symbol.type.replace(/\s+/g, ' ') : ownerName;
+      const needle = String(prefix || '').toLowerCase();
+      const members = MEMBER_COMPLETIONS.java[owner] || MEMBER_COMPLETIONS.java['*'] || [];
+      return [...new Set(members)]
+        .filter(text => !needle || text.toLowerCase().startsWith(needle))
+        .map(text => ({
+          text,
+          displayText: text,
+          detail: text.includes('(') ? detail : `${detail} · 字段`,
+          kind: text.includes('(') ? 'method' : 'property'
+        }));
     }
 
     function javaConstructorCompletions(lineBeforeCursor, prefix) {
@@ -413,17 +551,12 @@
         let owner = ownerName.toLowerCase();
         const memberPrefix = memberMatch[2].toLowerCase();
         const languageMembers = MEMBER_COMPLETIONS[normalizedLanguage] || {};
-        let detail = ownerName;
-        if (normalizedLanguage === 'java') {
-          const symbol = javaSymbolsBeforeCursor(cm, cursor).variables.get(ownerName);
-          if (symbol) {
-            owner = normalizedJavaType(symbol.type);
-            detail = symbol.type.replace(/\s+/g, ' ');
-          }
-        }
-        const members = [...new Set(languageMembers[owner] || languageMembers['*'] || [])]
-          .filter(text => !memberPrefix || text.toLowerCase().startsWith(memberPrefix))
-          .map(text => ({ text, displayText: text, detail: text.includes('(') ? detail : '属性', kind: text.includes('(') ? 'method' : 'property', render: renderCodeCompletion }));
+        const members = normalizedLanguage === 'java'
+          ? javaMemberCompletionItems(javaSymbolsBeforeCursor(cm, cursor).source, ownerName, memberPrefix)
+              .map(item => ({ ...item, render: renderCodeCompletion }))
+          : [...new Set(languageMembers[owner] || languageMembers['*'] || [])]
+              .filter(text => !memberPrefix || text.toLowerCase().startsWith(memberPrefix))
+              .map(text => ({ text, displayText: text, detail: text.includes('(') ? ownerName : '属性', kind: text.includes('(') ? 'method' : 'property', render: renderCodeCompletion }));
         return { list: members, from: CodeMirror.Pos(cursor.line, cursor.ch - memberMatch[2].length), to: cursor };
       }
       const constructorMatch = normalizedLanguage === 'java' && lineBeforeCursor.match(/\bnew\s+([A-Za-z_$][\w$]*)?$/);
@@ -463,18 +596,9 @@
       const anyword = CodeMirror.hint.anyword(cm, { word: /[\w$]+/, range: 500 });
       const scoped = [];
       if (normalizedLanguage === 'java') {
-        const symbols = javaSymbolsBeforeCursor(cm, cursor);
-        for (const symbol of symbols.variables.values()) {
-          if (!prefix || symbol.name.toLowerCase().startsWith(prefix)) {
-            scoped.push({ text: symbol.name, displayText: symbol.name, detail: symbol.type, kind: 'variable', render: renderCodeCompletion });
-          }
-        }
-        for (const method of symbols.methods) {
-          const text = `${method}()`;
-          if (!prefix || method.toLowerCase().startsWith(prefix)) {
-            scoped.push({ text, displayText: text, detail: '当前类', kind: 'method', render: renderCodeCompletion });
-          }
-        }
+        const source = javaSymbolsBeforeCursor(cm, cursor).source;
+        scoped.push(...javaIdentifierCompletionItems(source, prefix)
+          .map(item => ({ ...item, render: renderCodeCompletion })));
       }
       const seen = new Set();
       const list = [...scoped, ...(anyword.list || []).map(item => typeof item === 'string'

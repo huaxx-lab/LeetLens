@@ -151,3 +151,93 @@ final class CodeEditorCompletionTests: XCTestCase {
         throw XCTSkip("\(name) 括号不配对")
     }
 }
+
+/// Java 当前方法作用域补全：力扣模板里的方法参数必须离线可用，不能完全依赖远端 JDT。
+final class JavaScopeCompletionTests: XCTestCase {
+    private var context: JSContext!
+
+    override func setUpWithError() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Sources/LeetCodeAssistant/Resources/CodeEditor/editor.html")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let memberStart = try XCTUnwrap(source.range(of: "const MEMBER_COMPLETIONS =")?.lowerBound)
+        let memberEnd = try XCTUnwrap(source.range(of: "const JAVA_CONSTRUCTOR_COMPLETIONS =")?.lowerBound)
+        let functionStart = try XCTUnwrap(source.range(of: "function normalizedJavaType(")?.lowerBound)
+        let functionEnd = try XCTUnwrap(source.range(of: "function javaConstructorCompletions(")?.lowerBound)
+
+        context = JSContext()
+        context.exceptionHandler = { _, value in XCTFail("JS 异常：\(value?.toString() ?? "?")") }
+        context.evaluateScript(String(source[memberStart..<memberEnd]) + String(source[functionStart..<functionEnd]))
+        XCTAssertTrue(context.objectForKeyedSubscript("javaSymbolsInSource").isObject)
+    }
+
+    func testTreeNodeMethodParameterCompletesRoot() throws {
+        let source = """
+        /**
+         * Definition for a binary tree node.
+         * TreeNode left;
+         * TreeNode right;
+         */
+        class Solution {
+            public int maxDepth(TreeNode root) {
+                ro
+        """
+        let items = try identifierItems(source, prefix: "ro")
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0]["text"] as? String, "root")
+        XCTAssertEqual(items[0]["detail"] as? String, "TreeNode · 方法参数")
+    }
+
+    func testTreeNodeAndListNodeMembersAreTypeAware() throws {
+        let tree = "class Solution { int maxDepth(TreeNode root) { root."
+        XCTAssertEqual(try memberTexts(tree, owner: "root"), ["val", "left", "right"])
+        XCTAssertEqual(try memberTexts(tree, owner: "root", prefix: "le"), ["left"])
+
+        let list = "class Solution { ListNode reverse(ListNode head) { head."
+        XCTAssertEqual(try memberTexts(list, owner: "head"), ["val", "next"])
+    }
+
+    func testGenericArrayAndVarargsParametersKeepTheirTypes() throws {
+        let source = """
+        class Solution {
+            int f(final Map<String, List<Integer>> graph, int[] nums, TreeNode... roots) {
+        """
+        let graph = try identifierItems(source, prefix: "gr").first
+        let nums = try identifierItems(source, prefix: "nu").first
+        let roots = try identifierItems(source, prefix: "roo").first
+        XCTAssertEqual(graph?["detail"] as? String, "Map<String, List<Integer>> · 方法参数")
+        XCTAssertEqual(nums?["detail"] as? String, "int[] · 方法参数")
+        XCTAssertEqual(roots?["detail"] as? String, "TreeNode[] · 方法参数")
+    }
+
+    func testParametersDoNotLeakAcrossMethodsOrFromComments() throws {
+        let source = """
+        /** TreeNode root; TreeNode right; */
+        class Solution {
+            void first(TreeNode root) {}
+            void second(int value) { ro
+        """
+        XCTAssertTrue(try identifierItems(source, prefix: "ro").isEmpty)
+    }
+
+    func testCurrentMethodLocalVariableStillCompletes() throws {
+        let source = "class Solution { void f(TreeNode root) { int result = 0; res"
+        let item = try XCTUnwrap(identifierItems(source, prefix: "res").first)
+        XCTAssertEqual(item["text"] as? String, "result")
+        XCTAssertEqual(item["detail"] as? String, "int · 局部变量")
+    }
+
+    private func identifierItems(_ source: String, prefix: String) throws -> [[String: Any]] {
+        let value = context.objectForKeyedSubscript("javaIdentifierCompletionItems")
+            .call(withArguments: [source, prefix])
+        return try XCTUnwrap(value?.toArray() as? [[String: Any]])
+    }
+
+    private func memberTexts(_ source: String, owner: String, prefix: String = "") throws -> [String] {
+        let value = context.objectForKeyedSubscript("javaMemberCompletionItems")
+            .call(withArguments: [source, owner, prefix])
+        let items = try XCTUnwrap(value?.toArray() as? [[String: Any]])
+        return items.compactMap { $0["text"] as? String }
+    }
+}

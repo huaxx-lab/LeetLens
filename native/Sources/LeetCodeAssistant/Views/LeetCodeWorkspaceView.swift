@@ -1493,27 +1493,23 @@ struct LeetCodeWorkspaceView: View {
         .background(judge.result?.accepted == true ? Color.green.opacity(0.08) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
     }
 
-    /// 没通过之后给的台阶：先自己找，想不出来要方向，再不行才把问题标到行上。
-    /// 不一上来就标——那等于替他把题做了。
+    /// 运行 / 提交没通过后固定给两条清晰路径：只要方向，或直接把问题标到具体行。
+    ///
+    /// `标到行上` 不能依赖 `hasHints`：提示状态会随换题、重载和清空发生变化，
+    /// 旧条件导致同一个失败结果里按钮时有时无。聊天仍在编辑器顶部的「问 AI」入口，
+    /// 结果区不重复放一个含义模糊的「问 AI」。
     @ViewBuilder
     private var failureActions: some View {
-        let hasHints = !session.hints(for: session.selectedQuestionSlug).isEmpty
         VStack(alignment: .leading, spacing: 6) {
-            Text(hasHints ? "还是不行就把问题标到代码上。" : "先自己对着失败用例走一遍；想不出来再要提示。")
+            Text("先自己对着失败用例走一遍；想不出来可以要方向，或标到具体行。")
                 .font(AppDesign.Typography.micro)
                 .foregroundStyle(.secondary)
             HStack(spacing: AppDesign.Spacing.xs) {
-                failureAction("给个方向", systemImage: "lightbulb.max", prominent: !hasHints) {
+                failureAction("给个方向", systemImage: "lightbulb.max") {
                     requestDirection()
                 }
-                failureAction("问 AI", systemImage: "sparkles") {
-                    askAssistant("我的代码为什么没通过？请结合失败用例指出问题所在，先不要给完整代码。")
-                }
-                // 只有要过提示还是没解决时才露出来：它给的是具体行和改法，是最后一级。
-                if hasHints {
-                    failureAction("标到代码上", systemImage: "text.badge.checkmark", prominent: true) {
-                        startReview()
-                    }
+                failureAction("标到行上", systemImage: "text.badge.checkmark", prominent: true) {
+                    startReview()
                 }
             }
         }

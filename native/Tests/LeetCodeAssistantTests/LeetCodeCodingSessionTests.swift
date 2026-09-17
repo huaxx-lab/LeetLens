@@ -360,3 +360,22 @@ final class CompletionInsertionScriptTests: XCTestCase {
         )
     }
 }
+
+/// 运行 / 提交失败第一次出现时就必须能「标到行上」，不能要求先点「给个方向」。
+final class LeetCodeFailureActionContractTests: XCTestCase {
+    func testLineAnnotationIsUnconditionalAndReplacesAskAI() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Sources/LeetCodeAssistant/Views/LeetCodeWorkspaceView.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "private var failureActions: some View")?.lowerBound)
+        let end = try XCTUnwrap(source.range(of: "private func failureAction(", range: start..<source.endIndex)?.lowerBound)
+        let block = String(source[start..<end])
+
+        XCTAssertTrue(block.contains("failureAction(\"给个方向\""))
+        XCTAssertTrue(block.contains("failureAction(\"标到行上\""))
+        XCTAssertTrue(block.contains("startReview()"))
+        XCTAssertFalse(block.contains("failureAction(\"问 AI\""))
+        XCTAssertFalse(block.contains("if hasHints"), "第一次失败时就要直接出现，不能依赖提示状态")
+    }
+}
