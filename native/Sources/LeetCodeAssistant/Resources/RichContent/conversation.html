@@ -322,9 +322,14 @@
     .tool-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; color: color-mix(in srgb, CanvasText 62%, transparent); background: color-mix(in srgb, CanvasText 6.5%, transparent); }
     .tool-chip svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .generation-state { display: flex; align-items: center; gap: 9px; min-height: 30px; margin-top: 8px; color: color-mix(in srgb, CanvasText 55%, transparent); font-size: 13px; }
-    .generation-state.failed { color: #c63b32; }
-    .generation-state button { min-height: 28px; padding: 0 10px; border: 0; border-radius: 7px; color: CanvasText; background: color-mix(in srgb, CanvasText 7%, Canvas); font: inherit; cursor: pointer; }
+    /* 失败态：错误文本长短不一，供应商原文可能几百字。用 wrap 让它自适应——
+       短句时按钮跟在同一行，长文时按钮整个落到下一行左对齐，而不是被挤成右侧窄条。 */
+    .generation-state.failed { flex-wrap: wrap; align-items: center; row-gap: 7px; color: #c63b32; }
+    .generation-state.failed > span { overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+    /* 按钮永远不参与收缩：以前它和长文本抢宽度，窄浮窗里被压到只剩两个字换行。 */
+    .generation-state button { flex: 0 0 auto; min-height: 28px; padding: 0 11px; border: 0; border-radius: 7px; color: CanvasText; background: color-mix(in srgb, CanvasText 7%, Canvas); font: inherit; white-space: nowrap; cursor: pointer; transition: background 120ms ease; }
     .generation-state button:hover { background: color-mix(in srgb, CanvasText 11%, Canvas); }
+    .generation-state button:active { background: color-mix(in srgb, CanvasText 16%, Canvas); }
     .typing { display: inline-flex; align-items: center; gap: 4px; height: 20px; }
     .typing i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: typing 1.15s ease-in-out infinite; }
     .typing i:nth-child(2) { animation-delay: 130ms; } .typing i:nth-child(3) { animation-delay: 260ms; }
@@ -788,7 +793,7 @@
       let status='';
       if(state==='generating'&&!thinking&&!parsed.content) status='<div class="generation-state"><span class="typing" aria-label="正在生成"><i></i><i></i><i></i></span></div>';
       if(state==='cancelled') status='<div class="generation-state">已停止生成</div>';
-      if(state==='failed') status=`<div class="generation-state failed"><span>${escapeHtml(message.detail||'请求失败')}</span><button type="button" data-conversation-action="retry">重试</button></div>`;
+      if(state==='failed') status=`<div class="generation-state failed"><span>${escapeHtml(message.detail||'请求失败')}</span><button type="button" data-conversation-action="retry" title="用同一条消息重新生成">重试</button></div>`;
       return `${thinkHTML}${toolsHTML}${agentHTML}<div class="body">${renderedBody}</div>${artifactsHTML}${status}`;
     };
     /// 每个工具一套图标与主色，卡片一眼能认出模型去查了什么。

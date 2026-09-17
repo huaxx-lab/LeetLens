@@ -144,6 +144,60 @@ final class PromptCacheBreakpointTests: XCTestCase {
         XCTAssertEqual(entries.count, 1)
     }
 
+    /// 线上 400 的那条：`role:"context"` 是 PromptAssembly 的内部标记，供应商全都不认。
+    /// requestBody 一直转换得好好的，但 ReAct 循环自己从原始 messages 建了一份线格式，
+    /// 又在 makeRequest 里把转换结果覆盖掉，于是每一轮都把 context 原样发出去。
+    func testInternalContextRoleNeverReachesTheWire() throws {
+        let messages = sections(
+            stable: ["人设"],
+            history: [
+                ChatRequestMessage(role: "user", content: "问题"),
+                ChatRequestMessage(role: "assistant", content: "回答")
+            ],
+            volatile: ["【检索片段】旧会话", "【当前代码】class Solution {}"]
+        )
+        for mode in ["chat", "responses", "messages"] {
+            let wire = ChatService.wireFormat(messages, mode: mode)
+            XCTAssertFalse(
+                wire.contains { $0["role"] as? String == PromptAssembly.volatileRole },
+                "\(mode) 把内部 context 角色发出去了"
+            )
+            // 易变内容本身不能丢：它只是换了承载方式，不是被删掉。
+            let serialized = String(
+                decoding: try JSONSerialization.data(withJSONObject: wire),
+                as: UTF8.self
+            )
+            XCTAssertTrue(serialized.contains("检索片段"), mode)
+            XCTAssertTrue(serialized.contains("当前代码"), mode)
+        }
+    }
+
+    /// ReAct 循环在 `wireFormat` 的结果上追加 tool 消息，再用它覆盖 requestBody 的 messages。
+    /// 两者形状必须逐字一致，否则第一轮就会把转换好的内容换成没转换的。
+    func testReActWireFormatMatchesRequestBodyExactly() throws {
+        let messages = sections(
+            stable: ["人设"],
+            history: [ChatRequestMessage(role: "user", content: "问题")],
+            volatile: ["【检索片段】"]
+        )
+        for (mode, key) in [("chat", "messages"), ("responses", "input"), ("messages", "messages")] {
+            let body = ChatService.requestBody(
+                mode: mode,
+                model: "m",
+                apiBase: mode == "messages" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1",
+                messages: messages,
+                reasoningLevel: .high
+            )
+            let fromBody = try JSONSerialization.data(
+                withJSONObject: try XCTUnwrap(body[key]), options: [.sortedKeys]
+            )
+            let fromWire = try JSONSerialization.data(
+                withJSONObject: ChatService.wireFormat(messages, mode: mode), options: [.sortedKeys]
+            )
+            XCTAssertEqual(fromBody, fromWire, "\(mode) 的两条线格式已经漂移")
+        }
+    }
+
     /// 非 Anthropic 协议自己做自动前缀缓存，不接受 cache_control，误发会直接报错。
     func testOtherTransportsNeverEmitCacheControl() throws {
         let messages = sections(

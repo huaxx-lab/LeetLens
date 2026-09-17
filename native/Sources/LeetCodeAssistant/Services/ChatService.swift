@@ -172,9 +172,11 @@ final class ChatService: @unchecked Sendable {
                     // Responses 侧我们的函数和供应商内置工具（联网搜索）同放在 tools 里，互不影响。
                     let toolsEnabled = agentTools != nil && (mode == "chat" || mode == "responses")
                     let usesResponsesProtocol = mode == "responses"
-                    var wireMessages = messages.map {
-                        ["role": $0.role, "content": $0.content] as [String: Any]
-                    }
+                    // 起手就必须是**转换后**的线格式。内部的 `context` 角色只是 PromptAssembly
+                    // 的位置标记，供应商一个都不认；这里原来直接拿原始 `messages` 建数组，
+                    // 又在 makeRequest 里覆盖掉 requestBody 已经转换好的结果，于是
+                    // `role:"context"` 每一轮都原样发出去，供应商直接 400。
+                    var wireMessages = Self.wireFormat(messages, mode: mode)
                     var didYieldText = false
                     // 三道计数闸：轮数（maximumAgentRounds）只管轮，管不住一轮里
                     // 并行对同一个坏工具反复调用，也管不住工具返回一轮轮累积。
@@ -1234,6 +1236,17 @@ final class ChatService: @unchecked Sendable {
         return result
     }
 
+    /// 线格式的唯一入口。
+    ///
+    /// ReAct 循环要在这份数组上追加 `tool_calls` / tool 结果再回灌，而 `makeRequest`
+    /// 会用它覆盖 `requestBody` 生成的 messages——两边各搭一套转换，迟早漂移成线上 400。
+    static func wireFormat(_ messages: [ChatRequestMessage], mode: String) -> [[String: Any]] {
+        guard mode != "messages" else { return anthropicMessages(from: messages) }
+        return wireMessages(messages, mode: mode).map {
+            ["role": $0.role, "content": $0.content] as [String: Any]
+        }
+    }
+
     static func requestBody(
         mode: String,
         model: String,
@@ -1242,7 +1255,7 @@ final class ChatService: @unchecked Sendable {
         reasoningLevel: ReasoningLevel
     ) -> [String: Any] {
         let converted = wireMessages(messages, mode: mode)
-        let apiMessages = converted.map { ["role": $0.role, "content": $0.content] }
+        let apiMessages = wireFormat(messages, mode: mode)
         var body: [String: Any] = ["model": model, "stream": true]
         if mode == "responses" {
             body["input"] = apiMessages
@@ -1252,7 +1265,7 @@ final class ChatService: @unchecked Sendable {
             let tools = ProviderBuiltInTools.tools(apiBase: apiBase, model: model)
             if !tools.isEmpty { body["tools"] = tools }
         } else if mode == "messages" {
-            body["messages"] = anthropicMessages(from: messages)
+            body["messages"] = apiMessages
             body["max_tokens"] = 8_192
             let sections = systemSections(from: converted)
             if !sections.isEmpty {
