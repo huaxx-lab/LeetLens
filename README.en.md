@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-15%2B-292E33?logo=apple&logoColor=white" alt="macOS 15+">
-  <img src="https://img.shields.io/badge/version-v2.6.0-2563EB" alt="v2.6.0">
+  <img src="https://img.shields.io/badge/version-v3.0.0-2563EB" alt="v3.0.0">
   <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F766E" alt="MIT License"></a>
   <a href="https://github.com/huaxx-lab/LeetLens/stargazers"><img src="https://img.shields.io/github/stars/huaxx-lab/LeetLens?style=flat&color=F59E0B" alt="Stars"></a>
