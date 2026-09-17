@@ -62,10 +62,11 @@ final class ConversationIntentTests: XCTestCase {
 
     // MARK: - 该检索的轮次
 
-    func testExplicitHistoryCueAlwaysRetrieves() {
+    func testExplicitHistoryCueAlwaysRetrievesAndRequestsCoreferenceResolution() {
         for query in ["上次我们说的那个", "你之前提过的写法", "帮我复盘一下"] {
             let result = resolve(query)
             XCTAssertTrue(result.wantsRetrieval, query)
+            XCTAssertEqual(result.confidence, .ambiguous, "要检索是硬判定，但指代对象仍需结合上文改写")
         }
     }
 

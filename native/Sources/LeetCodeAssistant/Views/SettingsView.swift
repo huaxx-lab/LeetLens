@@ -1387,9 +1387,9 @@ private struct ProviderSettingsPage: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 SettingsCard(title: "任务模型路由") {
-                    ForEach(Array(AITaskRoute.allCases.enumerated()), id: \.element.id) { index, route in
+                    ForEach(Array(AITaskRoute.providerConfigurableCases.enumerated()), id: \.element.id) { index, route in
                         routeRow(route)
-                        if index < AITaskRoute.allCases.count - 1 {
+                        if index < AITaskRoute.providerConfigurableCases.count - 1 {
                             CardDivider()
                         }
                     }

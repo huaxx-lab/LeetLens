@@ -285,6 +285,8 @@ final class ChatServiceTests: XCTestCase {
                 "studyPlan", "studyContent", "studyAssessment", "leetCodeAnalysis",
                 // 跨对话记忆的离线整合是一次真实的模型调用，必须可路由、可计量。
                 "memory",
+                // 歧义轮次的检索判定 + 指代消解也是一次真实调用。
+                "memoryQuery",
                 // 写代码时的分级提示同样是真实调用。
                 "hint"
             ]
@@ -305,6 +307,23 @@ final class ChatServiceTests: XCTestCase {
         XCTAssertEqual(AITaskRoute.leetCodeAnalysis.providerID(in: root), "learning-provider")
         XCTAssertEqual(AITaskRoute.codingHint.providerID(in: root), "learning-provider")
         XCTAssertNil(AITaskRoute.conversation.providerID(in: root))
+    }
+
+    func testMemoryQueryRouteCannotCrossTheConversationProviderBoundary() {
+        let root: [String: Any] = [
+            "taskModels": [
+                "memoryQuery": ["providerId": "other-provider"],
+                "title": ["providerId": "cheap-provider"]
+            ]
+        ]
+        XCTAssertFalse(AITaskRoute.memoryQueryResolution.isProviderConfigurable)
+        XCTAssertFalse(AITaskRoute.providerConfigurableCases.contains(.memoryQueryResolution))
+        XCTAssertNil(AITaskRoute.memoryQueryResolution.providerID(in: root),
+                     "即使旧设置残留了路由，也不能把会话投影发给另一家供应商")
+
+        var settings = LegacySettingsSnapshot()
+        settings.taskRoutes = [AITaskRoute.memoryQueryResolution.rawValue: "other-provider"]
+        XCTAssertNil(AITaskRoute.memoryQueryResolution.providerID(in: settings))
     }
 
     func testSpecializedRouteOverridesLegacyLearningRoute() {

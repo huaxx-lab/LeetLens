@@ -339,8 +339,12 @@ struct ConversationWorkspaceView: View {
             do {
                 // 跨会话检索要计算查询向量（约 200ms），必须留在任务里，
                 // 否则点击发送的那一帧会被 embedding 阻塞。
-                // 现在这一步只在策略判定为 `.retrieve` 时才发生。
-                let memory = await memoryPrompts(conversationID: conversationID)
+                // 规则 / 模型判定要检索时才发生；歧义轮次先在同一后台任务里消解指代。
+                let memory = await memoryPrompts(
+                    conversationID: conversationID,
+                    service: service,
+                    providerID: runtimeIdentity.providerID
+                )
                 try Task.checkCancellation()
                 guard workspace.conversationGeneration?.conversationID == conversationID,
                       workspace.conversationGeneration?.messageID == assistantID
@@ -707,12 +711,15 @@ struct ConversationWorkspaceView: View {
         var didRetrieve = false
     }
 
-    /// 分层注入：目录常驻（几百 token），全量检索只在廉价规则命中时才跑。
-    /// 以前每轮都无条件跑一次 BM25 + 查询向量，并塞进最多 4 段原文——
-    /// 问"快排怎么写"也照跑，既慢又贵，还容易把无关记忆写进回答里。
-    private func memoryPrompts(conversationID: String) async -> MemoryInjection {
+    /// 分层注入：目录常驻；歧义轮次先用一次便宜调用完成“是否检索 + 指代消解”，
+    /// 再把**独立检索句**交给两路召回。小模型的输出只存在内存里，绝不进对话历史。
+    private func memoryPrompts(
+        conversationID: String,
+        service: ChatService,
+        providerID: String
+    ) async -> MemoryInjection {
         guard let conversation = dataStore.conversations.first(where: { $0.id == conversationID }),
-              let query = conversation.messages.last(where: { $0.role == "user" })?.content
+              let userMessage = conversation.messages.last(where: { $0.role == "user" })
         else { return MemoryInjection() }
 
         var injection = MemoryInjection()
@@ -723,30 +730,67 @@ struct ConversationWorkspaceView: View {
             injection.stable.append(factPrompt)
         }
 
-        // 目录**常驻**，不再按轮开关。它以前跟着 tier 整块出现或消失，
-        // 等于每轮切一次前缀——比它自己那几百 token 贵得多。
-        // 进入会话时冻结一次：本会话内不随别的会话更新而重排。
+        // 目录常驻且按会话冻结，避免别的会话更新导致稳定前缀每轮重排。
         let directory = frozenDirectory(for: conversationID)
         if let index = ConversationMemoryDirectory.prompt(for: directory) {
             injection.stable.append(index)
         }
 
-        // 意图决定要不要检索。以前是无条件跑一次 BM25 + 查询向量，
-        // 问"快排怎么写"也照跑——既慢又贵，还容易把无关记忆写进回答。
-        let resolution = ConversationIntentPolicy.resolve(
-            query: query,
+        let rule = ConversationIntentPolicy.resolve(
+            query: userMessage.content,
             previous: workspace.lastConversationIntent[conversationID],
             directory: directory,
             hasHostContext: embedding?.contextPrompt() != nil
         )
-        workspace.lastConversationIntent[conversationID] = resolution
-        guard resolution.wantsRetrieval else { return injection }
+        let key = ConversationIntentCacheKey(
+            conversationID: conversationID,
+            messageID: userMessage.id
+        )
+
+        let decision: ConversationRetrievalDecision
+        if let cached = await workspace.conversationIntentDecisionCache.value(for: key) {
+            decision = cached
+        } else if rule.confidence == .ambiguous,
+                  let context = ConversationIntentContextProjection.build(
+                    messages: conversation.messages,
+                    currentMessageID: userMessage.id,
+                    contextSummary: conversation.contextSummary,
+                    directory: directory,
+                    availableInputTokens: ChatService.availableInputTokens(dataDirectory: dataStore.dataDirectory)
+                  ) {
+            do {
+                let model = try await service.resolveConversationRetrievalIntent(
+                    context: context,
+                    // 固定跟随本轮主对话供应商：不把历史投影扩散到另一家服务。
+                    providerID: providerID,
+                    conversationID: conversationID
+                )
+                decision = .modelResolved(
+                    rule: rule,
+                    model: model,
+                    originalQuery: userMessage.content
+                )
+            } catch is CancellationError {
+                return injection
+            } catch {
+                // 小调用是优化而不是单点故障。失败时保留规则层的召回优先策略；
+                // 同一消息的重试也复用这个最终降级结果，不制造失败风暴。
+                NSLog("Conversation intent fallback unavailable; using rule decision: %@", error.localizedDescription)
+                decision = .ruleOnly(resolution: rule, originalQuery: userMessage.content)
+            }
+            await workspace.conversationIntentDecisionCache.insert(decision, for: key)
+        } else {
+            decision = .ruleOnly(resolution: rule, originalQuery: userMessage.content)
+            await workspace.conversationIntentDecisionCache.insert(decision, for: key)
+        }
+
+        workspace.lastConversationIntent[conversationID] = decision.resolution
+        guard decision.resolution.wantsRetrieval else { return injection }
         let matches = await dataStore.searchMemory(
-            query: query,
+            query: decision.retrievalQuery,
             currentConversationID: conversationID
         )
         if let retrieved = ConversationMemoryIndex.prompt(for: matches) {
-            // 检索片段是每轮都变的那一块，只能排在最后。
             injection.volatileContext.append(retrieved)
             injection.didRetrieve = true
         }

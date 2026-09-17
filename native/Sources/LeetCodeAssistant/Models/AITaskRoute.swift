@@ -14,6 +14,10 @@ enum AITaskRoute: String, CaseIterable, Identifiable, Sendable {
     /// 跨会话记忆的异步整合。放在这里就自动出现在设置的任务路由里，
     /// 用户可以给它挑一个便宜的模型——它是后台跑的，不需要主对话那档。
     case memoryConsolidation = "memory"
+    /// 只在规则层判成 ambiguous 时调用：一次完成是否检索 + 指代消解。
+    /// 结果只供检索器使用，不进入主对话历史；固定跟随本轮主对话供应商，
+    /// 不能另行路由，避免把会话投影扩散到新的数据接收方。
+    case memoryQueryResolution = "memoryQuery"
     /// 写代码时的分级提示。单独一条路由：它要读用户正在写的代码，
     /// 又必须守住"只给方向不给答案"，和出题、评分不是一回事。
     case codingHint = "hint"
@@ -31,6 +35,7 @@ enum AITaskRoute: String, CaseIterable, Identifiable, Sendable {
         case .studyAssessment: "作答检测与评分"
         case .leetCodeAnalysis: "LeetCode 提交分析"
         case .memoryConsolidation: "跨对话记忆整合"
+        case .memoryQueryResolution: "检索意图与指代消解"
         case .codingHint: "写代码时的提示"
         }
     }
@@ -46,6 +51,7 @@ enum AITaskRoute: String, CaseIterable, Identifiable, Sendable {
         case .studyAssessment: "评估作答、错因与下一步"
         case .leetCodeAnalysis: "单次代码审查与多次提交轨迹"
         case .memoryConsolidation: "后台去重、冲突消解，沉淀长期事实"
+        case .memoryQueryResolution: "歧义轮次一次完成是否检索与独立查询改写"
         case .codingHint: "读当前代码，给方向与卡点，不给答案"
         }
     }
@@ -61,8 +67,17 @@ enum AITaskRoute: String, CaseIterable, Identifiable, Sendable {
         case .studyAssessment: "checkmark.seal"
         case .leetCodeAnalysis: "curlybraces.square"
         case .memoryConsolidation: "brain"
+        case .memoryQueryResolution: "arrow.triangle.branch"
         case .codingHint: "lightbulb.max"
         }
+    }
+
+    /// 会读取本轮对话原文的前置调用不允许另选供应商；它只能使用主对话已经
+    /// 授权的数据边界。仍保留独立 route case，纯粹为了用量账本能单独统计。
+    var isProviderConfigurable: Bool { self != .memoryQueryResolution }
+
+    static var providerConfigurableCases: [AITaskRoute] {
+        allCases.filter(\.isProviderConfigurable)
     }
 
     private var legacyFallbacks: [AITaskRoute] {
@@ -77,7 +92,8 @@ enum AITaskRoute: String, CaseIterable, Identifiable, Sendable {
     }
 
     func providerID(in settings: LegacySettingsSnapshot) -> String? {
-        ([self] + legacyFallbacks).lazy.compactMap { route in
+        guard isProviderConfigurable else { return nil }
+        return ([self] + legacyFallbacks).lazy.compactMap { route in
             let providerID = settings.taskRoutes[route.rawValue]?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return providerID?.isEmpty == false ? providerID : nil
@@ -85,6 +101,7 @@ enum AITaskRoute: String, CaseIterable, Identifiable, Sendable {
     }
 
     func providerID(in root: [String: Any]) -> String? {
+        guard isProviderConfigurable else { return nil }
         let taskModels = root["taskModels"] as? [String: Any] ?? [:]
         return ([self] + legacyFallbacks).lazy.compactMap { route -> String? in
             let value = taskModels[route.rawValue] as? [String: Any]

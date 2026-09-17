@@ -275,6 +275,23 @@ enum ConversationChunker {
         return result
     }
 
+    /// 给意图 / 指代小模型裁剪最近消息。复用和 RAG 切块同一套 Markdown 语义边界：
+    /// 代码块、列表项、普通句子都只能整块进出，绝不因为预算从中间切开。
+    static func semanticTail(in source: String, role: String, budgetTokens: Int) -> String? {
+        guard budgetTokens > 0 else { return nil }
+        let clean = sanitize(source, role: role)
+        let units = semanticUnits(in: clean, messageID: nil, role: role)
+        var selected: [Unit] = []
+        var used = 0
+        for unit in units.reversed() {
+            guard unit.tokens <= budgetTokens, used + unit.tokens <= budgetTokens else { break }
+            selected.append(unit)
+            used += unit.tokens
+        }
+        guard !selected.isEmpty else { return nil }
+        return selected.reversed().map(\.text).joined(separator: "\n")
+    }
+
     // MARK: - Packing with whole-unit overlap
 
     private static func pack(
