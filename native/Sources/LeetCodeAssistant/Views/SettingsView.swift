@@ -1673,6 +1673,10 @@ private struct ContextSettingsPage: View {
     @State private var postCompression: Double
     @State private var recentMessages: Double
     @State private var maxImages: Double
+    @State private var cloudMemoryEmbeddingEnabled: Bool
+    @State private var cloudMemoryRerankingEnabled: Bool
+    @State private var cloudMemoryProviderID: String
+    @State private var cloudMemoryModelTier: String
     @State private var saveStatus = ""
     @State private var memoryFacts: [ConversationMemoryFact] = []
 
@@ -1685,6 +1689,12 @@ private struct ContextSettingsPage: View {
         _postCompression = State(initialValue: snapshot.postCompressionRatio)
         _recentMessages = State(initialValue: snapshot.recentMessages)
         _maxImages = State(initialValue: snapshot.maxImages)
+        _cloudMemoryEmbeddingEnabled = State(initialValue: snapshot.cloudMemoryEmbeddingEnabled)
+        _cloudMemoryRerankingEnabled = State(initialValue: snapshot.cloudMemoryRerankingEnabled)
+        _cloudMemoryProviderID = State(initialValue: snapshot.cloudMemoryProviderID)
+        _cloudMemoryModelTier = State(initialValue:
+            snapshot.cloudMemoryEmbeddingModel.hasPrefix("qwen3.7") ? "qwen3.7" : "compatible"
+        )
     }
 
     var body: some View {
@@ -1749,6 +1759,43 @@ private struct ContextSettingsPage: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
+
+                CardDivider()
+
+                VStack(spacing: 0) {
+                    SettingsRow("RAG 供应商", subtitle: "建议新建专用阿里云供应商，填写有 Embedding / Rerank 权限的 workspace 地址与 Key") {
+                        Picker("RAG 供应商", selection: $cloudMemoryProviderID) {
+                            ForEach(dataStore.providers.filter(\.isConfigured)) { provider in
+                                Text(provider.name).tag(provider.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 180)
+                    }
+                    CardDivider()
+                    SettingsRow("检索模型", subtitle: cloudMemoryModelTier == "qwen3.7"
+                        ? "qwen3.7-text-embedding + qwen3.7-text-rerank（需 workspace 授权）"
+                        : "text-embedding-v4 + qwen3-rerank（兼容范围更广）") {
+                        Picker("检索模型", selection: $cloudMemoryModelTier) {
+                            Text("兼容版").tag("compatible")
+                            Text("3.7 高质量").tag("qwen3.7")
+                        }
+                        .labelsHidden()
+                        .frame(width: 130)
+                    }
+                    CardDivider()
+                    SettingsToggleRow(
+                        "千问语义召回",
+                        subtitle: "把清洗后的旧会话片段发送给阿里云 qwen3.7-text-embedding；关闭时只用本地 BM25",
+                        isOn: $cloudMemoryEmbeddingEnabled
+                    )
+                    CardDivider()
+                    SettingsToggleRow(
+                        "千问重排序",
+                        subtitle: "把本轮检索词与候选历史片段发送给阿里云 qwen3.7-text-rerank；失败时回退本地结果",
+                        isOn: $cloudMemoryRerankingEnabled
+                    )
+                }
 
                 CardDivider()
 
@@ -1830,7 +1877,16 @@ private struct ContextSettingsPage: View {
                 compression: compression,
                 postCompression: min(postCompression, compression),
                 recentMessages: recentMessages,
-                maxImages: maxImages
+                maxImages: maxImages,
+                cloudMemoryEmbeddingEnabled: cloudMemoryEmbeddingEnabled,
+                cloudMemoryRerankingEnabled: cloudMemoryRerankingEnabled,
+                cloudMemoryProviderID: cloudMemoryProviderID,
+                cloudMemoryEmbeddingModel: cloudMemoryModelTier == "qwen3.7"
+                    ? "qwen3.7-text-embedding"
+                    : "text-embedding-v4",
+                cloudMemoryRerankModel: cloudMemoryModelTier == "qwen3.7"
+                    ? "qwen3.7-text-rerank"
+                    : "qwen3-rerank"
             )
             saveStatus = "已保存"
         } catch {

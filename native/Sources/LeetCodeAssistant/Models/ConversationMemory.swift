@@ -9,6 +9,35 @@ struct ConversationMemoryMatch: Equatable {
     let messageIDs: [String]
 }
 
+/// 离线评测也走和生产相同的候选生成，只切换排序策略。
+enum ConversationMemoryRetrievalStrategy: String, CaseIterable, Sendable {
+    case bm25
+    case dense
+    case reciprocalRankFusion
+}
+
+/// BM25 与向量分数的量纲完全不同；RRF 只融合名次，不需要手调归一化常数。
+enum ReciprocalRankFusion {
+    static let rankConstant = 60.0
+    /// 千问 embedding 与 BM25 是同等独立的候选源；RRF 默认等权。
+    /// 最终相关性由 qwen3.7 cross-encoder 重排，而不是比较两种原始分数。
+    static let denseWeight = 1.0
+
+    /// rank 从 1 起算。nil 表示该召回器没有把这篇文档放进候选池。
+    /// `weights` 与 ranks 对齐；缺省等权，便于独立验证标准 RRF 性质。
+    static func score(
+        ranks: [Int?],
+        weights: [Double]? = nil,
+        rankConstant: Double = rankConstant
+    ) -> Double {
+        ranks.enumerated().reduce(0) { partial, entry in
+            guard let rank = entry.element, rank > 0 else { return partial }
+            let weight = weights.flatMap { $0.indices.contains(entry.offset) ? $0[entry.offset] : nil } ?? 1
+            return partial + max(0, weight) / (rankConstant + Double(rank))
+        }
+    }
+}
+
 /// A local hybrid RAG index over persisted conversations. Documents retain their
 /// source IDs, and reconciliation removes every derived chunk when its source chat
 /// is deleted.
@@ -27,6 +56,7 @@ actor ConversationMemoryIndex {
     }
 
     private struct SourceRevision: Equatable {
+        let chunkingRevision: Int
         let title: String
         let summary: String
         let aiTitle: String
@@ -49,24 +79,38 @@ actor ConversationMemoryIndex {
         let vectorKey: String
     }
 
-    private let embedding: NLEmbedding?
-    private let embeddingRevision: Int
+    private let embeddingProvider: (any ConversationEmbeddingProvider)?
     private let vectorStore: (any ConversationVectorStore)?
+    private let denseRRFWeight: Double
     private var revisions: [String: SourceRevision] = [:]
+    private var pendingEmbeddingConversationIDs = Set<String>()
     private var documentsByConversation: [String: [Document]] = [:]
     /// Vectors resolved during this sync pass, keyed by content address.
     private var resolvedVectors: [String: [Double]] = [:]
     private(set) var lastSyncEmbeddingCount = 0
 
-    init(useSemanticEmbeddings: Bool = true, vectorStore: (any ConversationVectorStore)? = nil) {
-        embedding = useSemanticEmbeddings ? NLEmbedding.sentenceEmbedding(for: .simplifiedChinese) : nil
-        embeddingRevision = NLEmbedding.currentSentenceEmbeddingRevision(for: .simplifiedChinese)
+    init(
+        // 默认纯 BM25。云端向量是明确 opt-in 的能力，任何入口都不该默认联网。
+        useSemanticEmbeddings: Bool = false,
+        vectorStore: (any ConversationVectorStore)? = nil,
+        embeddingProvider: (any ConversationEmbeddingProvider)? = nil,
+        denseRRFWeight: Double = ReciprocalRankFusion.denseWeight
+    ) {
+        // Explicit provider wins. The Apple fallback only keeps existing offline unit tests useful;
+        // production passes DeferredQwenConversationEmbeddingProvider when cloud memory is enabled,
+        // and passes nil + useSemanticEmbeddings=false otherwise.
+        self.embeddingProvider = embeddingProvider
+            ?? (useSemanticEmbeddings ? AppleConversationEmbeddingProvider() : nil)
         self.vectorStore = vectorStore
+        self.denseRRFWeight = max(0, denseRRFWeight)
     }
 
     var indexedConversationIDs: Set<String> { Set(documentsByConversation.keys) }
     var documentCount: Int { documentsByConversation.values.reduce(0) { $0 + $1.count } }
-    var usesSemanticEmbeddings: Bool { embedding != nil }
+    var usesSemanticEmbeddings: Bool { embeddingProvider != nil }
+    var embeddingIdentity: String? { embeddingProvider?.identity }
+    /// GC is safe only after every live chunk has a vector in the configured model space.
+    var canReclaimVectors: Bool { embeddingProvider != nil && pendingEmbeddingConversationIDs.isEmpty }
 
     /// Reconciles the index against `conversations`.
     ///
@@ -80,45 +124,85 @@ actor ConversationMemoryIndex {
         for id in removed {
             revisions.removeValue(forKey: id)
             documentsByConversation.removeValue(forKey: id)
+            pendingEmbeddingConversationIDs.remove(id)
         }
 
-        let stale = conversations.filter { revisions[$0.id] != Self.revision(for: $0) }
+        let stale = conversations.filter {
+            revisions[$0.id] != Self.revision(for: $0)
+                || pendingEmbeddingConversationIDs.contains($0.id)
+        }
         lastSyncEmbeddingCount = 0
+        guard !stale.isEmpty else {
+            return Reconciliation(inserted: [], updated: [], removed: removed)
+        }
 
-        // Resolve every vector this pass needs in one batch before building anything.
-        // Unchanged text is a cache hit, so a launch with no edits performs zero
-        // embeddings instead of re-vectorising the whole corpus.
-        if embedding != nil, !stale.isEmpty {
-            let neededKeys = Set(stale.flatMap { conversation in
-                Self.chunks(for: conversation).map {
-                    ConversationVectorKey.make(
-                        text: Self.embeddingText($0.content),
-                        embeddingRevision: embeddingRevision
-                    )
-                }
-            })
-            let uncached = neededKeys.subtracting(resolvedVectors.keys)
+        // Freeze the exact chunks once. Re-running the chunker around an async network call could
+        // otherwise pair vectors with a different projection if data changes mid-pass.
+        let chunksByConversation = Dictionary(uniqueKeysWithValues: stale.map {
+            ($0.id, Self.chunks(for: $0))
+        })
+        var freshVectors: [String: [Double]] = [:]
+        var embeddingSucceeded = true
+
+        if let embeddingProvider {
+            var keyedTexts: [String: String] = [:]
+            for chunk in chunksByConversation.values.flatMap({ $0 }) {
+                let text = Self.embeddingText(chunk.content)
+                let key = ConversationVectorKey.make(text: text, embeddingIdentity: embeddingProvider.identity)
+                keyedTexts[key] = text // 相同内容只向量化一次，所有 chunk 共享内容寻址向量。
+            }
+            let uncached = Set(keyedTexts.keys).subtracting(resolvedVectors.keys)
             if !uncached.isEmpty, let vectorStore {
-                for (key, vector) in await vectorStore.load(keys: uncached) {
+                for (key, vector) in await vectorStore.load(keys: uncached)
+                    where vector.count == embeddingProvider.dimension {
                     resolvedVectors[key] = vector
                 }
             }
+            let missing = keyedTexts.keys.filter { resolvedVectors[$0] == nil }.sorted()
+            do {
+                for batchStart in stride(from: 0, to: missing.count, by: embeddingProvider.maximumBatchSize) {
+                    try Task.checkCancellation()
+                    let batchKeys = Array(missing[batchStart..<min(batchStart + embeddingProvider.maximumBatchSize, missing.count)])
+                    let texts = batchKeys.compactMap { keyedTexts[$0] }
+                    let vectors = try await embeddingProvider.embed(texts, textType: .document)
+                    guard vectors.count == batchKeys.count else { throw ConversationEmbeddingError.invalidResponse }
+                    for (offset, vector) in vectors.enumerated() {
+                        guard vector.count == embeddingProvider.dimension else {
+                            throw ConversationEmbeddingError.dimensionMismatch(
+                                expected: embeddingProvider.dimension,
+                                actual: vector.count
+                            )
+                        }
+                        let key = batchKeys[offset]
+                        resolvedVectors[key] = vector
+                        freshVectors[key] = vector
+                        lastSyncEmbeddingCount += 1
+                    }
+                }
+            } catch is CancellationError {
+                return Reconciliation(inserted: [], updated: [], removed: removed)
+            } catch {
+                embeddingSucceeded = false
+                NSLog("Conversation embedding unavailable; keeping BM25 index: %@", error.localizedDescription)
+            }
         }
+
+        if !freshVectors.isEmpty, let vectorStore { await vectorStore.save(freshVectors) }
 
         var inserted = Set<String>()
         var updated = Set<String>()
-        var freshVectors: [String: [Double]] = [:]
         for conversation in stale {
             if Task.isCancelled { break }
-            let built = await documents(for: conversation, freshVectors: &freshVectors)
-            if revisions[conversation.id] == nil { inserted.insert(conversation.id) }
-            else { updated.insert(conversation.id) }
+            let wasKnown = revisions[conversation.id] != nil
+            let chunks = chunksByConversation[conversation.id] ?? []
+            documentsByConversation[conversation.id] = documents(for: conversation, chunks: chunks)
             revisions[conversation.id] = Self.revision(for: conversation)
-            documentsByConversation[conversation.id] = built
-        }
-
-        if !freshVectors.isEmpty, let vectorStore {
-            await vectorStore.save(freshVectors)
+            if embeddingProvider != nil, !embeddingSucceeded {
+                pendingEmbeddingConversationIDs.insert(conversation.id)
+            } else {
+                pendingEmbeddingConversationIDs.remove(conversation.id)
+            }
+            if wasKnown { updated.insert(conversation.id) } else { inserted.insert(conversation.id) }
         }
         pruneResolvedVectors()
         return Reconciliation(inserted: inserted, updated: updated, removed: removed)
@@ -126,7 +210,9 @@ actor ConversationMemoryIndex {
 
     /// Keys still referenced by a live document. Used to reclaim storage after deletes.
     func liveVectorKeys() -> Set<String> {
-        Set(documentsByConversation.values.flatMap { $0 }.map(\.vectorKey))
+        Set(documentsByConversation.values.flatMap { $0 }.compactMap { document in
+            document.embedding == nil ? nil : document.vectorKey
+        })
     }
 
     /// Drops in-memory vectors no longer referenced by any document.
@@ -136,22 +222,76 @@ actor ConversationMemoryIndex {
         resolvedVectors = resolvedVectors.filter { live.contains($0.key) }
     }
 
+    private struct RankedDocument {
+        let document: Document
+        let bm25Score: Double
+        let semanticSimilarity: Double
+        let bm25Rank: Int?
+        let denseRank: Int?
+        let fusedScore: Double
+        let lexicalQualified: Bool
+        let semanticQualified: Bool
+
+        var isLocallyQualified: Bool { lexicalQualified || semanticQualified }
+    }
+
+    /// 生产路径：BM25 与 dense 各取候选，用 RRF 合并，再做保守的本地准入。
+    /// 远端 reranker 会调用 `candidates` 拿更宽的候选池；不可用时这里仍能离线工作。
     func search(
         query: String,
         currentConversationID: String,
-        limit: Int = 4
-    ) -> [ConversationMemoryMatch] {
-        let queryTokens = Self.tokens(in: query)
-        guard !queryTokens.isEmpty, limit > 0 else { return [] }
+        limit: Int = 4,
+        strategy: ConversationMemoryRetrievalStrategy = .reciprocalRankFusion
+    ) async -> [ConversationMemoryMatch] {
+        let ranked = await rankedDocuments(
+            query: query,
+            currentConversationID: currentConversationID,
+            candidateLimit: max(24, limit * 6),
+            strategy: strategy
+        )
+        let qualified = ranked.filter { candidate in
+            switch strategy {
+            case .bm25: candidate.lexicalQualified
+            case .dense: candidate.semanticQualified
+            case .reciprocalRankFusion: candidate.isLocallyQualified
+            }
+        }
+        return materialize(qualified, limit: limit, strategy: strategy)
+    }
 
+    /// 给 cross-encoder 的宽召回池。这里故意不套本地阈值——reranker 的工作正是
+    /// 在 BM25 / dense 任一路觉得"可能相关"的候选里做更精细的 query-document 判断。
+    func candidates(
+        query: String,
+        currentConversationID: String,
+        limit: Int = 24
+    ) async -> [ConversationMemoryMatch] {
+        let ranked = await rankedDocuments(
+            query: query,
+            currentConversationID: currentConversationID,
+            candidateLimit: limit,
+            strategy: .reciprocalRankFusion
+        )
+        return materialize(
+            ranked,
+            limit: limit,
+            strategy: .reciprocalRankFusion,
+            diversifiesConversations: false
+        )
+    }
+
+    private func rankedDocuments(
+        query: String,
+        currentConversationID: String,
+        candidateLimit: Int,
+        strategy: ConversationMemoryRetrievalStrategy
+    ) async -> [RankedDocument] {
+        guard candidateLimit > 0 else { return [] }
+        let queryTokens = Self.tokens(in: query)
         let queryFrequencies = Dictionary(grouping: queryTokens, by: { $0 }).mapValues(\.count)
         let distinctTerms = Set(queryFrequencies.keys)
-        let informationCharacters = query.unicodeScalars.filter {
-            !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.punctuationCharacters.contains($0)
-        }.count
-        // Language-independent information gate. A single short token is usually
-        // a greeting/acknowledgement and is too ambiguous to justify RAG injection.
-        guard distinctTerms.count >= 2 || informationCharacters >= 12 else { return [] }
+        guard Self.hasEnoughInformation(query: query, terms: distinctTerms) else { return [] }
+
         let documents = documentsByConversation
             .filter { $0.key != currentConversationID }
             .flatMap(\.value)
@@ -165,68 +305,167 @@ actor ConversationMemoryIndex {
             }
         }
 
-        let queryVector = embedding?.vector(for: Self.embeddingText(query))
-        let now = Date.now
-        let scored = documents.compactMap { document -> (Document, Double)? in
-            let sparseScore = Self.bm25Score(
+        struct Signals {
+            let document: Document
+            let bm25: Double
+            let matchedTerms: Int
+            let coverage: Double
+            let dense: Double
+        }
+        // 文档向量没全补齐时严格退化成纯 BM25；部分 dense 索引参与 RRF 会系统性偏向
+        // 已向量化的旧块，结果比不用 dense 更不稳定。
+        let queryVector: [Double]? = if strategy != .bm25,
+                                         pendingEmbeddingConversationIDs.isEmpty,
+                                         let embeddingProvider {
+            try? await embeddingProvider.embed([Self.embeddingText(query)], textType: .query).first
+        } else {
+            nil
+        }
+        let signals = documents.map { document in
+            let bm25 = Self.bm25Score(
                 document: document,
                 queryFrequencies: queryFrequencies,
                 documentFrequency: documentFrequency,
                 documentCount: documents.count,
                 averageLength: averageLength
             )
-            let matchedTerms = distinctTerms.filter { document.frequencies[$0] != nil }
-            let coverage = Double(matchedTerms.count) / Double(max(1, min(distinctTerms.count, 12)))
-            let lexicalConfidence = sparseScore * (0.55 + coverage)
-            let lexicalQualified = matchedTerms.count >= min(2, distinctTerms.count)
-                && coverage >= 0.2
-                && lexicalConfidence >= 3.0
-
-            let semanticSimilarity = Self.cosineSimilarity(queryVector, document.embedding)
-            // Apple's multilingual sentence vectors have a high shared baseline.
-            // Calibrate that range, then require enough query information before
-            // allowing a semantic-only result.
-            let semanticSignal = max(0, min(1, (semanticSimilarity - 0.84) / 0.16))
-            let semanticQualified = distinctTerms.count >= 6 && semanticSimilarity >= 0.94
-            guard lexicalQualified || semanticQualified else { return nil }
-
-            let sparseSignal = lexicalConfidence / (lexicalConfidence + 4)
-            let age = max(0, now.timeIntervalSince(document.updatedAt))
-            let recency = exp(-age / (60 * 60 * 24 * 45))
-            let confidence = 0.62 * sparseSignal + 0.36 * semanticSignal + 0.02 * recency
-            return (document, confidence)
-        }
-        .sorted {
-            if abs($0.1 - $1.1) > 0.0001 { return $0.1 > $1.1 }
-            return $0.0.updatedAt > $1.0.updatedAt
+            let matched = distinctTerms.filter { document.frequencies[$0] != nil }.count
+            return Signals(
+                document: document,
+                bm25: bm25,
+                matchedTerms: matched,
+                coverage: Double(matched) / Double(max(1, distinctTerms.count)),
+                dense: Self.cosineSimilarity(queryVector, document.embedding)
+            )
         }
 
-        // Keep sources diverse before adding a second chunk from the same chat.
-        var selected: [(Document, Double)] = []
-        var selectedConversations = Set<String>()
-        for candidate in scored where !selectedConversations.contains(candidate.0.conversationID) {
-            selected.append(candidate)
-            selectedConversations.insert(candidate.0.conversationID)
-            if selected.count == limit { break }
+        // 两路独立取宽候选；不能先用一条路的阈值过滤另一条路，否则就不再是 hybrid。
+        let poolSize = min(documents.count, max(candidateLimit, 32))
+        let bm25 = signals
+            .filter { $0.bm25 > 0 }
+            .sorted {
+                if abs($0.bm25 - $1.bm25) > 0.000_001 { return $0.bm25 > $1.bm25 }
+                return $0.document.updatedAt > $1.document.updatedAt
+            }
+            .prefix(poolSize)
+        let dense = queryVector == nil ? [] : signals
+            .filter { $0.dense > 0 }
+            .sorted {
+                if abs($0.dense - $1.dense) > 0.000_001 { return $0.dense > $1.dense }
+                return $0.document.updatedAt > $1.document.updatedAt
+            }
+            .prefix(poolSize)
+
+        func identity(_ document: Document) -> String {
+            "\(document.conversationID)|\(document.vectorKey)|\(document.messageIDs.joined(separator: ","))"
         }
-        if selected.count < limit {
-            for candidate in scored where !selected.contains(where: {
-                $0.0.content == candidate.0.content && $0.0.conversationID == candidate.0.conversationID
-            }) {
+        let bm25Ranks = Dictionary(uniqueKeysWithValues: bm25.enumerated().map { (identity($0.element.document), $0.offset + 1) })
+        let denseRanks = Dictionary(uniqueKeysWithValues: dense.enumerated().map { (identity($0.element.document), $0.offset + 1) })
+        let signalByID = Dictionary(uniqueKeysWithValues: signals.map { (identity($0.document), $0) })
+        let candidateIDs: Set<String> = switch strategy {
+        case .bm25: Set(bm25Ranks.keys)
+        case .dense: Set(denseRanks.keys)
+        case .reciprocalRankFusion: Set(bm25Ranks.keys).union(denseRanks.keys)
+        }
+
+        return candidateIDs.compactMap { id -> RankedDocument? in
+            guard let signal = signalByID[id] else { return nil }
+            let lexicalConfidence = signal.bm25 * (0.55 + signal.coverage)
+            // 一条真正有指向性的长 token（getOrDefault、560、接雨水）可以独立命中；
+            // 普通短词至少要两项共同命中，避免"容器"一词把 Docker 问题拉进算法会话。
+            let queryHasStrongTerm = distinctTerms.contains { Self.isStrongTerm($0) }
+            let requiredMatches = queryHasStrongTerm ? 1 : min(2, distinctTerms.count)
+            let coverageFloor = queryHasStrongTerm ? 0.18 : 0.34
+            let highCoverage = signal.matchedTerms >= 2 && signal.coverage >= 0.75
+            let lexicalQualified = signal.matchedTerms >= requiredMatches
+                && signal.coverage >= coverageFloor
+                && (lexicalConfidence >= 2.4 || highCoverage)
+            // 千问检索向量经过归一化；绝对阈值只作无 reranker 时的保守兜底。
+            // 生产最终仍由 qwen cross-encoder 判相关性。
+            let semanticQualified = distinctTerms.count >= 2 && signal.dense >= 0.35
+            return RankedDocument(
+                document: signal.document,
+                bm25Score: signal.bm25,
+                semanticSimilarity: signal.dense,
+                bm25Rank: bm25Ranks[id],
+                denseRank: denseRanks[id],
+                fusedScore: ReciprocalRankFusion.score(
+                    ranks: [bm25Ranks[id], denseRanks[id]],
+                    weights: [1, denseRRFWeight]
+                ),
+                lexicalQualified: lexicalQualified,
+                semanticQualified: semanticQualified
+            )
+        }
+        .sorted { lhs, rhs in
+            let left: Double = switch strategy {
+            case .bm25: lhs.bm25Score
+            case .dense: lhs.semanticSimilarity
+            case .reciprocalRankFusion: lhs.fusedScore
+            }
+            let right: Double = switch strategy {
+            case .bm25: rhs.bm25Score
+            case .dense: rhs.semanticSimilarity
+            case .reciprocalRankFusion: rhs.fusedScore
+            }
+            if abs(left - right) > 0.000_000_1 { return left > right }
+            // RRF 平手时先看是否两路都命中，再看原始信号，最后只用时间稳定破同分。
+            let leftRoutes = [lhs.bm25Rank, lhs.denseRank].compactMap { $0 }.count
+            let rightRoutes = [rhs.bm25Rank, rhs.denseRank].compactMap { $0 }.count
+            if leftRoutes != rightRoutes { return leftRoutes > rightRoutes }
+            if abs(lhs.semanticSimilarity - rhs.semanticSimilarity) > 0.000_001 {
+                return lhs.semanticSimilarity > rhs.semanticSimilarity
+            }
+            if abs(lhs.bm25Score - rhs.bm25Score) > 0.000_001 { return lhs.bm25Score > rhs.bm25Score }
+            return lhs.document.updatedAt > rhs.document.updatedAt
+        }
+    }
+
+    private func materialize(
+        _ ranked: [RankedDocument],
+        limit: Int,
+        strategy: ConversationMemoryRetrievalStrategy,
+        diversifiesConversations: Bool = true
+    ) -> [ConversationMemoryMatch] {
+        guard limit > 0 else { return [] }
+        var selected: [RankedDocument] = []
+        if diversifiesConversations {
+            var conversations = Set<String>()
+            for candidate in ranked where conversations.insert(candidate.document.conversationID).inserted {
                 selected.append(candidate)
                 if selected.count == limit { break }
             }
+            if selected.count < limit {
+                for candidate in ranked where !selected.contains(where: { Self.sameDocument($0.document, candidate.document) }) {
+                    selected.append(candidate)
+                    if selected.count == limit { break }
+                }
+            }
+        } else {
+            selected = Array(ranked.prefix(limit))
         }
 
-        return selected.map { document, score in
-            ConversationMemoryMatch(
-                conversationID: document.conversationID,
-                title: document.title,
-                content: String(document.content.prefix(1_400)),
-                score: Int((score * 100).rounded()),
-                messageIDs: document.messageIDs
+        let maximumRRF = (1 + denseRRFWeight) / (ReciprocalRankFusion.rankConstant + 1)
+        return selected.map { candidate in
+            let raw: Double = switch strategy {
+            case .bm25: candidate.bm25Score / (candidate.bm25Score + 4)
+            case .dense: max(0, min(1, (candidate.semanticSimilarity - 0.84) / 0.16))
+            case .reciprocalRankFusion: min(1, candidate.fusedScore / maximumRRF)
+            }
+            return ConversationMemoryMatch(
+                conversationID: candidate.document.conversationID,
+                title: candidate.document.title,
+                content: candidate.document.content,
+                score: Int((raw * 100).rounded()),
+                messageIDs: candidate.document.messageIDs
             )
         }
+    }
+
+    private static func sameDocument(_ lhs: Document, _ rhs: Document) -> Bool {
+        lhs.conversationID == rhs.conversationID
+            && lhs.content == rhs.content
+            && lhs.messageIDs == rhs.messageIDs
     }
 
     static func search(
@@ -256,104 +495,54 @@ actor ConversationMemoryIndex {
 
     /// Splits a conversation into chunk payloads. Pure and cheap — kept separate from
     /// document construction so the expensive vectorising loop stays cancellable.
+    /// 切块交给 `ConversationChunker`：按轮 → 段落 → 句子，代码块不切，
+    /// 重叠只带完整句子。旧的"按 1600 字累加、单条消息从不切开"会切出三万字的块。
     private static func chunks(for conversation: ConversationSummary) -> [(content: String, messageIDs: [String])] {
-        var result: [(content: String, messageIDs: [String])] = []
-        let archive = [conversation.contextSummary, conversation.aiSummary, conversation.summary]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .reduce(into: [String]()) { values, value in
-                if !values.contains(value) { values.append(value) }
-            }
-        if !archive.isEmpty {
-            result.append((archive.joined(separator: "\n"), []))
-        }
-
-        var chunkLines: [String] = []
-        var chunkIDs: [String] = []
-        var characterCount = 0
-        func flush() {
-            guard !chunkLines.isEmpty else { return }
-            result.append((chunkLines.joined(separator: "\n"), chunkIDs))
-            chunkLines.removeAll(keepingCapacity: true)
-            chunkIDs.removeAll(keepingCapacity: true)
-            characterCount = 0
-        }
-        for message in conversation.messages where ["user", "assistant"].contains(message.role) {
-            let clean = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !clean.isEmpty else { continue }
-            let line = "\(message.role == "user" ? "用户" : "AI")：\(clean)"
-            if characterCount > 0 && characterCount + line.count > 1_600 { flush() }
-            chunkLines.append(line)
-            chunkIDs.append(message.id)
-            characterCount += line.count
-        }
-        flush()
-        return result
+        ConversationChunker.chunks(
+            title: [conversation.aiTitle, conversation.title]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty } ?? "",
+            archive: [conversation.contextSummary, conversation.aiSummary, conversation.summary],
+            messages: conversation.messages.map { ($0.id, $0.role, $0.content) }
+        ).map { ($0.content, $0.messageIDs) }
     }
 
     private func documents(
         for conversation: ConversationSummary,
-        freshVectors: inout [String: [Double]]
-    ) async -> [Document] {
-        var result: [Document] = []
-        for chunk in Self.chunks(for: conversation) {
-            result.append(await makeDocument(
-                conversation: conversation,
+        chunks: [(content: String, messageIDs: [String])]
+    ) -> [Document] {
+        chunks.map { chunk in
+            let denseText = Self.embeddingText(chunk.content)
+            let vectorKey: String
+            let vector: [Double]?
+            if let embeddingProvider {
+                vectorKey = ConversationVectorKey.make(
+                    text: denseText,
+                    embeddingIdentity: embeddingProvider.identity
+                )
+                vector = resolvedVectors[vectorKey]
+            } else {
+                vectorKey = ""
+                vector = nil
+            }
+            let documentTokens = Self.tokens(in: chunk.content)
+            return Document(
+                conversationID: conversation.id,
+                title: conversation.aiTitle.isEmpty ? conversation.title : conversation.aiTitle,
+                updatedAt: conversation.updatedAt,
                 content: chunk.content,
                 messageIDs: chunk.messageIDs,
-                freshVectors: &freshVectors
-            ))
+                frequencies: Dictionary(grouping: documentTokens, by: { $0 }).mapValues(\.count),
+                length: max(documentTokens.count, 1),
+                embedding: vector,
+                vectorKey: vectorKey
+            )
         }
-        return result
-    }
-
-    private func makeDocument(
-        conversation: ConversationSummary,
-        content: String,
-        messageIDs: [String],
-        freshVectors: inout [String: [Double]]
-    ) async -> Document {
-        let embeddingText = Self.embeddingText(content)
-        let vectorKey = ConversationVectorKey.make(
-            text: embeddingText,
-            embeddingRevision: embeddingRevision
-        )
-
-        var vector: [Double]?
-        if let embedding {
-            if let cached = resolvedVectors[vectorKey] {
-                vector = cached
-            } else {
-                // Vectorising dominates index cost, so yield only on a real miss —
-                // a fully cached rebuild should not pay a scheduling hop per chunk.
-                await Task.yield()
-                let computed = embedding.vector(for: embeddingText)
-                vector = computed
-                if let computed {
-                    resolvedVectors[vectorKey] = computed
-                    freshVectors[vectorKey] = computed
-                    lastSyncEmbeddingCount += 1
-                }
-            }
-        }
-
-        let searchable = conversation.title + "\n" + content
-        let documentTokens = Self.tokens(in: searchable)
-        return Document(
-            conversationID: conversation.id,
-            title: conversation.aiTitle.isEmpty ? conversation.title : conversation.aiTitle,
-            updatedAt: conversation.updatedAt,
-            content: content,
-            messageIDs: messageIDs,
-            frequencies: Dictionary(grouping: documentTokens, by: { $0 }).mapValues(\.count),
-            length: max(documentTokens.count, 1),
-            embedding: vector,
-            vectorKey: vectorKey
-        )
     }
 
     private static func revision(for conversation: ConversationSummary) -> SourceRevision {
         SourceRevision(
+            chunkingRevision: ConversationChunker.revision,
             title: conversation.title,
             summary: conversation.summary,
             aiTitle: conversation.aiTitle,
@@ -364,8 +553,15 @@ actor ConversationMemoryIndex {
         )
     }
 
-    private static func embeddingText(_ text: String) -> String {
-        String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000))
+    /// Dense 向量只表示正文语义。会话标题、承接头和角色标签留给 BM25 / reranker；
+    /// Apple 的小型句向量会被这些短元数据明显拉偏（实测甚至把相关与无关文档反序）。
+    static func embeddingText(_ text: String) -> String {
+        let body = text
+            .replacingOccurrences(of: #"(?m)^【[^\n]+】\s*\n?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)^（承接问题：[^\n]+）\s*\n?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)^(?:用户|AI)："#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(body.prefix(4_000))
     }
 
     private static func cosineSimilarity(_ lhs: [Double]?, _ rhs: [Double]?) -> Double {
@@ -402,35 +598,67 @@ actor ConversationMemoryIndex {
         }
     }
 
-    private static func tokens(in text: String) -> [String] {
+    /// 中文先按系统词边界切，再只在**词内部**加二元子词；绝不跨词拼接。
+    /// 旧实现把整段连续汉字滑窗，产生 `器怎`、`我写`、`天的` 这种伪词，
+    /// 它们因为稀有反而拿到最高 IDF，是负例被 BM25 召回的根因。
+    static func tokens(in text: String) -> [String] {
         let lowered = text.lowercased()
-        var result = lowered
-            .split { !$0.isLetter && !$0.isNumber }
-            .map(String.init)
-            .filter { $0.unicodeScalars.contains(where: { !isCJK($0) }) && $0.count > 1 }
-
-        var run: [UnicodeScalar] = []
-        func appendRun() {
-            guard !run.isEmpty else { return }
-            if run.count == 1 {
-                result.append(String(run[0]))
-            } else {
-                for index in 0..<(run.count - 1) {
-                    result.append(String(run[index]) + String(run[index + 1]))
+        let tokenizer = NLTokenizer(unit: .word)
+        tokenizer.string = lowered
+        var result: [String] = []
+        tokenizer.enumerateTokens(in: lowered.startIndex..<lowered.endIndex) { range, _ in
+            let raw = String(lowered[range]).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            guard !raw.isEmpty, !lexicalStopWords.contains(raw) else { return true }
+            let scalars = Array(raw.unicodeScalars)
+            let hasCJK = scalars.contains(where: isCJK)
+            if !hasCJK {
+                if raw.count > 1 || raw.allSatisfy(\.isNumber) { result.append(raw) }
+                return true
+            }
+            // 系统分词有时把专业词拆成单字（"哈" "希" "表"）。单字保留，
+            // BM25 的多词共同命中门槛会压住噪声；但绝不跨 tokenizer 边界造假词。
+            result.append(raw)
+            if scalars.count >= 3, scalars.allSatisfy(isCJK) {
+                for index in 0..<(scalars.count - 1) {
+                    result.append(String(scalars[index]) + String(scalars[index + 1]))
                 }
             }
-            run.removeAll(keepingCapacity: true)
+            return true
         }
-        for scalar in lowered.unicodeScalars {
-            if isCJK(scalar) { run.append(scalar) } else { appendRun() }
-        }
-        appendRun()
         return result
+    }
+
+    private static let lexicalStopWords: Set<String> = [
+        "的", "了", "吗", "呢", "吧", "呀", "啊", "哦", "嗯", "是", "在", "有", "和", "与", "或",
+        "我", "你", "他", "她", "它", "这", "那", "个", "一", "请", "帮", "帮我", "一下",
+        "怎么", "怎么样", "如何", "什么", "为什么", "能不能", "可以", "关于", "一个", "这个", "那个",
+        "问过", "说过", "问题", "回答", "事情", "东西", "是的", "好的",
+        "问", "过", "说", "看", "做", "写", "想", "要", "会", "能", "给", "再", "也", "都"
+    ]
+
+    private static func hasEnoughInformation(query: String, terms: Set<String>) -> Bool {
+        guard !terms.isEmpty else { return false }
+        if terms.contains(where: isStrongTerm) { return true }
+        // 单字中文可以帮助"哈/希/表"这类被系统过度切分的专业词做联合匹配，
+        // 但不能拿三个单字语气词就启动一次向量召回。
+        let multiCharacterTerms = terms.filter { $0.count >= 2 }
+        let informationCharacters = query.unicodeScalars.count {
+            !CharacterSet.whitespacesAndNewlines.contains($0)
+                && !CharacterSet.punctuationCharacters.contains($0)
+        }
+        return multiCharacterTerms.count >= 2 && informationCharacters >= 6
+    }
+
+    private static func isStrongTerm(_ term: String) -> Bool {
+        if term.allSatisfy(\.isNumber) { return term.count >= 2 }
+        if term.unicodeScalars.contains(where: { !$0.isASCII }) { return term.count >= 3 }
+        return term.count >= 4
     }
 
     private static func isCJK(_ scalar: UnicodeScalar) -> Bool {
         (0x3400...0x9fff).contains(scalar.value) || (0xf900...0xfaff).contains(scalar.value)
     }
+
 }
 
 extension String {

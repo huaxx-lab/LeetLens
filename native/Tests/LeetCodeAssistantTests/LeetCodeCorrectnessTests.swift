@@ -88,11 +88,11 @@ final class LeetCodeCorrectnessTests: XCTestCase {
     }
 
     func testCodeEditorDiagnosticsExposeConciseStatusAndOneBasedLines() {
-        XCTAssertEqual(LeetCodeEditorDiagnostics().statusText, "基础语法检查通过")
+        XCTAssertEqual(LeetCodeEditorDiagnostics().statusText, "代码检查通过")
         let diagnostics = LeetCodeEditorDiagnostics(issues: [
             LeetCodeEditorIssue(line: 3, message: "括号未闭合")
         ])
-        XCTAssertEqual(diagnostics.statusText, "发现 1 处基础语法问题")
+        XCTAssertEqual(diagnostics.statusText, "发现 1 处代码问题")
         XCTAssertEqual(diagnostics.issues.first?.line, 3)
     }
 

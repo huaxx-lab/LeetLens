@@ -454,6 +454,58 @@ final class LegacyDataStoreTests: XCTestCase {
         XCTAssertEqual(store.leetCodeAnalyses["two-sum"]?.submissionAnalyses["1"]?.rootCause, "没有处理空数组")
     }
 
+    @MainActor
+    func testCloudMemorySettingsReplaceVectorSpaceWithoutSendingByDefault() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "CloudMemorySettings-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let settings: [String: Any] = [
+            "providerOrder": ["rag-provider"],
+            "activeProvider": "rag-provider",
+            "providers": ["rag-provider": [
+                "name": "RAG", "apiBase": "https://space.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                "apiKey": "configured", "model": "chat"
+            ]]
+        ]
+        try JSONSerialization.data(withJSONObject: settings)
+            .write(to: directory.appending(path: "settings.json"), options: .atomic)
+
+        let store = LegacyDataStore(dataDirectory: directory)
+        await store.hydrate()
+        XCTAssertFalse(store.settings.cloudMemoryEmbeddingEnabled)
+        let defaultIdentity = await store.conversationMemoryIndex.embeddingIdentity
+        XCTAssertNil(defaultIdentity, "默认不能上传旧会话")
+
+        try store.saveContextPolicy(
+            window: 128_000, reserved: 8_192, compression: 0.9, postCompression: 0.75,
+            recentMessages: 12, maxImages: 4,
+            cloudMemoryEmbeddingEnabled: true,
+            cloudMemoryRerankingEnabled: true,
+            cloudMemoryProviderID: "rag-provider",
+            cloudMemoryEmbeddingModel: "qwen3.7-text-embedding",
+            cloudMemoryRerankModel: "qwen3.7-text-rerank"
+        )
+        XCTAssertTrue(store.settings.cloudMemoryEmbeddingEnabled)
+        XCTAssertTrue(store.settings.cloudMemoryRerankingEnabled)
+        XCTAssertEqual(store.settings.cloudMemoryProviderID, "rag-provider")
+        let enabledIdentity = await store.conversationMemoryIndex.embeddingIdentity
+        XCTAssertEqual(enabledIdentity, "aliyun/qwen3.7-text-embedding/native-v1/d1024")
+
+        try store.saveContextPolicy(
+            window: 128_000, reserved: 8_192, compression: 0.9, postCompression: 0.75,
+            recentMessages: 12, maxImages: 4,
+            cloudMemoryEmbeddingEnabled: false,
+            cloudMemoryRerankingEnabled: false,
+            cloudMemoryProviderID: "rag-provider",
+            cloudMemoryEmbeddingModel: "qwen3.7-text-embedding",
+            cloudMemoryRerankModel: "qwen3.7-text-rerank"
+        )
+        let disabledIdentity = await store.conversationMemoryIndex.embeddingIdentity
+        XCTAssertNil(disabledIdentity)
+    }
+
+
     private func submission(id: String, slug: String, accepted: Bool, date: Date) -> [String: Any] {
         [
             "id": id,

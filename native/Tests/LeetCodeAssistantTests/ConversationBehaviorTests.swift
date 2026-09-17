@@ -323,10 +323,10 @@ final class ConversationBehaviorTests: XCTestCase {
     }
 
     func testMemoryIndexUsesLocalSemanticEmbeddingWhenAvailable() async throws {
-        let index = ConversationMemoryIndex()
-        guard await index.usesSemanticEmbeddings else {
+        guard let provider = AppleConversationEmbeddingProvider() else {
             throw XCTSkip("This macOS installation has no Simplified Chinese sentence embedding.")
         }
+        let index = ConversationMemoryIndex(embeddingProvider: provider)
         let relevant = ConversationSummary(
             id: "semantic",
             title: "区间维护",
@@ -352,9 +352,19 @@ final class ConversationBehaviorTests: XCTestCase {
         )
         await index.synchronize(conversations: [unrelated, relevant])
 
-        let matches = await index.search(query: "滑动窗口收缩时左端怎么调整", currentConversationID: "current")
+        let dense = await index.search(
+            query: "滑动窗口收缩时左端怎么调整",
+            currentConversationID: "current",
+            strategy: .dense
+        )
+        let fused = await index.search(
+            query: "滑动窗口收缩时左端怎么调整",
+            currentConversationID: "current",
+            strategy: .reciprocalRankFusion
+        )
 
-        XCTAssertEqual(matches.first?.conversationID, "semantic")
+        XCTAssertEqual(dense.first?.conversationID, "semantic")
+        XCTAssertEqual(fused.first?.conversationID, "semantic")
     }
 
     func testDurationThinkingAndBareURLAreHandled() {

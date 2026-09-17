@@ -15,11 +15,19 @@ protocol ConversationVectorStore: Sendable {
 }
 
 enum ConversationVectorKey {
-    /// Content address for one chunk.
-    ///
-    /// The embedding revision is part of the key so an OS model update invalidates old
-    /// vectors instead of silently mixing incompatible vector spaces.
-    static func make(text: String, embeddingRevision: Int) -> String {
+    /// Content address for one chunk in one **specific vector space**.
+    /// Provider, model, API mode and dimension all belong in `embeddingIdentity`;
+    /// otherwise an old Apple 640-vector can be mistaken for a Qwen 1024-vector.
+    static func make(text: String, embeddingIdentity: String) -> String {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var hasher = SHA256()
+        hasher.update(data: Data("v2|\(embeddingIdentity)|".utf8))
+        hasher.update(data: Data(normalized.utf8))
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Legacy namespace helper retained for migration tests only.
+    static func legacy(text: String, embeddingRevision: Int) -> String {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var hasher = SHA256()
         hasher.update(data: Data("v1|\(embeddingRevision)|".utf8))

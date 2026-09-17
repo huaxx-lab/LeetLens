@@ -78,6 +78,45 @@ final class ChatService: @unchecked Sendable {
         self.session = session
     }
 
+    /// 千问向量与主对话共用供应商凭据，但固定使用检索模型，不受聊天模型选择影响。
+    func makeConversationEmbeddingProvider(
+        providerID: String,
+        model: String = "text-embedding-v4",
+        dimension: Int = 1_024,
+        session: URLSession? = nil
+    ) async throws -> QwenConversationEmbeddingProvider {
+        let configuration = try await loadConfiguration(
+            explicitProviderID: providerID,
+            taskRoute: .conversation
+        )
+        return try QwenConversationEmbeddingProvider(
+            apiBase: configuration.apiBase,
+            apiKey: configuration.apiKey,
+            model: model,
+            dimension: dimension,
+            session: session ?? self.session
+        )
+    }
+
+    /// 为跨会话记忆构建专用 reranker。凭据仍走模型供应商的 Keychain 解析路径，
+    /// 不复制到 RAG 配置、日志或测试参数里。
+    func makeTextReranker(
+        providerID: String,
+        model: String = "qwen3-rerank",
+        session: URLSession? = nil
+    ) async throws -> QwenTextReranker {
+        let configuration = try await loadConfiguration(
+            explicitProviderID: providerID,
+            taskRoute: .conversation
+        )
+        return try QwenTextReranker(
+            apiBase: configuration.apiBase,
+            apiKey: configuration.apiKey,
+            model: model,
+            session: session ?? self.session
+        )
+    }
+
     func stream(
         messages: [ChatRequestMessage],
         reasoningLevel: ReasoningLevel,

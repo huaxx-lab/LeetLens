@@ -433,6 +433,13 @@ struct LegacySettingsSnapshot {
     var postCompressionRatio = 0.82
     var recentMessages = 12.0
     var maxImages = 4.0
+    /// 明确同意把清洗后的旧会话 chunk 发给阿里云做 qwen embedding。
+    var cloudMemoryEmbeddingEnabled = false
+    /// 明确同意把本轮 query + RRF 候选片段发给阿里云做 cross-encoder 重排。
+    var cloudMemoryRerankingEnabled = false
+    var cloudMemoryProviderID = "alibaba"
+    var cloudMemoryEmbeddingModel = "text-embedding-v4"
+    var cloudMemoryRerankModel = "qwen3-rerank"
     var taskRoutes: [String: String] = [:]
 }
 
@@ -459,8 +466,9 @@ enum MemoryIndexState: Equatable, Sendable {
 @MainActor
 @Observable
 final class LegacyDataStore {
-    @ObservationIgnored let conversationMemoryIndex: ConversationMemoryIndex
+    @ObservationIgnored private(set) var conversationMemoryIndex: ConversationMemoryIndex
     @ObservationIgnored private let layeredVectorStore: LayeredVectorStore
+    @ObservationIgnored private var memoryEmbeddingConfiguration = "disabled"
     @ObservationIgnored private let learningBridge: LearningEngineBridge
     @ObservationIgnored private var isSyncingLeetCodeAccount = false
     @ObservationIgnored private var memoryIndexTask: Task<Void, Never>?
@@ -512,7 +520,35 @@ final class LegacyDataStore {
             durable: PostgresVectorStore.shared
         )
         layeredVectorStore = layered
-        conversationMemoryIndex = ConversationMemoryIndex(vectorStore: layered)
+        conversationMemoryIndex = ConversationMemoryIndex(
+            useSemanticEmbeddings: false,
+            vectorStore: layered
+        )
+    }
+
+    /// Switches the whole dense vector space atomically. Disabled means true BM25-only:
+    /// no failed cloud probes, no partial dense index, and cached vectors stay on disk for re-enable.
+    private func configureMemoryIndexIfNeeded() {
+        let enabled = settings.cloudMemoryEmbeddingEnabled
+        // 指纹要含模型：开关一直开着、只把"兼容版"换成 3.7 时，向量空间同样必须整体重建。
+        let configuration = enabled
+            ? "\(settings.cloudMemoryProviderID)|\(settings.cloudMemoryEmbeddingModel)|d1024"
+            : "disabled"
+        guard configuration != memoryEmbeddingConfiguration else { return }
+        memoryIndexTask?.cancel()
+        memoryEmbeddingConfiguration = configuration
+        conversationMemoryIndex = ConversationMemoryIndex(
+            useSemanticEmbeddings: false,
+            vectorStore: layeredVectorStore,
+            embeddingProvider: enabled
+                ? DeferredQwenConversationEmbeddingProvider(
+                    dataDirectory: dataDirectory,
+                    providerID: settings.cloudMemoryProviderID,
+                    model: settings.cloudMemoryEmbeddingModel
+                )
+                : nil
+        )
+        memoryIndexState = .cold
     }
 
     /// Performs the initial load exactly once. Safe to call from every `.task`.
@@ -550,12 +586,61 @@ final class LegacyDataStore {
         limit: Int = 4
     ) async -> [ConversationMemoryMatch] {
         await waitForMemoryIndex()
-        return await conversationMemoryIndex.search(
+        let local = await conversationMemoryIndex.search(
             query: query,
             currentConversationID: currentConversationID,
-            limit: limit
+            limit: max(limit, 8)
         )
+        guard settings.cloudMemoryRerankingEnabled else { return Array(local.prefix(limit)) }
+
+        // Reranker 看宽候选池，失败时无感回退本地 RRF / BM25，绝不让记忆服务拖垮主对话。
+        let candidates = await conversationMemoryIndex.candidates(
+            query: query,
+            currentConversationID: currentConversationID,
+            limit: 24
+        )
+        guard !candidates.isEmpty else { return Array(local.prefix(limit)) }
+        do {
+            let reranker = try await ChatService(dataDirectory: dataDirectory)
+                .makeTextReranker(
+                    providerID: settings.cloudMemoryProviderID,
+                    model: settings.cloudMemoryRerankModel
+                )
+            let hits = try await reranker.rerank(
+                query: query,
+                documents: candidates.enumerated().map { offset, candidate in
+                    TextRerankDocument(id: String(offset), text: candidate.content)
+                },
+                topN: candidates.count
+            )
+            var seenConversations = Set<String>()
+            return hits.compactMap { hit -> ConversationMemoryMatch? in
+                guard hit.relevanceScore >= Self.memoryRerankThreshold,
+                      candidates.indices.contains(hit.originalIndex)
+                else { return nil }
+                let candidate = candidates[hit.originalIndex]
+                guard seenConversations.insert(candidate.conversationID).inserted else { return nil }
+                return ConversationMemoryMatch(
+                    conversationID: candidate.conversationID,
+                    title: candidate.title,
+                    content: candidate.content,
+                    score: Int((hit.relevanceScore * 100).rounded()),
+                    messageIDs: candidate.messageIDs
+                )
+            }
+            .prefix(limit)
+            .map { $0 }
+        } catch is CancellationError {
+            return []
+        } catch {
+            NSLog("Conversation reranking unavailable; using local ranking: %@", error.localizedDescription)
+            return Array(local.prefix(limit))
+        }
     }
+
+    /// qwen3.7 relevance_score 是请求内相对分，官方不提供阈值；该值由
+    /// `RetrievalBenchmarkTests` 对正例 recall 与负例拒绝率共同校准。
+    static let memoryRerankThreshold = 0.30
 
     /// Rebuilds the conversation index off the main actor. Supersedes any in-flight
     /// rebuild so rapid edits collapse into one pass instead of queueing.
@@ -569,10 +654,11 @@ final class LegacyDataStore {
         memoryIndexTask = Task { [weak self] in
             await index.synchronize(conversations: snapshot)
             guard !Task.isCancelled else { return }
-            // Reclaim vectors no document references any more, in both tiers. Only safe
-            // after a *complete* pass: a cancelled sync has a partial live set, and
-            // retaining against that would throw away vectors still in use.
-            await vectorStore.retain(keys: await index.liveVectorKeys())
+            // Reclaim only after every live chunk has a vector in the new model space.
+            // Disabled cloud embedding, network failure, or cancellation leaves old vectors intact.
+            if await index.canReclaimVectors {
+                await vectorStore.retain(keys: await index.liveVectorKeys())
+            }
             await MainActor.run { self?.memoryIndexState = .ready }
         }
     }
@@ -1710,7 +1796,12 @@ final class LegacyDataStore {
         compression: Double,
         postCompression: Double,
         recentMessages: Double,
-        maxImages: Double
+        maxImages: Double,
+        cloudMemoryEmbeddingEnabled: Bool,
+        cloudMemoryRerankingEnabled: Bool,
+        cloudMemoryProviderID: String,
+        cloudMemoryEmbeddingModel: String,
+        cloudMemoryRerankModel: String
     ) throws {
         try updateSettingsFile { root in
             root["contextPolicy"] = [
@@ -1719,7 +1810,12 @@ final class LegacyDataStore {
                 "compressionThreshold": compression,
                 "postCompressionRatio": postCompression,
                 "recentMessages": Int(recentMessages),
-                "maxImages": Int(maxImages)
+                "maxImages": Int(maxImages),
+                "cloudMemoryEmbeddingEnabled": cloudMemoryEmbeddingEnabled,
+                "cloudMemoryRerankingEnabled": cloudMemoryRerankingEnabled,
+                "cloudMemoryProviderID": cloudMemoryProviderID,
+                "cloudMemoryEmbeddingModel": cloudMemoryEmbeddingModel,
+                "cloudMemoryRerankModel": cloudMemoryRerankModel
             ]
         }
         reload()
@@ -2014,11 +2110,12 @@ final class LegacyDataStore {
 
     func reload() {
         conversations = loadConversations()
+        loadSettings()
+        configureMemoryIndexIfNeeded()
         scheduleMemoryIndexSync()
         learningRecords = loadLearningRecords()
         loadLearningExtras()
         loadStudyPlan()
-        loadSettings()
         loadLeetCode()
         loadVideoHistory()
         loadNativeAccountState()
@@ -2456,6 +2553,11 @@ final class LegacyDataStore {
             postCompressionRatio: policy.double("postCompressionRatio", fallback: 0.82),
             recentMessages: policy.double("recentMessages", fallback: 12),
             maxImages: policy.double("maxImages", fallback: 4),
+            cloudMemoryEmbeddingEnabled: policy.bool("cloudMemoryEmbeddingEnabled"),
+            cloudMemoryRerankingEnabled: policy.bool("cloudMemoryRerankingEnabled"),
+            cloudMemoryProviderID: policy.string("cloudMemoryProviderID", fallback: "alibaba"),
+            cloudMemoryEmbeddingModel: policy.string("cloudMemoryEmbeddingModel", fallback: "text-embedding-v4"),
+            cloudMemoryRerankModel: policy.string("cloudMemoryRerankModel", fallback: "qwen3-rerank"),
             taskRoutes: taskModels.reduce(into: [:]) { result, entry in
                 guard let route = entry.value as? [String: Any] else { return }
                 let providerID = route.string("providerId")

@@ -31,6 +31,35 @@ private actor CountingVectorStore: ConversationVectorStore {
     func snapshot() -> [String: [Double]] { storage }
 }
 
+
+private actor FakeEmbeddingProvider: ConversationEmbeddingProvider {
+    nonisolated let identity: String
+    nonisolated let dimension: Int
+    nonisolated let maximumBatchSize: Int
+    private var shouldFail: Bool
+    private(set) var calls: [(ConversationEmbeddingTextType, [String])] = []
+
+    init(identity: String = "fake/qwen/d4", dimension: Int = 4, maximumBatchSize: Int = 20, shouldFail: Bool = false) {
+        self.identity = identity
+        self.dimension = dimension
+        self.maximumBatchSize = maximumBatchSize
+        self.shouldFail = shouldFail
+    }
+
+    func embed(_ texts: [String], textType: ConversationEmbeddingTextType) async throws -> [[Double]] {
+        calls.append((textType, texts))
+        if shouldFail { throw ConversationEmbeddingError.unavailable("synthetic outage") }
+        return texts.map { text in
+            let seed = Double(abs(text.hashValue % 97) + 1) / 100
+            return [seed] + Array(repeating: 0, count: dimension - 1)
+        }
+    }
+
+    func setFailure(_ value: Bool) { shouldFail = value }
+    func callCount(_ type: ConversationEmbeddingTextType) -> Int { calls.count { $0.0 == type } }
+    func embeddedTexts(_ type: ConversationEmbeddingTextType) -> [String] { calls.filter { $0.0 == type }.flatMap(\.1) }
+}
+
 final class VectorCacheTests: XCTestCase {
     private func conversation(
         id: String,
@@ -54,19 +83,13 @@ final class VectorCacheTests: XCTestCase {
         )
     }
 
-    private func skipUnlessSemantic(_ index: ConversationMemoryIndex) async throws {
-        guard await index.usesSemanticEmbeddings else {
-            throw XCTSkip("This macOS installation has no Simplified Chinese sentence embedding.")
-        }
-    }
-
     // MARK: - Incrementality
 
     /// The headline guarantee: a rebuild over unchanged content performs no embeddings.
     func testUnchangedSynchronizePerformsZeroEmbeddings() async throws {
         let store = CountingVectorStore()
-        let index = ConversationMemoryIndex(vectorStore: store)
-        try await skipUnlessSemantic(index)
+        let provider = FakeEmbeddingProvider()
+        let index = ConversationMemoryIndex(useSemanticEmbeddings: false, vectorStore: store, embeddingProvider: provider)
         let chats = [
             conversation(id: "a", messages: ["最长无重复子串怎么解", "用滑动窗口维护左指针"]),
             conversation(id: "b", messages: ["二叉树层序遍历", "用队列逐层展开"])
@@ -87,14 +110,15 @@ final class VectorCacheTests: XCTestCase {
         let store = CountingVectorStore()
         let chats = [conversation(id: "a", messages: ["动态规划状态转移方程怎么推导", "先定义状态再写转移"])]
 
-        let firstIndex = ConversationMemoryIndex(vectorStore: store)
-        try await skipUnlessSemantic(firstIndex)
+        let provider = FakeEmbeddingProvider()
+        let firstIndex = ConversationMemoryIndex(useSemanticEmbeddings: false, vectorStore: store, embeddingProvider: provider)
         await firstIndex.synchronize(conversations: chats)
         let embeddedFirst = await firstIndex.lastSyncEmbeddingCount
         XCTAssertGreaterThan(embeddedFirst, 0)
 
         // Simulate relaunch: brand new index, same persisted store.
-        let restarted = ConversationMemoryIndex(vectorStore: store)
+        let restartedProvider = FakeEmbeddingProvider()
+        let restarted = ConversationMemoryIndex(useSemanticEmbeddings: false, vectorStore: store, embeddingProvider: restartedProvider)
         await restarted.synchronize(conversations: chats)
         let embeddedAfterRestart = await restarted.lastSyncEmbeddingCount
         XCTAssertEqual(embeddedAfterRestart, 0, "Restart re-embedded cached content")
@@ -105,8 +129,8 @@ final class VectorCacheTests: XCTestCase {
     /// Editing one conversation must not re-embed the untouched one.
     func testEditingOneConversationOnlyEmbedsChangedChunks() async throws {
         let store = CountingVectorStore()
-        let index = ConversationMemoryIndex(vectorStore: store)
-        try await skipUnlessSemantic(index)
+        let provider = FakeEmbeddingProvider()
+        let index = ConversationMemoryIndex(useSemanticEmbeddings: false, vectorStore: store, embeddingProvider: provider)
         let stable = conversation(id: "stable", messages: ["图论最短路用 Dijkstra", "堆优化后是 ElogV"])
         let edited = conversation(id: "edited", messages: ["快排怎么选基准"])
 
@@ -129,8 +153,8 @@ final class VectorCacheTests: XCTestCase {
     /// Deleting a conversation drops its documents without touching the others.
     func testDeletingConversationRemovesItsDocumentsOnly() async throws {
         let store = CountingVectorStore()
-        let index = ConversationMemoryIndex(vectorStore: store)
-        try await skipUnlessSemantic(index)
+        let provider = FakeEmbeddingProvider()
+        let index = ConversationMemoryIndex(useSemanticEmbeddings: false, vectorStore: store, embeddingProvider: provider)
         let keep = conversation(id: "keep", messages: ["并查集路径压缩"])
         let drop = conversation(id: "drop", messages: ["前缀和与差分数组"])
 
@@ -142,6 +166,57 @@ final class VectorCacheTests: XCTestCase {
         XCTAssertEqual(indexed, ["keep"])
         let embeddedOnDelete = await index.lastSyncEmbeddingCount
         XCTAssertEqual(embeddedOnDelete, 0, "A pure deletion must not embed anything")
+    }
+
+    func testIdenticalChunksAreEmbeddedOnceAndBatchesRespectProviderLimit() async {
+        let provider = FakeEmbeddingProvider(maximumBatchSize: 2)
+        let store = CountingVectorStore()
+        let index = ConversationMemoryIndex(useSemanticEmbeddings: false, vectorStore: store, embeddingProvider: provider)
+        let duplicate = conversation(id: "a", messages: ["完全相同的正文"])
+        let duplicate2 = conversation(id: "b", messages: ["完全相同的正文"])
+        let distinct = conversation(id: "c", messages: ["另一段不同正文"])
+        await index.synchronize(conversations: [duplicate, duplicate2, distinct])
+
+        let texts = await provider.embeddedTexts(.document)
+        XCTAssertEqual(Set(texts).count, texts.count, "内容寻址后同文只应向量化一次")
+        let calls = await provider.calls.filter { $0.0 == .document }
+        XCTAssertTrue(calls.allSatisfy { $0.1.count <= 2 })
+    }
+
+    func testEmbeddingIdentityChangeInvalidatesPersistedCache() async {
+        let store = CountingVectorStore()
+        let chat = [conversation(id: "a", messages: ["滑动窗口"])]
+        let firstProvider = FakeEmbeddingProvider(identity: "fake/model-a/d4")
+        let first = ConversationMemoryIndex(useSemanticEmbeddings: false, vectorStore: store, embeddingProvider: firstProvider)
+        await first.synchronize(conversations: chat)
+        let firstCount = await first.lastSyncEmbeddingCount
+        XCTAssertGreaterThan(firstCount, 0)
+
+        let secondProvider = FakeEmbeddingProvider(identity: "fake/model-b/d4")
+        let second = ConversationMemoryIndex(useSemanticEmbeddings: false, vectorStore: store, embeddingProvider: secondProvider)
+        await second.synchronize(conversations: chat)
+        let secondCount = await second.lastSyncEmbeddingCount
+        XCTAssertGreaterThan(secondCount, 0, "换模型空间必须重建，不能读旧向量")
+    }
+
+    func testEmbeddingFailureKeepsBM25AndBlocksGarbageCollectionUntilRecovery() async {
+        let provider = FakeEmbeddingProvider(shouldFail: true)
+        let store = CountingVectorStore(seed: [String(repeating: "a", count: 64): [1, 0, 0, 0]])
+        let index = ConversationMemoryIndex(useSemanticEmbeddings: false, vectorStore: store, embeddingProvider: provider)
+        let chat = conversation(id: "a", messages: ["二分搜索边界如何处理"])
+        await index.synchronize(conversations: [chat])
+
+        let reclaimBefore = await index.canReclaimVectors
+        XCTAssertFalse(reclaimBefore)
+        let matches = await index.search(query: "二分搜索边界", currentConversationID: "", strategy: .bm25)
+        XCTAssertEqual(matches.first?.conversationID, "a", "向量服务失败不能破坏 BM25")
+
+        await provider.setFailure(false)
+        await index.synchronize(conversations: [chat])
+        let reclaimAfter = await index.canReclaimVectors
+        let recoveredCount = await index.lastSyncEmbeddingCount
+        XCTAssertTrue(reclaimAfter)
+        XCTAssertGreaterThan(recoveredCount, 0)
     }
 
     /// Deleting a conversation must also reclaim its vectors, not just its documents.
@@ -189,10 +264,10 @@ final class VectorCacheTests: XCTestCase {
     // MARK: - Content addressing
 
     func testIdenticalTextSharesOneVectorKeyRegardlessOfConversation() {
-        let first = ConversationVectorKey.make(text: "滑动窗口", embeddingRevision: 3)
-        let second = ConversationVectorKey.make(text: "  滑动窗口\n", embeddingRevision: 3)
-        let differentRevision = ConversationVectorKey.make(text: "滑动窗口", embeddingRevision: 4)
-        let differentText = ConversationVectorKey.make(text: "双指针", embeddingRevision: 3)
+        let first = ConversationVectorKey.make(text: "滑动窗口", embeddingIdentity: "qwen/d1024")
+        let second = ConversationVectorKey.make(text: "  滑动窗口\n", embeddingIdentity: "qwen/d1024")
+        let differentRevision = ConversationVectorKey.make(text: "滑动窗口", embeddingIdentity: "qwen-v2/d1024")
+        let differentText = ConversationVectorKey.make(text: "双指针", embeddingIdentity: "qwen/d1024")
 
         XCTAssertEqual(first, second, "Whitespace-only differences must not split the cache")
         XCTAssertNotEqual(first, differentRevision, "Model revision must invalidate old vectors")
@@ -259,7 +334,7 @@ final class VectorCacheTests: XCTestCase {
 
     // MARK: - pgvector (opt-in)
 
-    /// Round-trips a 640-dimensional vector through the real pgvector table.
+    /// Round-trips a 1024-dimensional Qwen vector through the real pgvector table.
     /// Skipped unless `LEETCODE_PG_HOST` is set.
     func testLivePostgresVectorRoundTrip() async throws {
         guard let configuration = PostgresVectorConfiguration.resolve() else {
@@ -267,7 +342,7 @@ final class VectorCacheTests: XCTestCase {
         }
         let store = PostgresVectorStore(configuration: configuration)
         // Keys must look like real content addresses; the store rejects anything else.
-        let key = ConversationVectorKey.make(text: "pgvector-selftest-\(UUID().uuidString)", embeddingRevision: 1)
+        let key = ConversationVectorKey.make(text: "pgvector-selftest-\(UUID().uuidString)", embeddingIdentity: "test/d640")
         let vector = (0..<PostgresVectorStore.vectorDimension).map { Double($0) / 1_000 }
 
         await store.save([key: vector])

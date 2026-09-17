@@ -3,24 +3,41 @@ import Foundation
 /// Durable vector storage in PostgreSQL + pgvector.
 ///
 /// This is the shared system of record for embeddings; Redis in front of it is a hot
-/// cache, and the local file remains the offline authority. Apple's Simplified Chinese
-/// sentence embedding is 640-dimensional, so this owns its own table rather than reusing
-/// a `vector_store` table dimensioned for a different model.
+/// cache, and the local file remains the offline authority. Each embedding model/dimension
+/// gets a separate table; pgvector columns have a fixed dimension and cannot mix spaces.
 actor PostgresVectorStore: ConversationVectorStore {
     /// Stable so a Settings save can replace the backing database without rebuilding
     /// every conversation/index owner that already references this actor.
-    static let shared = PostgresVectorStore(configuration: PostgresVectorConfiguration.resolve())
-
-    static let vectorDimension = 640
+    static let vectorDimension = 1_024
+    static let shared = PostgresVectorStore(
+        configuration: PostgresVectorConfiguration.resolve(modelRevision: 1),
+        vectorDimension: vectorDimension,
+        namespace: "qwen_1024"
+    )
 
     private var configuration: PostgresVectorConfiguration?
+    private let vectorDimension: Int
+    private let namespace: String
     private var didPrepareSchema = false
     /// Failures suspend the layer briefly; an unreachable database must never slow
     /// indexing down on every sync.
     private var suspendedUntil: Date?
 
-    init(configuration: PostgresVectorConfiguration?) {
+    init(
+        configuration: PostgresVectorConfiguration?,
+        vectorDimension: Int = PostgresVectorStore.vectorDimension,
+        namespace: String = "qwen_1024"
+    ) {
         self.configuration = configuration
+        self.vectorDimension = vectorDimension
+        self.namespace = namespace
+    }
+
+    private var table: String? {
+        guard let base = configuration?.table else { return nil }
+        let suffix = "_\(namespace)"
+        let maximumBaseLength = max(1, 63 - suffix.count)
+        return String(base.prefix(maximumBaseLength)) + suffix
     }
 
     func reconfigure(_ configuration: PostgresVectorConfiguration?) {
@@ -42,10 +59,10 @@ actor PostgresVectorStore: ConversationVectorStore {
 
     func load(keys: Set<String>) async -> [String: [Double]] {
         let safeKeys = keys.filter(Self.isSafeKey)
-        guard let configuration, !safeKeys.isEmpty, !isSuspended else { return [:] }
+        guard let configuration, let table, !safeKeys.isEmpty, !isSuspended else { return [:] }
         let list = safeKeys.map { "'\($0)'" }.joined(separator: ",")
         let sql = """
-        SELECT chunk_key, embedding::text FROM \(configuration.table) \
+        SELECT chunk_key, embedding::text FROM \(table) \
         WHERE model_revision = \(configuration.modelRevision) AND chunk_key IN (\(list));
         """
         guard let result = run(sql) else { return [:] }
@@ -59,14 +76,14 @@ actor PostgresVectorStore: ConversationVectorStore {
     }
 
     func save(_ vectors: [String: [Double]]) async {
-        let usable = vectors.filter { Self.isSafeKey($0.key) && $0.value.count == Self.vectorDimension }
-        guard let configuration, !usable.isEmpty, !isSuspended else { return }
+        let usable = vectors.filter { Self.isSafeKey($0.key) && $0.value.count == vectorDimension }
+        guard let configuration, let table, !usable.isEmpty, !isSuspended else { return }
         // Upsert in one statement; re-running a sync must not duplicate rows.
         let values = usable.map { key, vector in
             "('\(key)', '\(Self.formatVector(vector))'::vector, \(configuration.modelRevision), now())"
         }.joined(separator: ",")
         let sql = """
-        INSERT INTO \(configuration.table) (chunk_key, embedding, model_revision, updated_at) \
+        INSERT INTO \(table) (chunk_key, embedding, model_revision, updated_at) \
         VALUES \(values) \
         ON CONFLICT (chunk_key, model_revision) DO UPDATE \
         SET embedding = EXCLUDED.embedding, updated_at = now();
@@ -83,13 +100,13 @@ actor PostgresVectorStore: ConversationVectorStore {
     /// is deleted.
     func retain(keys: Set<String>) async {
         let safeKeys = keys.filter(Self.isSafeKey)
-        guard let configuration, !isSuspended else { return }
+        guard let configuration, let table, !isSuspended else { return }
         if safeKeys.isEmpty {
-            _ = run("DELETE FROM \(configuration.table) WHERE model_revision = \(configuration.modelRevision);")
+            _ = run("DELETE FROM \(table) WHERE model_revision = \(configuration.modelRevision);")
         } else {
             let list = safeKeys.map { "'\($0)'" }.joined(separator: ",")
             _ = run("""
-            DELETE FROM \(configuration.table) \
+            DELETE FROM \(table) \
             WHERE model_revision = \(configuration.modelRevision) AND chunk_key NOT IN (\(list));
             """)
         }
@@ -124,11 +141,12 @@ actor PostgresVectorStore: ConversationVectorStore {
         _ connection: PostgresConnection,
         configuration: PostgresVectorConfiguration
     ) throws {
+        guard let table else { throw PostgresError.protocolViolation("向量表名无效") }
         try connection.query("CREATE EXTENSION IF NOT EXISTS vector;")
         try connection.query("""
-        CREATE TABLE IF NOT EXISTS \(configuration.table) (
+        CREATE TABLE IF NOT EXISTS \(table) (
           chunk_key text NOT NULL,
-          embedding vector(\(Self.vectorDimension)) NOT NULL,
+          embedding vector(\(vectorDimension)) NOT NULL,
           model_revision integer NOT NULL,
           updated_at timestamptz NOT NULL DEFAULT now(),
           PRIMARY KEY (chunk_key, model_revision)
@@ -153,7 +171,7 @@ actor PostgresVectorStore: ConversationVectorStore {
         let body = trimmed.dropFirst().dropLast()
         guard !body.isEmpty else { return nil }
         var values: [Double] = []
-        values.reserveCapacity(vectorDimension)
+        values.reserveCapacity(1_024)
         for component in body.split(separator: ",") {
             guard let value = Double(component.trimmingCharacters(in: .whitespaces)) else { return nil }
             values.append(value)
