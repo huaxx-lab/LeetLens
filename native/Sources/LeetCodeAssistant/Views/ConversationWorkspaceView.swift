@@ -448,21 +448,28 @@ struct ConversationWorkspaceView: View {
                 }
                 batcher.flush()
                 try Task.checkCancellation()
+                // 落盘与清除流式快照必须在**同一个同步段**里完成，中间不能有 await。
+                // 挂起点会让界面在"消息已入库、快照还没清"的中间态重绘一次，
+                // 同一段回答被渲染两遍，回来再清掉——看起来就是答完闪一下。
                 try persistGeneratedMessage(conversationID: conversationID, messageID: assistantID)
+                let finishedReply = workspace.conversationGeneration?.content ?? ""
+                workspace.conversationGenerationTask = nil
+                workspace.conversationGeneration = nil
+                // checkpoint 只是崩溃恢复点，删晚一点不影响正确性：它带着 runID，
+                // 恢复时还会用 ledger 判断本轮是否已经提交。
                 await ConversationRunCheckpointStore.shared.remove(
                     threadID: conversationID,
                     runID: runID,
                     dataDirectory: dataStore.dataDirectory
                 )
-                let finishedReply = workspace.conversationGeneration?.content ?? ""
-                workspace.conversationGenerationTask = nil
-                workspace.conversationGeneration = nil
                 embedding?.onAssistantReply?(finishedReply)
                 if dispatchQueuedFollowUps(conversationID: conversationID) { return }
                 await analyzeLearningIfNeeded(conversationID)
                 await archiveConversationIfNeeded(conversationID)
             } catch is CancellationError {
                 batcher.flush()
+                // 先把界面落定，再去动 checkpoint：await 挡在前面会让"已停止"晚一拍才出现。
+                let cancelled = finishCancellation(conversationID: conversationID, messageID: assistantID)
                 // Task cancellation 是用户点“停止”或新一轮主动取代旧轮，不是崩溃恢复点。
                 // 真正的进程中断来不及走这里，之前节流落盘的 streaming checkpoint 会留下。
                 await ConversationRunCheckpointStore.shared.remove(
@@ -470,28 +477,34 @@ struct ConversationWorkspaceView: View {
                     runID: runID,
                     dataDirectory: dataStore.dataDirectory
                 )
-                if finishCancellation(conversationID: conversationID, messageID: assistantID) {
+                if cancelled {
                     workspace.conversationGenerationTask = nil
                     _ = dispatchQueuedFollowUps(conversationID: conversationID)
                 }
             } catch {
                 batcher.flush()
-                if let snapshot = workspace.conversationGeneration,
-                   snapshot.conversationID == conversationID,
-                   snapshot.messageID == assistantID {
+                // 同上：错误提示要立刻出来，checkpoint 落盘排在后面。
+                let interrupted = workspace.conversationGeneration.flatMap { snapshot -> ConversationRunCheckpoint? in
+                    guard snapshot.conversationID == conversationID,
+                          snapshot.messageID == assistantID
+                    else { return nil }
+                    return snapshot.checkpoint(
+                        runID: runID,
+                        userMessageID: userMessageID,
+                        ledgerSequenceAtStart: ledgerSequenceAtStart,
+                        volatileContextPrompts: continuityPrompts,
+                        phase: .interrupted
+                    )
+                }
+                let failed = finishFailure(error, conversationID: conversationID, messageID: assistantID)
+                if let interrupted {
                     await ConversationRunCheckpointStore.shared.checkpoint(
-                        snapshot.checkpoint(
-                            runID: runID,
-                            userMessageID: userMessageID,
-                            ledgerSequenceAtStart: ledgerSequenceAtStart,
-                            volatileContextPrompts: continuityPrompts,
-                            phase: .interrupted
-                        ),
+                        interrupted,
                         dataDirectory: dataStore.dataDirectory,
                         immediately: true
                     )
                 }
-                if finishFailure(error, conversationID: conversationID, messageID: assistantID) {
+                if failed {
                     workspace.conversationGenerationTask = nil
                     if dispatchQueuedFollowUps(conversationID: conversationID) { return }
                 }
