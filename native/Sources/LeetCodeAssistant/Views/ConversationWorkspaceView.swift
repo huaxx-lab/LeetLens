@@ -731,9 +731,16 @@ struct ConversationWorkspaceView: View {
             injection.stable.append(index)
         }
 
-        guard ConversationMemoryPolicy.tier(for: query, directory: directory) == .retrieve else {
-            return injection
-        }
+        // 意图决定要不要检索。以前是无条件跑一次 BM25 + 查询向量，
+        // 问"快排怎么写"也照跑——既慢又贵，还容易把无关记忆写进回答。
+        let resolution = ConversationIntentPolicy.resolve(
+            query: query,
+            previous: workspace.lastConversationIntent[conversationID],
+            directory: directory,
+            hasHostContext: embedding?.contextPrompt() != nil
+        )
+        workspace.lastConversationIntent[conversationID] = resolution
+        guard resolution.wantsRetrieval else { return injection }
         let matches = await dataStore.searchMemory(
             query: query,
             currentConversationID: conversationID

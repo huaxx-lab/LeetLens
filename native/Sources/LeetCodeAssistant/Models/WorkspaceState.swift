@@ -170,6 +170,9 @@ final class WorkspaceState {
     /// 而它本来按"最近更新"排序——别的会话一动就重排，等于每轮把整段历史
     /// 踢出前缀缓存。冻结不损语义：目录只是一张"存在哪些历史"的地图。
     @ObservationIgnored var frozenMemoryDirectory: [String: [ConversationMemoryDirectoryEntry]] = [:]
+    /// 上一轮的意图判定。`followUp`（"再详细点"）继承它的资源需求——
+    /// 同一句追问跟在 recall 后面要检索，跟在 knowledge 后面就不用。
+    @ObservationIgnored var lastConversationIntent: [String: ConversationIntentResolution] = [:]
     var queuedConversationID: String?
     @ObservationIgnored var conversationGenerationTask: Task<Void, Never>?
     var studyPlanSuggestion: AIStudyPlanSuggestion?
