@@ -306,6 +306,9 @@ actor ConversationMemoryIndex {
         }
 
         struct Signals {
+            /// 文档在本次候选集合里的位置。用它当 identity：
+            /// `vectorKey` 在纯 BM25 模式下是空串，同一轮切出的多个块会撞成同一个 key。
+            let index: Int
             let document: Document
             let bm25: Double
             let matchedTerms: Int
@@ -321,7 +324,7 @@ actor ConversationMemoryIndex {
         } else {
             nil
         }
-        let signals = documents.map { document in
+        let signals = documents.enumerated().map { offset, document in
             let bm25 = Self.bm25Score(
                 document: document,
                 queryFrequencies: queryFrequencies,
@@ -331,6 +334,7 @@ actor ConversationMemoryIndex {
             )
             let matched = distinctTerms.filter { document.frequencies[$0] != nil }.count
             return Signals(
+                index: offset,
                 document: document,
                 bm25: bm25,
                 matchedTerms: matched,
@@ -356,19 +360,16 @@ actor ConversationMemoryIndex {
             }
             .prefix(poolSize)
 
-        func identity(_ document: Document) -> String {
-            "\(document.conversationID)|\(document.vectorKey)|\(document.messageIDs.joined(separator: ","))"
-        }
-        let bm25Ranks = Dictionary(uniqueKeysWithValues: bm25.enumerated().map { (identity($0.element.document), $0.offset + 1) })
-        let denseRanks = Dictionary(uniqueKeysWithValues: dense.enumerated().map { (identity($0.element.document), $0.offset + 1) })
-        let signalByID = Dictionary(uniqueKeysWithValues: signals.map { (identity($0.document), $0) })
-        let candidateIDs: Set<String> = switch strategy {
+        let bm25Ranks = Dictionary(uniqueKeysWithValues: bm25.enumerated().map { ($0.element.index, $0.offset + 1) })
+        let denseRanks = Dictionary(uniqueKeysWithValues: dense.enumerated().map { ($0.element.index, $0.offset + 1) })
+        let signalByID = Dictionary(uniqueKeysWithValues: signals.map { ($0.index, $0) })
+        let candidateIDs: Set<Int> = switch strategy {
         case .bm25: Set(bm25Ranks.keys)
         case .dense: Set(denseRanks.keys)
         case .reciprocalRankFusion: Set(bm25Ranks.keys).union(denseRanks.keys)
         }
 
-        return candidateIDs.compactMap { id -> RankedDocument? in
+        return candidateIDs.sorted().compactMap { id -> RankedDocument? in
             guard let signal = signalByID[id] else { return nil }
             let lexicalConfidence = signal.bm25 * (0.55 + signal.coverage)
             // 一条真正有指向性的长 token（getOrDefault、560、接雨水）可以独立命中；
@@ -606,25 +607,54 @@ actor ConversationMemoryIndex {
         let tokenizer = NLTokenizer(unit: .word)
         tokenizer.string = lowered
         var result: [String] = []
+        /// 连续的单字中文碎片。系统分词会把"和为K的子数组"打成一串单字，
+        /// 它们本来就是**同一个词被过度切分**的产物，不是跨词边界。
+        var fragmentRun: [String] = []
+        /// 上一个词的结束位置。只有紧挨着的碎片才算同一段。
+        var previousEnd: String.Index?
+
+        func flushFragments() {
+            defer { fragmentRun.removeAll(keepingCapacity: true) }
+            guard fragmentRun.count >= 2 else { return }
+            // 只在**相邻碎片之间**补二元组。这和旧的整段二元滑窗有本质区别：
+            // 滑窗会跨越真实词边界造出 `器怎`（容器|怎么）这种伪词，它们恰好稀有 →
+            // IDF 最高 → 主导 BM25，是负例被召回的根因。
+            for index in 0..<(fragmentRun.count - 1) {
+                result.append(fragmentRun[index] + fragmentRun[index + 1])
+            }
+        }
+
         tokenizer.enumerateTokens(in: lowered.startIndex..<lowered.endIndex) { range, _ in
             let raw = String(lowered[range]).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-            guard !raw.isEmpty, !lexicalStopWords.contains(raw) else { return true }
+            // 停用词、标点和空白都会断开碎片段：被它们隔开的两个字不是一个词。
+            let isAdjacent = previousEnd == range.lowerBound
+            previousEnd = range.upperBound
+            guard !raw.isEmpty, !lexicalStopWords.contains(raw) else {
+                flushFragments()
+                return true
+            }
             let scalars = Array(raw.unicodeScalars)
             let hasCJK = scalars.contains(where: isCJK)
             if !hasCJK {
+                flushFragments()
                 if raw.count > 1 || raw.allSatisfy(\.isNumber) { result.append(raw) }
                 return true
             }
-            // 系统分词有时把专业词拆成单字（"哈" "希" "表"）。单字保留，
-            // BM25 的多词共同命中门槛会压住噪声；但绝不跨 tokenizer 边界造假词。
             result.append(raw)
-            if scalars.count >= 3, scalars.allSatisfy(isCJK) {
-                for index in 0..<(scalars.count - 1) {
-                    result.append(String(scalars[index]) + String(scalars[index + 1]))
+            if scalars.count == 1 {
+                if !isAdjacent { flushFragments() }
+                fragmentRun.append(raw)
+            } else {
+                flushFragments()
+                if scalars.count >= 3, scalars.allSatisfy(isCJK) {
+                    for index in 0..<(scalars.count - 1) {
+                        result.append(String(scalars[index]) + String(scalars[index + 1]))
+                    }
                 }
             }
             return true
         }
+        flushFragments()
         return result
     }
 

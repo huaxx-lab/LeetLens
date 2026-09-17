@@ -163,3 +163,34 @@ final class RetrievalBenchmarkTests: XCTestCase {
         }
     }
 }
+
+/// 分词的两条边界：**跨词伪 token 要杀掉，词内碎片要补回来**。
+/// 只做前者会把"和为K的子数组"打成一串孤立单字，整句只剩一个多字词，
+/// 连准入门槛都过不了——实测那条查询从第 1 名直接掉到召不回。
+final class ChineseTokenizationBoundaryTests: XCTestCase {
+    func testAdjacentSingleCharacterFragmentsAreRecombined() {
+        let tokens = ConversationMemoryIndex.tokens(in: "和为 K 的子数组这题要写什么代码")
+        XCTAssertTrue(tokens.contains("子数"), "被过度切分的同一个词要补回二元组")
+        XCTAssertTrue(tokens.contains("数组"))
+    }
+
+    func testStopWordsAndPunctuationBreakTheFragmentRun() {
+        // "的" 是停用词，不能把它两侧的字粘成一个词。
+        let tokens = ConversationMemoryIndex.tokens(in: "树的插")
+        XCTAssertFalse(tokens.contains("树插"), "被停用词隔开的两个字不是一个词")
+    }
+
+    func testCrossWordBoundaryBigramsStayGone() {
+        // 这几个是旧的整段滑窗造出来的伪词：稀有 → IDF 最高 → 主导 BM25。
+        let docker = ConversationMemoryIndex.tokens(in: "Docker 容器怎么挂载卷")
+        XCTAssertFalse(docker.contains("器怎"), "容器|怎么 之间是真实词边界")
+        let poetry = ConversationMemoryIndex.tokens(in: "帮我写一首关于秋天的诗")
+        XCTAssertFalse(poetry.contains("天的"), "秋天|的 之间是真实词边界")
+        XCTAssertFalse(poetry.contains("我写"))
+    }
+
+    func testMultiCharacterWordsStillContributeTheirOwnSubwords() {
+        let tokens = ConversationMemoryIndex.tokens(in: "最小覆盖子串")
+        XCTAssertTrue(tokens.contains("最小"))
+    }
+}
