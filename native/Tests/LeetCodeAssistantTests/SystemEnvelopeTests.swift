@@ -47,15 +47,17 @@ final class SystemEnvelopeTests: XCTestCase {
             reasoningLevel: .high
         )
 
-        let system = try XCTUnwrap(body["system"] as? String)
+        // Anthropic 的 system 现在是 text block 数组（挂 cache_control 的前提）。
+        let blocks = try XCTUnwrap(body["system"] as? [[String: Any]])
+        let system = blocks.compactMap { $0["text"] as? String }.joined(separator: "\n\n")
         for marker in ["资深算法工程师", "跨会话记忆", "连续性提示", "历史对话摘要"] {
             XCTAssertTrue(system.contains(marker), "Messages dropped system context: \(marker)")
         }
 
         // System turns must not also appear in the message array.
-        let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
-        XCTAssertFalse(messages.contains { $0["role"] == "system" })
-        XCTAssertEqual(messages.map { $0["role"] }, ["user", "assistant", "user"])
+        let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
+        XCTAssertFalse(messages.contains { $0["role"] as? String == "system" })
+        XCTAssertEqual(messages.compactMap { $0["role"] as? String }, ["user", "assistant", "user"])
     }
 
     /// All three transports must carry the same system text and the same dialogue.
@@ -90,16 +92,27 @@ final class SystemEnvelopeTests: XCTestCase {
         func dialogue(_ entries: [[String: String]]) -> [String] {
             entries.filter { $0["role"] != "system" }.compactMap { $0["content"] }
         }
+        /// Anthropic 侧带断点的那条是 block 数组，其余仍是字符串简写。
+        func anthropicDialogue(_ entries: [[String: Any]]) -> [String] {
+            entries.compactMap { entry in
+                if let text = entry["content"] as? String { return text }
+                return (entry["content"] as? [[String: Any]])?
+                    .compactMap { $0["text"] as? String }
+                    .joined(separator: "\n\n")
+            }
+        }
 
         let chatEntries = try XCTUnwrap(chat["messages"] as? [[String: String]])
         let responseEntries = try XCTUnwrap(responses["input"] as? [[String: String]])
-        let messageEntries = try XCTUnwrap(messages["messages"] as? [[String: String]])
-        let messagesSystem = try XCTUnwrap(messages["system"] as? String)
+        let messageEntries = try XCTUnwrap(messages["messages"] as? [[String: Any]])
+        let messagesSystem = try XCTUnwrap(messages["system"] as? [[String: Any]])
+            .compactMap { $0["text"] as? String }
+            .joined(separator: "\n\n")
 
         XCTAssertEqual(systemText(chatEntries), messagesSystem)
         XCTAssertEqual(systemText(responseEntries), messagesSystem)
-        XCTAssertEqual(dialogue(chatEntries), dialogue(messageEntries))
-        XCTAssertEqual(dialogue(responseEntries), dialogue(messageEntries))
+        XCTAssertEqual(dialogue(chatEntries), anthropicDialogue(messageEntries))
+        XCTAssertEqual(dialogue(responseEntries), anthropicDialogue(messageEntries))
     }
 
     func testEnvelopeIsAbsentWhenNoSystemTurnExists() {

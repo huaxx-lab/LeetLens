@@ -1184,6 +1184,56 @@ final class ChatService: @unchecked Sendable {
         return result
     }
 
+    /// 构造 Anthropic 的 `messages`，并在最后一条不含易变内容的消息上打缓存断点。
+    ///
+    /// 只有带断点的那条用 content block 数组；其余保持字符串简写
+    /// （官方明确 string 就是单个 text block 的简写），少一层包装也少一处出错面。
+    static func anthropicMessages(from messages: [ChatRequestMessage]) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        var pending: [String] = []
+        var sawVolatile = false
+        var cacheableCount = 0
+
+        func append(role: String, content: String, isVolatile: Bool) {
+            result.append(["role": role, "content": content])
+            if !isVolatile, !sawVolatile { cacheableCount = result.count }
+        }
+
+        for message in messages {
+            if message.role == PromptAssembly.volatileRole {
+                pending.append(message.content)
+                sawVolatile = true
+                continue
+            }
+            // system 由顶层 `system` 字段承载，不进消息数组。
+            guard message.role != "system" else { continue }
+            if !pending.isEmpty, message.role == "user" {
+                append(
+                    role: "user",
+                    content: (pending + [message.content]).joined(separator: "\n\n"),
+                    isVolatile: true
+                )
+                pending.removeAll()
+                continue
+            }
+            append(role: message.role, content: message.content, isVolatile: false)
+        }
+        if !pending.isEmpty {
+            // 易变块排在最后、后面没有 user 消息了：单独成一条，天然落在断点之后。
+            append(role: "user", content: pending.joined(separator: "\n\n"), isVolatile: true)
+        }
+
+        guard cacheableCount > 0 else { return result }
+        let index = cacheableCount - 1
+        let content = result[index]["content"] as? String ?? ""
+        result[index]["content"] = [[
+            "type": "text",
+            "text": content,
+            "cache_control": anthropicCacheControl
+        ]]
+        return result
+    }
+
     static func requestBody(
         mode: String,
         model: String,
@@ -1202,9 +1252,14 @@ final class ChatService: @unchecked Sendable {
             let tools = ProviderBuiltInTools.tools(apiBase: apiBase, model: model)
             if !tools.isEmpty { body["tools"] = tools }
         } else if mode == "messages" {
-            body["messages"] = apiMessages.filter { $0["role"] != "system" }
+            body["messages"] = anthropicMessages(from: messages)
             body["max_tokens"] = 8_192
-            if let system = systemEnvelope(from: converted) { body["system"] = system }
+            let sections = systemSections(from: converted)
+            if !sections.isEmpty {
+                var blocks: [[String: Any]] = sections.map { ["type": "text", "text": $0] }
+                blocks[blocks.count - 1]["cache_control"] = anthropicCacheControl
+                body["system"] = blocks
+            }
         } else {
             body["messages"] = apiMessages
             body["stream_options"] = ["include_usage": true]
@@ -1427,15 +1482,37 @@ final class ChatService: @unchecked Sendable {
     /// in a long conversation. Order is preserved so the three transports stay
     /// semantically equivalent.
     static func systemEnvelope(from messages: [ChatRequestMessage]) -> String? {
-        let sections = messages
-            .lazy
+        let sections = systemSections(from: messages)
+        guard !sections.isEmpty else { return nil }
+        return sections.joined(separator: "\n\n")
+    }
+
+    /// Anthropic 的 system 要拆成 text block 数组才能挂 `cache_control`，
+    /// 所以分段和拼接分开：顺序与 envelope 完全一致。
+    static func systemSections(from messages: [ChatRequestMessage]) -> [String] {
+        messages
             // 易变块绝不能进 envelope：进去就被提到队首，前缀缓存白改。
             .filter { $0.role == "system" }
             .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        guard !sections.isEmpty else { return nil }
-        return sections.joined(separator: "\n\n")
     }
+
+    /// Anthropic 显式缓存断点。
+    ///
+    /// 前缀求值顺序是 `tools → system → messages`，缓存覆盖到**打了标记的那一块为止**，
+    /// 所以标记必须落在"每轮都逐字相同"的最后一块上；标记之后的内容照常按未缓存计费。
+    /// 上限 4 个断点，这里只用 2 个：
+    /// - system 数组的最后一段（人设、运行时身份、长期事实、会话目录，必要时还有摘要）；
+    /// - 消息数组里最后一条**不含本轮易变内容**的消息。
+    ///
+    /// 第二个断点正好落在本轮用户问题上：下一轮它连同这轮的回答一起变成历史，
+    /// 前缀逐字不变，于是能整段命中。检索片段、宿主上下文、衔接说明每轮都不同，
+    /// 被折进尾部那条消息里，排在断点之后，不会污染缓存键。
+    ///
+    /// Anthropic 侧目前不发 tools（工具只在 chat / responses 协议里启用），
+    /// 所以没有 tools 断点；真发工具时要在最后一个工具上再补一个。
+    /// 默认 5 分钟 TTL：连续对话的相邻两轮基本都落在窗口内，而 1h 的写入单价翻倍。
+    static var anthropicCacheControl: [String: Any] { ["type": "ephemeral"] }
 
     /// Request-time half of the double check.
     ///
