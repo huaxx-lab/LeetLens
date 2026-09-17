@@ -1534,7 +1534,9 @@ final class ChatService: @unchecked Sendable {
         return "模型服务返回 HTTP \(status)"
     }
 
-    static func locateElectronExecutable(dataDirectory: URL? = nil) -> URL? {
+    /// `dataDirectory` 没有默认值：漏传会让安装版永远找不到桥，而且失败是静默的
+    /// （只表现为"没有找到运行环境"），必须由编译器强制每个调用点给出答案。
+    static func locateElectronExecutable(dataDirectory: URL?) -> URL? {
         if let explicit = ProcessInfo.processInfo.environment["LEETCODE_ELECTRON_PATH"],
            FileManager.default.isExecutableFile(atPath: explicit) { return URL(filePath: explicit) }
         // 装到 /Applications 后沿路径再也走不到仓库里的 node_modules，

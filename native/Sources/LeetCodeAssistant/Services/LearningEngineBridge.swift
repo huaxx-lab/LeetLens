@@ -17,8 +17,12 @@ enum LearningEngineBridgeError: LocalizedError {
 actor LearningEngineBridge {
     private static let marker = "__LEARNING_ENGINE__"
     private let learningFile: URL
+    /// 定位 Electron 桥要用它：装到 /Applications 之后，沿可执行文件向上走再也
+    /// 到不了仓库里的 node_modules，只能靠数据目录里那份 `electron-bridge.json` 提示。
+    private let dataDirectory: URL
 
     init(dataDirectory: URL) {
+        self.dataDirectory = dataDirectory
         learningFile = dataDirectory.appending(path: "learning.json")
     }
 
@@ -120,7 +124,7 @@ actor LearningEngineBridge {
     }
 
     private func run(_ input: [String: Any]) async throws {
-        guard let electronURL = ChatService.locateElectronExecutable(),
+        guard let electronURL = ChatService.locateElectronExecutable(dataDirectory: dataDirectory),
               let helperURL = Bundle.appResources.url(
                 forResource: "learning-engine-bridge",
                 withExtension: "cjs",

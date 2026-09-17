@@ -1209,6 +1209,10 @@ final class LegacyDataStore {
         guard !isSyncingLeetCodeAccount else { return }
         isSyncingLeetCodeAccount = true
         defer { isSyncingLeetCodeAccount = false }
+        // 本地对账不依赖网络，也不该被拉取失败连累：学习引擎桥曾整段失败，
+        // 那期间的提交已写进 leetcode-cn.json 并算作"已知"，增量同步永远不会再碰它们。
+        // 引擎按提交 id 推导证据 id，重复合并是幂等的，所以每轮先补一次。
+        try? await mergeLeetCodeSubmissionsIntoLearning()
         do {
             let remote = try await LeetCodeAPIClient.shared.fetchSubmissions(titleSlug: "", limit: 40)
             guard !remote.isEmpty else { return }

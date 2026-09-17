@@ -5,6 +5,7 @@ import SwiftUI
 struct ReviewWorkspaceView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
+    @Bindable var practice: LearningPracticeSession
     @Environment(\.colorScheme) private var colorScheme
     @State private var selectedID: String?
     @State private var answer = ""
@@ -12,7 +13,6 @@ struct ReviewWorkspaceView: View {
     @State private var selectedChoice = ""
     @State private var isWorking = false
     @State private var learningError = ""
-    @State private var answerDrafts: [String: String] = [:]
     @State private var practiceType = "auto"
     @State private var queueScope = QueueScope.today
     /// 从别处跳进来时要滚到的目标；滚完置空。
@@ -31,13 +31,22 @@ struct ReviewWorkspaceView: View {
         return "\(record.id):\(record.activeStudyPackage?.id ?? "")"
     }
 
+    /// 这一题的起始代码。作答等于它就不算草稿——存下来会在"重新生成"后盖住新模板。
+    private func starterCode(for key: String) -> String {
+        guard !key.isEmpty, let exercise = selectedRecord?.activeStudyPackage?.exercise else { return "" }
+        return Self.codeExerciseTypes.contains(exercise.type) ? exercise.starterCode : ""
+    }
+
     private func loadDraft(for key: String) {
-        guard !key.isEmpty, let exercise = selectedRecord?.activeStudyPackage?.exercise else {
-            answer = ""
-            return
-        }
-        answer = answerDrafts[key]
-            ?? (Self.codeExerciseTypes.contains(exercise.type) ? exercise.starterCode : "")
+        let starter = starterCode(for: key)
+        answer = practice.draft(for: key) ?? starter
+    }
+
+    /// 草稿要随敲随存：切页面时视图直接被销毁，`onDisappear` 之外没有别的机会。
+    private func persistDraft() {
+        let key = currentDraftKey
+        guard !key.isEmpty else { return }
+        practice.record(answer: answer, for: key, starter: starterCode(for: key))
     }
 
     var body: some View {
@@ -50,6 +59,7 @@ struct ReviewWorkspaceView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear {
+            practice.attach(directory: dataStore.dataDirectory)
             adoptExternalSelection()
             if selectedID == nil { selectedID = filteredRecords.first?.id }
             loadDraft(for: currentDraftKey)
@@ -62,11 +72,17 @@ struct ReviewWorkspaceView: View {
             if section == .review { adoptExternalSelection() }
         }
         .onChange(of: currentDraftKey) { oldKey, newKey in
-            if !oldKey.isEmpty { answerDrafts[oldKey] = answer }
+            if !oldKey.isEmpty {
+                practice.record(answer: answer, for: oldKey, starter: starterCode(for: oldKey))
+            }
             selectedChoice = ""
             learningError = ""
             loadDraft(for: newKey)
         }
+        // 每次改动都记一笔（写盘本身是防抖的）。只靠 onDisappear 不够：
+        // 页面是 switch 出来的，切走时视图直接销毁，拿不到可靠的收尾时机。
+        .onChange(of: answer) { _, _ in persistDraft() }
+        .onDisappear { persistDraft() }
         .background(AppDesign.ColorToken.canvas)
     }
 
@@ -801,7 +817,8 @@ struct ReviewWorkspaceView: View {
                 answer: answer,
                 judgment: judgment
             )
-            answerDrafts[currentDraftKey] = answer
+            // 提交成功后作答仍留着：判定结果就显示在下面，用户要对着它改。
+            persistDraft()
         } catch {
             learningError = error.localizedDescription
         }

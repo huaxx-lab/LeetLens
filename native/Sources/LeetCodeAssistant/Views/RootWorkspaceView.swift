@@ -6,6 +6,7 @@ struct RootWorkspaceView: View {
     @State private var dataStore = LegacyDataStore()
     /// 刷题页的工作状态（选中的题、代码、判题结果）。挂在根上，切页面不丢。
     @State private var codingSession = LeetCodeCodingSession()
+    @State private var practiceSession = LearningPracticeSession()
     /// 中间列的实际宽度（量的是整列，不是列头自己）。列头按它排版，
     /// 不能让列头量自己：内容一溢出，量到的宽度就跟着变大，标题缩进再变大，越排越宽。
     @State private var detailColumnWidth: CGFloat = 0
@@ -62,12 +63,14 @@ struct RootWorkspaceView: View {
                 Task { await AIUsageLedger.shared.flush(dataDirectory: dataStore.dataDirectory) }
                 // 代码草稿是防抖写盘的，离开前台时把最后不到一秒的输入也落下去。
                 codingSession.drafts.flush()
+                practiceSession.flush()
                 return
             }
             Task { await dataStore.syncLeetCodeAccountActivity() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             codingSession.drafts.flush()
+            practiceSession.flush()
             Task { await AIUsageLedger.shared.flush(dataDirectory: dataStore.dataDirectory) }
         }
         .sheet(isPresented: $workspace.isUsagePresented) {
@@ -202,7 +205,12 @@ struct RootWorkspaceView: View {
         VStack(spacing: 0) {
             Color.clear
                 .frame(height: AppDesign.Size.columnHeader + ToolHeaderLayoutPolicy.topInset(isFullScreen: workspace.isWindowFullScreen))
-            PrimaryWorkspaceView(workspace: workspace, dataStore: dataStore, codingSession: codingSession)
+            PrimaryWorkspaceView(
+                workspace: workspace,
+                dataStore: dataStore,
+                codingSession: codingSession,
+                practiceSession: practiceSession
+            )
         }
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width.rounded()
@@ -857,6 +865,7 @@ private struct PrimaryWorkspaceView: View {
     @Bindable var workspace: WorkspaceState
     @Bindable var dataStore: LegacyDataStore
     @Bindable var codingSession: LeetCodeCodingSession
+    @Bindable var practiceSession: LearningPracticeSession
     /// 中间列的实测宽度。问题刻度条按它决定位置与显隐。
     @State private var columnWidth: CGFloat = 0
 
@@ -876,7 +885,7 @@ private struct PrimaryWorkspaceView: View {
                 case .plan:
                     StudyPlanWorkspaceView(workspace: workspace, dataStore: dataStore)
                 case .review:
-                    ReviewWorkspaceView(workspace: workspace, dataStore: dataStore)
+                    ReviewWorkspaceView(workspace: workspace, dataStore: dataStore, practice: practiceSession)
                 case .library:
                     LearningLibraryWorkspaceView(workspace: workspace, dataStore: dataStore)
                 case .knowledge:
