@@ -286,24 +286,47 @@ struct ConversationWorkspaceView: View {
 
     private func retryGeneration() {
         guard let generation = workspace.conversationGeneration, generation.phase == .failed else { return }
-        startGeneration(conversationID: generation.conversationID, replacingMessageID: generation.messageID)
+        Task {
+            let checkpoint = await ConversationRunCheckpointStore.shared.checkpoint(
+                threadID: generation.conversationID,
+                dataDirectory: dataStore.dataDirectory
+            )
+            startGeneration(
+                conversationID: generation.conversationID,
+                replacingMessageID: generation.messageID,
+                resumedCheckpoint: checkpoint?.assistantMessageID == generation.messageID ? checkpoint : nil
+            )
+        }
     }
 
     private func startGeneration(
         conversationID: String,
         replacingMessageID: String?,
-        continuityPrompt: String? = nil
+        continuityPrompt: String? = nil,
+        resumedCheckpoint: ConversationRunCheckpoint? = nil
     ) {
         // 宿主上下文在点下发送的这一刻拼好：流式任务里再拼，拿到的可能已经是改过的代码。
-        let continuityPrompts = [embedding?.contextPrompt(), continuityPrompt].compactMap { $0 }
+        // 恢复则复用 checkpoint 冻结值，绝不读取已经变化的编辑器状态。
+        let continuityPrompts = resumedCheckpoint?.volatileContextPrompts
+            ?? [embedding?.contextPrompt(), continuityPrompt].compactMap { $0 }
+        guard let conversation = dataStore.conversations.first(where: { $0.id == conversationID }),
+              let userMessageID = conversation.messages.last(where: { $0.role == "user" })?.id
+        else {
+            showLocalFailure("没有找到本轮用户消息，无法开始生成", conversationID: conversationID)
+            return
+        }
+        // 恢复必须复现原 run 的 ledger 边界；后来追加的消息属于别的 turn，不能混进来。
+        let ledgerSequenceAtStart = resumedCheckpoint?.ledgerSequenceAtStart
+            ?? ConversationLedger.latestSequence(conversation.ledgerEvents)
         workspace.conversationGenerationTask?.cancel()
         let assistantID = replacingMessageID ?? Self.messageID()
-        let providerID = dataStore.settings.activeProviderID
+        let runID = "run_\(UUID().uuidString.lowercased())"
+        let providerID = resumedCheckpoint?.providerID ?? dataStore.settings.activeProviderID
         let provider = dataStore.providers.first { $0.id == providerID }
         let runtimeIdentity = ConversationRuntimeIdentity(
             providerID: providerID,
             providerName: provider?.name ?? providerID,
-            model: provider?.model ?? ""
+            model: resumedCheckpoint?.model ?? provider?.model ?? ""
         )
         workspace.conversationGeneration = ConversationGenerationSnapshot(
             conversationID: conversationID,
@@ -316,6 +339,22 @@ struct ConversationWorkspaceView: View {
         )
 
         let service = ChatService(dataDirectory: dataStore.dataDirectory)
+        if let snapshot = workspace.conversationGeneration {
+            let checkpoint = snapshot.checkpoint(
+                runID: runID,
+                userMessageID: userMessageID,
+                ledgerSequenceAtStart: ledgerSequenceAtStart,
+                volatileContextPrompts: continuityPrompts,
+                phase: .preparing
+            )
+            Task {
+                await ConversationRunCheckpointStore.shared.checkpoint(
+                    checkpoint,
+                    dataDirectory: dataStore.dataDirectory,
+                    immediately: true
+                )
+            }
+        }
         let batcher = ConversationStreamBatcher { [weak workspace] delta in
             guard let workspace,
                   workspace.conversationGeneration?.conversationID == conversationID,
@@ -334,6 +373,22 @@ struct ConversationWorkspaceView: View {
                     workspace.conversationGeneration?.agentRuns.append(run)
                 }
             }
+            guard let snapshot = workspace.conversationGeneration else { return }
+            let toolCompleted = delta.agentRuns.contains { !$0.resultJSON.isEmpty }
+            let checkpoint = snapshot.checkpoint(
+                runID: runID,
+                userMessageID: userMessageID,
+                ledgerSequenceAtStart: ledgerSequenceAtStart,
+                volatileContextPrompts: continuityPrompts,
+                phase: toolCompleted ? .toolCompleted : .streaming
+            )
+            Task {
+                await ConversationRunCheckpointStore.shared.checkpoint(
+                    checkpoint,
+                    dataDirectory: dataStore.dataDirectory,
+                    immediately: toolCompleted
+                )
+            }
         }
         workspace.conversationGenerationTask = Task {
             do {
@@ -342,6 +397,8 @@ struct ConversationWorkspaceView: View {
                 // 规则 / 模型判定要检索时才发生；歧义轮次先在同一后台任务里消解指代。
                 let memory = await memoryPrompts(
                     conversationID: conversationID,
+                    userMessageID: userMessageID,
+                    ledgerSequenceLimit: ledgerSequenceAtStart,
                     service: service,
                     providerID: runtimeIdentity.providerID
                 )
@@ -355,6 +412,7 @@ struct ConversationWorkspaceView: View {
                 let requestMessages = requestHistory(
                     conversationID: conversationID,
                     excluding: replacingMessageID,
+                    ledgerSequenceLimit: ledgerSequenceAtStart,
                     stableMemoryPrompts: memory.stable,
                     // 宿主上下文（题面、当前代码、评测结果）和衔接说明同样每轮都变。
                     volatileContextPrompts: memory.volatileContext + continuityPrompts,
@@ -391,6 +449,11 @@ struct ConversationWorkspaceView: View {
                 batcher.flush()
                 try Task.checkCancellation()
                 try persistGeneratedMessage(conversationID: conversationID, messageID: assistantID)
+                await ConversationRunCheckpointStore.shared.remove(
+                    threadID: conversationID,
+                    runID: runID,
+                    dataDirectory: dataStore.dataDirectory
+                )
                 let finishedReply = workspace.conversationGeneration?.content ?? ""
                 workspace.conversationGenerationTask = nil
                 workspace.conversationGeneration = nil
@@ -400,12 +463,34 @@ struct ConversationWorkspaceView: View {
                 await archiveConversationIfNeeded(conversationID)
             } catch is CancellationError {
                 batcher.flush()
+                // Task cancellation 是用户点“停止”或新一轮主动取代旧轮，不是崩溃恢复点。
+                // 真正的进程中断来不及走这里，之前节流落盘的 streaming checkpoint 会留下。
+                await ConversationRunCheckpointStore.shared.remove(
+                    threadID: conversationID,
+                    runID: runID,
+                    dataDirectory: dataStore.dataDirectory
+                )
                 if finishCancellation(conversationID: conversationID, messageID: assistantID) {
                     workspace.conversationGenerationTask = nil
                     _ = dispatchQueuedFollowUps(conversationID: conversationID)
                 }
             } catch {
                 batcher.flush()
+                if let snapshot = workspace.conversationGeneration,
+                   snapshot.conversationID == conversationID,
+                   snapshot.messageID == assistantID {
+                    await ConversationRunCheckpointStore.shared.checkpoint(
+                        snapshot.checkpoint(
+                            runID: runID,
+                            userMessageID: userMessageID,
+                            ledgerSequenceAtStart: ledgerSequenceAtStart,
+                            volatileContextPrompts: continuityPrompts,
+                            phase: .interrupted
+                        ),
+                        dataDirectory: dataStore.dataDirectory,
+                        immediately: true
+                    )
+                }
                 if finishFailure(error, conversationID: conversationID, messageID: assistantID) {
                     workspace.conversationGenerationTask = nil
                     if dispatchQueuedFollowUps(conversationID: conversationID) { return }
@@ -424,14 +509,16 @@ struct ConversationWorkspaceView: View {
               conversation.messages.contains(where: { $0.role == "assistant" })
         else { return }
         let isFirstArchive = conversation.aiSummary.isEmpty
-        let watermark = isFirstArchive ? 0 : conversation.archivedMessageCount
-        let total = conversation.messages.count
-        guard isFirstArchive || total - watermark >= Self.archiveStride else { return }
+        let watermark = isFirstArchive ? 0 : conversation.archivedLedgerSequence
+        let latestSequence = ConversationLedger.latestSequence(conversation.ledgerEvents)
+        guard isFirstArchive || latestSequence - watermark >= Self.archiveStride else { return }
 
-        // 首次归档喂全量；之后只喂水位线之后的增量，旧内容靠 previousContext 带过去。
-        let pending = watermark > 0 && watermark < total
-            ? Array(conversation.messages.suffix(total - watermark))
-            : conversation.messages
+        // 首次归档喂当前全量投影；之后按 ledger sequence 取增量。修订同一 messageID
+        // 也会进入增量，而 tombstone 不会把已删除正文重新喂给摘要器。
+        let pending = isFirstArchive
+            ? conversation.messages
+            : ConversationLedger.changedMessages(after: watermark, in: conversation.ledgerEvents)
+        guard !pending.isEmpty else { return }
         let messages = pending.map { ChatRequestMessage(role: $0.role, content: $0.content) }
         let providerID = dataStore.settings.taskRoutes["title"]
         do {
@@ -442,13 +529,15 @@ struct ConversationWorkspaceView: View {
                     conversationID: conversationID,
                     previousContext: isFirstArchive ? "" : conversation.contextSummary
                 )
-            try dataStore.applyArchive(
+            let applied = try dataStore.applyArchive(
                 archive,
                 to: conversationID,
-                messageCount: total,
+                coveredLedgerSequence: latestSequence,
+                expectedPreviousSequence: watermark,
+                messageCount: conversation.messages.count,
                 renames: isFirstArchive
             )
-            await consolidateMemoryFacts()
+            if applied { await consolidateMemoryFacts() }
         } catch {
             NSLog("Conversation archive failed: %@", error.localizedDescription)
         }
@@ -575,6 +664,7 @@ struct ConversationWorkspaceView: View {
     private func requestHistory(
         conversationID: String,
         excluding messageID: String?,
+        ledgerSequenceLimit: Int,
         stableMemoryPrompts: [String],
         volatileContextPrompts: [String],
         runtimeIdentity: ConversationRuntimeIdentity
@@ -600,11 +690,18 @@ struct ConversationWorkspaceView: View {
         }
         let identity = ChatRequestMessage(role: "system", content: runtimeIdentity.systemPrompt)
         let stableMemory = stableMemoryPrompts.map { ChatRequestMessage(role: "system", content: $0) }
-        let managed = ConversationContextManager.build(
-            messages: conversation.messages.filter { $0.id != messageID },
-            contextSummary: conversation.contextSummary,
+        // 模型窗口只是 append-only ledger 的纯投影。摘要尚未异步完成时 digest 为空，
+        // 投影只用 skeleton + verbatim；摘要完成并写入状态后，下一轮才自然进入窗口。
+        let ledger = conversation.ledgerEvents.filter { event in
+            event.sequence <= ledgerSequenceLimit && event.messageID != messageID
+        }
+        let managed = ContextProjection.build(
+            ledger: ledger,
+            digest: conversation.archivedLedgerSequence <= ledgerSequenceLimit
+                ? conversation.contextSummary
+                : "",
             settings: dataStore.settings
-        )
+        ).messages
         // 顺序由缓存决定：稳定前缀 → 历史 → 本轮易变块。
         // 检索片段和宿主上下文每轮都不同，排在前面会把整段历史踢出前缀缓存。
         var sections = PromptAssembly.Sections()
@@ -715,11 +812,17 @@ struct ConversationWorkspaceView: View {
     /// 再把**独立检索句**交给两路召回。小模型的输出只存在内存里，绝不进对话历史。
     private func memoryPrompts(
         conversationID: String,
+        userMessageID: String,
+        ledgerSequenceLimit: Int,
         service: ChatService,
         providerID: String
     ) async -> MemoryInjection {
-        guard let conversation = dataStore.conversations.first(where: { $0.id == conversationID }),
-              let userMessage = conversation.messages.last(where: { $0.role == "user" })
+        guard let conversation = dataStore.conversations.first(where: { $0.id == conversationID }) else {
+            return MemoryInjection()
+        }
+        let boundedLedger = conversation.ledgerEvents.filter { $0.sequence <= ledgerSequenceLimit }
+        let boundedMessages = ConversationLedger.project(boundedLedger)
+        guard let userMessage = boundedMessages.first(where: { $0.id == userMessageID && $0.role == "user" })
         else { return MemoryInjection() }
 
         var injection = MemoryInjection()
@@ -736,9 +839,10 @@ struct ConversationWorkspaceView: View {
             injection.stable.append(index)
         }
 
+        let isHistoricalReplay = ledgerSequenceLimit < ConversationLedger.latestSequence(conversation.ledgerEvents)
         let rule = ConversationIntentPolicy.resolve(
             query: userMessage.content,
-            previous: workspace.lastConversationIntent[conversationID],
+            previous: isHistoricalReplay ? nil : workspace.lastConversationIntent[conversationID],
             directory: directory,
             hasHostContext: embedding?.contextPrompt() != nil
         )
@@ -752,9 +856,12 @@ struct ConversationWorkspaceView: View {
             decision = cached
         } else if rule.confidence == .ambiguous,
                   let context = ConversationIntentContextProjection.build(
-                    messages: conversation.messages,
+                    messages: boundedMessages,
                     currentMessageID: userMessage.id,
-                    contextSummary: conversation.contextSummary,
+                    // 摘要若覆盖到本轮 ledger 上界之后，可能含“未来消息”，恢复时不能使用。
+                    contextSummary: conversation.archivedLedgerSequence <= ledgerSequenceLimit
+                        ? conversation.contextSummary
+                        : "",
                     directory: directory,
                     availableInputTokens: ChatService.availableInputTokens(dataDirectory: dataStore.dataDirectory)
                   ) {

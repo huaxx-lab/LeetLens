@@ -20,6 +20,32 @@ struct ConversationGenerationSnapshot: Equatable {
     var providerID = ""
     var model = ""
 
+    init(
+        conversationID: String,
+        messageID: String,
+        content: String,
+        phase: ConversationGenerationPhase,
+        detail: String? = nil,
+        reasoning: String = "",
+        toolCalls: [String] = [],
+        agentRuns: [AgentToolRun] = [],
+        startedAt: Date = .now,
+        providerID: String = "",
+        model: String = ""
+    ) {
+        self.conversationID = conversationID
+        self.messageID = messageID
+        self.content = content
+        self.phase = phase
+        self.detail = detail
+        self.reasoning = reasoning
+        self.toolCalls = toolCalls
+        self.agentRuns = agentRuns
+        self.startedAt = startedAt
+        self.providerID = providerID
+        self.model = model
+    }
+
     var elapsedSeconds: Int {
         max(1, Int(Date.now.timeIntervalSince(startedAt).rounded()))
     }
@@ -27,6 +53,47 @@ struct ConversationGenerationSnapshot: Equatable {
     var storedContent: String {
         guard !reasoning.isEmpty else { return content }
         return "<think duration=\"\(elapsedSeconds)\">\n\(reasoning)\n</think>\n\n" + content
+    }
+
+    func checkpoint(
+        runID: String,
+        userMessageID: String,
+        ledgerSequenceAtStart: Int,
+        volatileContextPrompts: [String],
+        phase: ConversationRunCheckpoint.Phase,
+        now: Date = .now
+    ) -> ConversationRunCheckpoint {
+        ConversationRunCheckpoint(
+            threadID: conversationID,
+            runID: runID,
+            userMessageID: userMessageID,
+            assistantMessageID: messageID,
+            ledgerSequenceAtStart: ledgerSequenceAtStart,
+            phase: phase,
+            partialContent: content,
+            partialReasoning: reasoning,
+            toolCalls: toolCalls,
+            agentRuns: agentRuns,
+            volatileContextPrompts: volatileContextPrompts,
+            providerID: providerID,
+            model: model,
+            startedAt: startedAt,
+            updatedAt: now
+        )
+    }
+
+    init(checkpoint: ConversationRunCheckpoint, phase: ConversationGenerationPhase = .failed) {
+        conversationID = checkpoint.threadID
+        messageID = checkpoint.assistantMessageID
+        content = checkpoint.partialContent
+        self.phase = phase
+        detail = "上次生成被中断，可从同一条用户消息重新执行"
+        reasoning = checkpoint.partialReasoning
+        toolCalls = checkpoint.toolCalls
+        agentRuns = checkpoint.agentRuns
+        startedAt = checkpoint.startedAt
+        providerID = checkpoint.providerID
+        model = checkpoint.model
     }
 }
 

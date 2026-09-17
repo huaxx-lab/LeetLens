@@ -292,6 +292,21 @@ enum ConversationChunker {
         return selected.reversed().map(\.text).joined(separator: "\n")
     }
 
+    static func semanticHead(in source: String, role: String, budgetTokens: Int) -> String? {
+        guard budgetTokens > 0 else { return nil }
+        let clean = sanitize(source, role: role)
+        let units = semanticUnits(in: clean, messageID: nil, role: role)
+        var selected: [Unit] = []
+        var used = 0
+        for unit in units {
+            guard unit.tokens <= budgetTokens, used + unit.tokens <= budgetTokens else { break }
+            selected.append(unit)
+            used += unit.tokens
+        }
+        guard !selected.isEmpty else { return nil }
+        return selected.map(\.text).joined(separator: "\n")
+    }
+
     // MARK: - Packing with whole-unit overlap
 
     private static func pack(

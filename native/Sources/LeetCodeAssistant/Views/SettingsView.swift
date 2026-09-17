@@ -1671,6 +1671,7 @@ private struct ContextSettingsPage: View {
     @State private var reserved: Double
     @State private var compression: Double
     @State private var postCompression: Double
+    /// 旧 schema 兼容字段；P3 后生产投影完全按窗口比例，不再暴露/使用固定消息条数。
     @State private var recentMessages: Double
     @State private var maxImages: Double
     @State private var cloudMemoryEmbeddingEnabled: Bool
@@ -1736,10 +1737,17 @@ private struct ContextSettingsPage: View {
                 }
             }
 
-            SettingsCard(title: "保留内容", systemImage: "bookmark.fill", tint: .green) {
-                SettingsSliderRow("最近消息", valueText: "\(Int(recentMessages)) 条") {
-                    Slider(value: $recentMessages, in: 4...30, step: 1).tint(.green)
+            SettingsCard(title: "窗口投影", systemImage: "bookmark.fill", tint: .green) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("对话事实完整保存在 append-only ledger；模型窗口只是它的投影。")
+                        .font(AppDesign.Typography.aux)
+                    Text("未到峰值时保留全量；越过峰值后收敛到稳态预算，并按摘要 → 较早骨架 → 最近逐字三层组织。各层按窗口比例分配，不按固定消息条数裁剪。")
+                        .font(AppDesign.Typography.micro)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
                 CardDivider()
                 SettingsSliderRow("最多图片", valueText: "\(Int(maxImages)) 张") {
                     Slider(value: $maxImages, in: 0...12, step: 1).tint(.pink)

@@ -22,6 +22,7 @@ struct RootWorkspaceView: View {
         // 数据加载不再是首窗的前置条件：窗口先出现，再补齐数据与索引。
         .task {
             await dataStore.hydrate()
+            await restoreConversationCheckpointIfNeeded()
             applyWindowLevel(dataStore.settings.alwaysOnTop)
             if let debugURL = ProcessInfo.processInfo.environment["LEETCODE_DEBUG_BROWSER_URL"],
                let url = URL(string: debugURL),
@@ -60,7 +61,10 @@ struct RootWorkspaceView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else {
                 // 用量账本现在按批 checkpoint，离开前台时补一次落盘，避免丢计数。
-                Task { await AIUsageLedger.shared.flush(dataDirectory: dataStore.dataDirectory) }
+                Task {
+                    await AIUsageLedger.shared.flush(dataDirectory: dataStore.dataDirectory)
+                    await ConversationRunCheckpointStore.shared.flush(dataDirectory: dataStore.dataDirectory)
+                }
                 // 代码草稿是防抖写盘的，离开前台时把最后不到一秒的输入也落下去。
                 codingSession.drafts.flush()
                 practiceSession.flush()
@@ -71,7 +75,10 @@ struct RootWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             codingSession.drafts.flush()
             practiceSession.flush()
-            Task { await AIUsageLedger.shared.flush(dataDirectory: dataStore.dataDirectory) }
+            Task {
+                await AIUsageLedger.shared.flush(dataDirectory: dataStore.dataDirectory)
+                await ConversationRunCheckpointStore.shared.flush(dataDirectory: dataStore.dataDirectory)
+            }
         }
         .sheet(isPresented: $workspace.isUsagePresented) {
             UsageStatisticsView(workspace: workspace, dataStore: dataStore)
@@ -136,6 +143,40 @@ struct RootWorkspaceView: View {
         .font(AppDesign.Typography.body)
         .tint(.accentColor)
         .background(Color(nsColor: .textBackgroundColor).ignoresSafeArea())
+    }
+
+    /// 恢复只还原 UI 状态，不自动重发外部请求。用户点“重试”后才从同一 user turn
+    /// 重新执行整轮，并复用 assistant messageID。
+    @MainActor
+    private func restoreConversationCheckpointIfNeeded() async {
+        guard workspace.conversationGeneration == nil else { return }
+        let checkpoints = await ConversationRunCheckpointStore.shared.resumable(
+            dataDirectory: dataStore.dataDirectory
+        )
+        for checkpoint in checkpoints {
+            guard let conversation = dataStore.conversations.first(where: { $0.id == checkpoint.threadID }),
+                  conversation.messages.contains(where: { $0.id == checkpoint.userMessageID && $0.role == "user" }),
+                  dataStore.providers.contains(where: { $0.id == checkpoint.providerID && $0.isConfigured })
+            else {
+                await ConversationRunCheckpointStore.shared.remove(
+                    threadID: checkpoint.threadID,
+                    dataDirectory: dataStore.dataDirectory
+                )
+                continue
+            }
+            // 只看本轮开始后的 ledger 事件：更早一次失败留下的同 ID partial 不算本轮成功。
+            if checkpoint.wasCommitted(in: conversation.ledgerEvents) {
+                await ConversationRunCheckpointStore.shared.remove(
+                    threadID: checkpoint.threadID,
+                    dataDirectory: dataStore.dataDirectory
+                )
+                continue
+            }
+            workspace.conversationGeneration = ConversationGenerationSnapshot(checkpoint: checkpoint)
+            workspace.selectedConversationID = checkpoint.threadID
+            workspace.selectedSection = .conversation
+            return
+        }
     }
 
     private var preferredColorScheme: ColorScheme? {

@@ -56,12 +56,17 @@ struct ConversationSummary: Identifiable, Hashable, Sendable {
     let summary: String
     let updatedAt: Date
     let messageCount: Int
+    /// append-only 事实源；`messages` 只是它的当前投影。旧数据尚未迁移时由 loader
+    /// 用 legacy messages 构造确定性的 bootstrap events。
+    var ledgerEvents: [ConversationLedgerEvent] = []
     let messages: [ConversationTranscriptMessage]
     var aiTitle = ""
     var aiSummary = ""
     var contextSummary = ""
-    /// 生成 `contextSummary` 时对话有多少条消息。摘要要滚动重写而不是只写一次，
-    /// 否则长对话被压缩掉的早期消息既不在上下文里、也不在摘要里，等于永久丢失。
+    /// 摘要已经覆盖到的 ledger sequence。修订同一 messageID 也会推进 sequence，
+    /// 不再用“当前有几条消息”当水位线——那看不见覆盖更新和 tombstone。
+    var archivedLedgerSequence = 0
+    /// 仅为兼容旧 Electron 数据字段与既有消费者；native 的增量归档用 sequence。
     var archivedMessageCount = 0
     var usage = ConversationUsage()
     var lastChatUsage = ConversationUsage()
@@ -1522,14 +1527,20 @@ final class LegacyDataStore {
     @discardableResult
     func createConversation(title: String, firstMessage: ConversationTranscriptMessage? = nil) throws -> String {
         let id = "c_\(Int(Date.now.timeIntervalSince1970 * 1_000))_\(Self.shortIdentifier())"
-        let messages = firstMessage.map { [Self.messageDictionary($0)] } ?? []
+        let now = Date.now
+        let ledger = firstMessage.map {
+            ConversationLedger.appending($0, to: [], recordedAt: now)
+        } ?? []
+        let messages = ConversationLedger.project(ledger)
         try updateConversationFile { root in
             root[id] = [
-                "schemaVersion": 3,
+                "schemaVersion": 4,
                 "title": Self.conversationTitle(from: title),
                 "summary": "",
-                "messages": messages,
-                "updatedAt": Int(Date.now.timeIntervalSince1970 * 1_000)
+                "ledgerEvents": ledger.map(Self.ledgerEventDictionary),
+                // 兼容旧客户端；native 读取时以 ledgerEvents 的投影为准。
+                "messages": messages.map(Self.messageDictionary),
+                "updatedAt": Int(now.timeIntervalSince1970 * 1_000)
             ]
         }
         reload()
@@ -1537,56 +1548,69 @@ final class LegacyDataStore {
     }
 
     func appendMessage(_ message: ConversationTranscriptMessage, to conversationID: String) throws {
-        let updatedAt = Date.now
-        try updateConversationFile { root in
-            guard var conversation = root[conversationID] as? [String: Any] else {
-                throw ConversationStoreError.missingConversation
-            }
-            var messages = conversation["messages"] as? [[String: Any]] ?? []
-            messages.append(Self.messageDictionary(message))
-            conversation["messages"] = messages
-            conversation["updatedAt"] = Int(updatedAt.timeIntervalSince1970 * 1_000)
-            root[conversationID] = conversation
-        }
-        try updateCachedConversation(conversationID, updatedAt: updatedAt) { messages in
-            messages.append(message)
-        }
+        try appendLedgerUpsert(message, to: conversationID)
     }
 
+    /// LangGraph `add_messages` 语义：同一 messageID 不是原地覆写，而是追加一次修订事件。
     func upsertMessage(_ message: ConversationTranscriptMessage, in conversationID: String) throws {
+        try appendLedgerUpsert(message, to: conversationID)
+    }
+
+    private func appendLedgerUpsert(
+        _ message: ConversationTranscriptMessage,
+        to conversationID: String
+    ) throws {
         let updatedAt = Date.now
+        let eventID = "le_\(UUID().uuidString.lowercased())"
+        var persistedEvent: ConversationLedgerEvent?
         try updateConversationFile { root in
             guard var conversation = root[conversationID] as? [String: Any] else {
                 throw ConversationStoreError.missingConversation
             }
-            var messages = conversation["messages"] as? [[String: Any]] ?? []
-            if let index = messages.firstIndex(where: { ($0["id"] as? String) == message.id }) {
-                messages[index] = Self.messageDictionary(message)
-            } else {
-                messages.append(Self.messageDictionary(message))
-            }
-            conversation["messages"] = messages
+            let existing = Self.ledgerEvents(from: conversation)
+            let updated = ConversationLedger.appending(
+                message,
+                to: existing,
+                eventID: eventID,
+                recordedAt: updatedAt
+            )
+            persistedEvent = updated.last
+            conversation["schemaVersion"] = 4
+            conversation["ledgerEvents"] = updated.map(Self.ledgerEventDictionary)
+            // 保持旧客户端可读，但它只是物化缓存，不再是 native 的事实源。
+            conversation["messages"] = ConversationLedger.project(updated).map(Self.messageDictionary)
             conversation["updatedAt"] = Int(updatedAt.timeIntervalSince1970 * 1_000)
             root[conversationID] = conversation
         }
-        try updateCachedConversation(conversationID, updatedAt: updatedAt) { messages in
-            if let index = messages.firstIndex(where: { $0.id == message.id }) { messages[index] = message }
-            else { messages.append(message) }
-        }
+        guard let persistedEvent else { throw ConversationStoreError.missingConversation }
+        try updateCachedConversation(
+            conversationID,
+            updatedAt: updatedAt,
+            appending: persistedEvent
+        )
     }
 
-    /// `archivedMessageCount` 是摘要覆盖到第几条消息的水位线，滚动重写时靠它决定
-    /// 增量喂哪几条。标题只在第一次归档时写，后面滚动更新不该把用户看惯的标题改掉。
+    /// 摘要按 ledger sequence 记水位线：同一 messageID 的修订也能触发增量归档。
+    /// `messageCount` 仅继续写给旧客户端；标题只在首次归档时改。
+    @discardableResult
     func applyArchive(
         _ archive: ConversationArchiveSummary,
         to conversationID: String,
+        coveredLedgerSequence: Int,
+        expectedPreviousSequence: Int,
         messageCount: Int,
         renames: Bool
-    ) throws {
+    ) throws -> Bool {
+        var applied = false
         try updateConversationFile { root in
             guard var conversation = root[conversationID] as? [String: Any] else {
                 throw ConversationStoreError.missingConversation
             }
+            let currentSequence = conversation.int(
+                "archivedLedgerSequence",
+                fallback: conversation.int("archivedMessageCount")
+            )
+            guard currentSequence == expectedPreviousSequence else { return }
             if renames {
                 conversation["aiTitle"] = archive.title
                 conversation["title"] = archive.title
@@ -1594,11 +1618,14 @@ final class LegacyDataStore {
             conversation["aiSummary"] = archive.summary
             conversation["contextSummary"] = archive.context
             conversation["summary"] = archive.summary
+            conversation["archivedLedgerSequence"] = coveredLedgerSequence
             conversation["archivedMessageCount"] = messageCount
             conversation["updatedAt"] = Int(Date.now.timeIntervalSince1970 * 1_000)
             root[conversationID] = conversation
+            applied = true
         }
-        reload()
+        if applied { reload() }
+        return applied
     }
 
     func renameConversation(_ conversationID: String, title: String) throws {
@@ -2227,7 +2254,7 @@ final class LegacyDataStore {
     private func updateCachedConversation(
         _ conversationID: String,
         updatedAt: Date,
-        mutateMessages: (inout [ConversationTranscriptMessage]) -> Void
+        appending event: ConversationLedgerEvent
     ) throws {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else {
             // Another process can add a conversation after this store was loaded.
@@ -2242,18 +2269,20 @@ final class LegacyDataStore {
             return
         }
         let previous = conversations[index]
-        var messages = previous.messages
-        mutateMessages(&messages)
+        let ledger = previous.ledgerEvents + [event]
+        let messages = ConversationLedger.project(ledger)
         conversations[index] = ConversationSummary(
             id: previous.id,
             title: previous.title,
             summary: previous.summary,
             updatedAt: updatedAt,
             messageCount: messages.count,
+            ledgerEvents: ledger,
             messages: messages,
             aiTitle: previous.aiTitle,
             aiSummary: previous.aiSummary,
             contextSummary: previous.contextSummary,
+            archivedLedgerSequence: previous.archivedLedgerSequence,
             archivedMessageCount: previous.archivedMessageCount,
             usage: previous.usage,
             lastChatUsage: previous.lastChatUsage,
@@ -2293,6 +2322,89 @@ final class LegacyDataStore {
         return value
     }
 
+    private static func ledgerEventDictionary(_ event: ConversationLedgerEvent) -> [String: Any] {
+        var value: [String: Any] = [
+            "id": event.id,
+            "sequence": event.sequence,
+            "kind": event.kind.rawValue,
+            "messageId": event.messageID,
+            "recordedAt": Int(event.recordedAt.timeIntervalSince1970 * 1_000)
+        ]
+        if let message = event.message { value["message"] = messageDictionary(message) }
+        return value
+    }
+
+    /// 读取 ledger；旧文件没有 ledger 时用 legacy messages 确定性引导。
+    private static func ledgerEvents(from conversation: [String: Any]) -> [ConversationLedgerEvent] {
+        let legacy = (conversation["messages"] as? [[String: Any]] ?? []).compactMap(parseMessage)
+        if let rawEvents = conversation["ledgerEvents"] as? [[String: Any]], !rawEvents.isEmpty {
+            var parsed = rawEvents.compactMap(parseLedgerEvent)
+            if !parsed.isEmpty {
+                // 共享文件的旧 Electron 客户端还只会 append `messages`。迁移后若它追加了
+                // ledger 不认识的新 ID，native 读取时把这些新消息纳入投影；下一次 native
+                // mutation 会原子写回正式事件。已有 ID 的原地改写不反向覆盖 append-only 事实。
+                var known = Set(parsed.map(\.messageID))
+                for message in legacy where known.insert(message.id).inserted {
+                    parsed = ConversationLedger.appending(
+                        message,
+                        to: parsed,
+                        eventID: "external:\(message.id)",
+                        recordedAt: message.createdAt
+                    )
+                }
+                return parsed
+            }
+        }
+        return ConversationLedger.bootstrap(legacy)
+    }
+
+    private static func parseLedgerEvent(_ value: [String: Any]) -> ConversationLedgerEvent? {
+        guard let kind = ConversationLedgerEvent.Kind(rawValue: value.string("kind")),
+              !value.string("messageId").isEmpty
+        else { return nil }
+        let message = (value["message"] as? [String: Any]).flatMap(parseMessage)
+        if kind == .upsert, message == nil { return nil }
+        return ConversationLedgerEvent(
+            id: value.string("id", fallback: UUID().uuidString),
+            sequence: max(1, value.int("sequence")),
+            kind: kind,
+            messageID: value.string("messageId"),
+            recordedAt: value.date("recordedAt"),
+            message: message
+        )
+    }
+
+    private static func parseMessage(_ message: [String: Any]) -> ConversationTranscriptMessage? {
+        guard message.string("role") != "system", !message.string("content").isEmpty else { return nil }
+        return ConversationTranscriptMessage(
+            id: message.string("id", fallback: UUID().uuidString),
+            role: message.string("role"),
+            content: ConversationQueueContent.visibleContent(fromStored: message.string("content")),
+            createdAt: message.date("createdAt"),
+            artifacts: (message["artifacts"] as? [[String: Any]] ?? []).compactMap { artifact in
+                let url = artifact.string("url")
+                guard !url.isEmpty else { return nil }
+                return ConversationArtifact(
+                    type: artifact.string("type", fallback: "file"),
+                    url: url,
+                    title: artifact.string("title")
+                )
+            },
+            toolCalls: message.stringArray("toolCalls"),
+            agentRuns: (message["agentRuns"] as? [[String: Any]] ?? []).compactMap { raw in
+                guard let id = raw["id"] as? String, let name = raw["name"] as? String else { return nil }
+                return AgentToolRun(
+                    id: id,
+                    name: name,
+                    arguments: raw["arguments"] as? String ?? "",
+                    resultJSON: raw["result"] as? String ?? ""
+                )
+            },
+            providerID: message.string("providerId"),
+            model: message.string("model")
+        )
+    }
+
     private static func conversationTitle(from text: String) -> String {
         let compact = text
             .split(whereSeparator: \.isWhitespace)
@@ -2310,51 +2422,23 @@ final class LegacyDataStore {
         guard let root = jsonObject(named: "conversations.json") as? [String: Any] else { return [] }
         return root.compactMap { id, rawValue in
             guard let value = rawValue as? [String: Any] else { return nil }
-            let messages = value["messages"] as? [Any] ?? []
-            let transcript = messages.compactMap { rawMessage -> ConversationTranscriptMessage? in
-                guard
-                    let message = rawMessage as? [String: Any],
-                    message.string("role") != "system",
-                    !message.string("content").isEmpty
-                else { return nil }
-                return ConversationTranscriptMessage(
-                    id: message.string("id", fallback: UUID().uuidString),
-                    role: message.string("role"),
-                    content: ConversationQueueContent.visibleContent(fromStored: message.string("content")),
-                    createdAt: message.date("createdAt"),
-                    artifacts: (message["artifacts"] as? [[String: Any]] ?? []).compactMap { artifact in
-                        let url = artifact.string("url")
-                        guard !url.isEmpty else { return nil }
-                        return ConversationArtifact(
-                            type: artifact.string("type", fallback: "file"),
-                            url: url,
-                            title: artifact.string("title")
-                        )
-                    },
-                    toolCalls: message.stringArray("toolCalls"),
-                    agentRuns: (message["agentRuns"] as? [[String: Any]] ?? []).compactMap { raw in
-                        guard let id = raw["id"] as? String, let name = raw["name"] as? String else { return nil }
-                        return AgentToolRun(
-                            id: id,
-                            name: name,
-                            arguments: raw["arguments"] as? String ?? "",
-                            resultJSON: raw["result"] as? String ?? ""
-                        )
-                    },
-                    providerID: message.string("providerId"),
-                    model: message.string("model")
-                )
-            }
+            let ledger = Self.ledgerEvents(from: value)
+            let transcript = ConversationLedger.project(ledger)
             return ConversationSummary(
                 id: id,
                 title: value.string("title", fallback: "未命名会话"),
                 summary: value.string("summary"),
                 updatedAt: value.date("updatedAt"),
                 messageCount: transcript.count,
+                ledgerEvents: ledger,
                 messages: transcript,
                 aiTitle: value.string("aiTitle"),
                 aiSummary: value.string("aiSummary"),
                 contextSummary: value.string("contextSummary"),
+                archivedLedgerSequence: value.int(
+                    "archivedLedgerSequence",
+                    fallback: min(value.int("archivedMessageCount"), ConversationLedger.latestSequence(ledger))
+                ),
                 archivedMessageCount: value.int("archivedMessageCount"),
                 usage: Self.parseUsage(value["usage"]),
                 lastChatUsage: Self.parseUsage(value["lastChatUsage"]),

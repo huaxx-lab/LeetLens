@@ -1,6 +1,6 @@
 import Foundation
 
-struct ChatRequestMessage: Sendable {
+struct ChatRequestMessage: Equatable, Sendable {
     let role: String
     let content: String
 }
@@ -25,7 +25,7 @@ enum ChatStreamChunk: Sendable, Equatable {
 /// 一次客户端函数调用。`resultJSON` 是 `LearningAgentTools.Output.json`——
 /// 同一份数据既是回给模型的 tool 消息体，也是界面渲染卡片的数据源，
 /// 不存在"界面好看但模型看到的是另一套"。
-struct AgentToolRun: Sendable, Equatable, Hashable {
+struct AgentToolRun: Codable, Sendable, Equatable, Hashable {
     let id: String
     let name: String
     let arguments: String
