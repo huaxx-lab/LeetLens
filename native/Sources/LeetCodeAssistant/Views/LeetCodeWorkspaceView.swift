@@ -976,6 +976,7 @@ struct LeetCodeWorkspaceView: View {
                     code: .constant(session.code),
                     language: session.language,
                     diagnostics: $session.diagnostics,
+                    externalDiagnostics: session.judgeDiagnostics.issues,
                     loadStatus: $editorLoadStatus,
                     completionStatus: $completionStatus,
                     formatRequest: editorFormatRequest,
@@ -1321,14 +1322,14 @@ struct LeetCodeWorkspaceView: View {
                         .help("把改过的测试用例恢复成力扣官方样例")
                     }
                     Label(
-                        session.diagnostics.statusText,
-                        systemImage: session.diagnostics.issues.isEmpty ? "checkmark.circle" : "exclamationmark.triangle"
+                        session.combinedDiagnostics.statusText,
+                        systemImage: session.combinedDiagnostics.issues.isEmpty ? "checkmark.circle" : "exclamationmark.triangle"
                     )
                     .font(AppDesign.Typography.micro)
-                    .foregroundStyle(session.diagnostics.issues.isEmpty ? Color.secondary : Color.orange)
+                    .foregroundStyle(session.combinedDiagnostics.issues.isEmpty ? Color.secondary : Color.orange)
                     .lineLimit(1)
                     .layoutPriority(-1)
-                    .help(session.diagnostics.issues.prefix(4).map { "第 \($0.line) 行：\($0.message)" }.joined(separator: "\n"))
+                    .help(session.combinedDiagnostics.issues.prefix(4).map { "第 \($0.line) 行：\($0.message)" }.joined(separator: "\n"))
                 }
                 .padding(.trailing, AppDesign.Spacing.sm)
                 Divider()

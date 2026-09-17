@@ -11,7 +11,7 @@ struct LeetCodeEditorDiagnostics: Hashable, Sendable {
     var issues: [LeetCodeEditorIssue] = []
 
     var statusText: String {
-        issues.isEmpty ? "基础语法检查通过" : "发现 \(issues.count) 处基础语法问题"
+        issues.isEmpty ? "代码检查通过" : "发现 \(issues.count) 处代码问题"
     }
 }
 
@@ -69,6 +69,8 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
     @Binding var code: String
     let language: String
     @Binding var diagnostics: LeetCodeEditorDiagnostics
+    /// 力扣编译器 / 运行时明确给出的行号（1 起算）。与本地语法扫描分层。
+    var externalDiagnostics: [LeetCodeEditorIssue] = []
     @Binding var loadStatus: LeetCodeEditorLoadStatus
     @Binding var completionStatus: LeetCodeCompletionStatus
     let formatRequest: Int
@@ -147,6 +149,7 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
         private var lastLanguage = ""
         private var lastDocumentID: String?
         private var lastSuggestionsRevision = -1
+        private var lastExternalDiagnostics: [LeetCodeEditorIssue] = []
         /// 从当前值起算：页面切回来重建编辑器时，不能把会话里累积的计数当成新请求再执行一遍。
         private var lastAcceptAllRequest: Int
         private var lastFormatRequest = 0
@@ -319,13 +322,15 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
                 lastWebCode = parent.code
                 // 载入和标注放在同一段脚本里：分两次调用的话顺序不保证，标注可能先画到旧文档上。
                 lastSuggestionsRevision = parent.suggestionsRevision
+                lastExternalDiagnostics = parent.externalDiagnostics
                 callJavaScript(
-                    "window.editorBridge.load(code, language, id); window.editorBridge.setSuggestions(suggestions, id)",
+                    "window.editorBridge.load(code, language, id); window.editorBridge.setSuggestions(suggestions, id); window.editorBridge.setExternalDiagnostics(diagnostics, id)",
                     arguments: [
                         "code": parent.code,
                         "language": normalizedLanguage,
                         "id": parent.documentID,
-                        "suggestions": Self.suggestionPayload(parent.suggestions)
+                        "suggestions": Self.suggestionPayload(parent.suggestions),
+                        "diagnostics": Self.diagnosticPayload(parent.externalDiagnostics)
                     ]
                 )
             } else if parent.code != lastWebCode {
@@ -340,6 +345,13 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
                 callJavaScript(
                     "window.editorBridge.setSuggestions(suggestions, id)",
                     arguments: ["suggestions": Self.suggestionPayload(parent.suggestions), "id": parent.documentID]
+                )
+            }
+            if parent.externalDiagnostics != lastExternalDiagnostics {
+                lastExternalDiagnostics = parent.externalDiagnostics
+                callJavaScript(
+                    "window.editorBridge.setExternalDiagnostics(diagnostics, id)",
+                    arguments: ["diagnostics": Self.diagnosticPayload(parent.externalDiagnostics), "id": parent.documentID]
                 )
             }
             if parent.acceptAllSuggestionsRequest != lastAcceptAllRequest {
@@ -358,6 +370,10 @@ struct LeetCodeCodeEditor: NSViewRepresentable {
                 lastRedoRequest = parent.redoRequest
                 callJavaScript("window.editorBridge.redo()")
             }
+        }
+
+        private static func diagnosticPayload(_ diagnostics: [LeetCodeEditorIssue]) -> [[String: Any]] {
+            diagnostics.map { ["line": $0.line, "message": $0.message] }
         }
 
         private static func suggestionPayload(_ suggestions: [CodeReviewSuggestion]) -> [[String: Any]] {

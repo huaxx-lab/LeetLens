@@ -283,7 +283,17 @@ final class LeetCodeCodingSession {
     private(set) var documentID = ""
     private(set) var templateCode = ""
     var selection: LeetCodeEditorSelection?
+    /// CodeMirror 的本地括号 / 字符串检查。
     var diagnostics = LeetCodeEditorDiagnostics()
+    /// 最近一次评测中编译器 / 运行时明确指出的行。与本地检查分开，避免互相覆盖。
+    private(set) var judgeDiagnostics = LeetCodeEditorDiagnostics()
+
+    var combinedDiagnostics: LeetCodeEditorDiagnostics {
+        var seen = Set<String>()
+        return LeetCodeEditorDiagnostics(issues: (judgeDiagnostics.issues + diagnostics.issues).filter {
+            seen.insert("\($0.line)|\($0.message)").inserted
+        })
+    }
 
     /// 刚被「重置」替换掉的代码，给浮层上的「撤销」用。
     private(set) var discardedCode: (documentID: String, code: String)?
@@ -415,6 +425,7 @@ final class LeetCodeCodingSession {
         discardedCode = nil
         selection = nil
         diagnostics = LeetCodeEditorDiagnostics()
+        judgeDiagnostics = LeetCodeEditorDiagnostics()
         clearReview()
     }
 
@@ -429,6 +440,8 @@ final class LeetCodeCodingSession {
     func editorDidChange(_ value: String, documentID reported: String) {
         guard !isLoadingDocument, reported == documentID, value != code else { return }
         code = value
+        // 行号属于送去判题的那一版代码；用户一改，旧行号立刻失效。
+        judgeDiagnostics = LeetCodeEditorDiagnostics()
         persistCurrentCode()
         relocateSuggestions()
     }
@@ -547,6 +560,7 @@ final class LeetCodeCodingSession {
         guard !documentID.isEmpty, !isPristine else { return }
         discardedCode = (documentID, code)
         code = templateCode
+        judgeDiagnostics = LeetCodeEditorDiagnostics()
         persistCurrentCode()
         resetNoticeVersion &+= 1
     }
@@ -554,6 +568,7 @@ final class LeetCodeCodingSession {
     func undoReset() {
         guard let discarded = discardedCode, discarded.documentID == documentID else { return }
         code = discarded.code
+        judgeDiagnostics = LeetCodeEditorDiagnostics()
         discardedCode = nil
         persistCurrentCode()
     }
@@ -634,11 +649,13 @@ final class LeetCodeCodingSession {
         let cases = testCases(for: slug, official: workspace.sampleTestCases)
         let testCase = cases[selectedTestCaseIndex(for: slug, caseCount: cases.count)]
         let code = code, language = language
+        let judgedDocumentID = documentID
         judgeSlug = slug
         judgeAction = action
         judgeProgress = nil
         judgeResult = nil
         judgeError = nil
+        judgeDiagnostics = LeetCodeEditorDiagnostics()
         defer { judgeAction = nil }
         do {
             let result: LeetCodeJudgeResult
@@ -666,6 +683,8 @@ final class LeetCodeCodingSession {
                 }
             }
             judgeResult = result
+            // 只标到送审的原始代码：请求在路上时若换题、换语言或改过代码，行号已经失效。
+            applyJudgeDiagnostics(result, judgedCode: code, judgedDocumentID: judgedDocumentID)
             // 没通过就自动把问题标到代码上（设置里可以关）。
             if !result.accepted, autoReviewOnFailure, selectedQuestionSlug == slug {
                 requestReview(.judgeFailure, question: question, workspace: workspace, dataStore: dataStore)
@@ -682,6 +701,20 @@ final class LeetCodeCodingSession {
         } catch {
             judgeError = error.localizedDescription
         }
+    }
+
+    /// 只把评测行号落到送审时的原始文档。网络返回前用户可能已经改代码、换语言或换题，
+    /// 那时旧行号必须丢弃，否则会把一个真实错误标到错误的位置。
+    func applyJudgeDiagnostics(
+        _ result: LeetCodeJudgeResult,
+        judgedCode: String,
+        judgedDocumentID: String
+    ) {
+        guard documentID == judgedDocumentID, code == judgedCode else { return }
+        let lineCount = code.split(separator: "\n", omittingEmptySubsequences: false).count
+        judgeDiagnostics = LeetCodeEditorDiagnostics(
+            issues: LeetCodeJudgeDiagnosticParser.parse(result, codeLineCount: lineCount)
+        )
     }
 
     // MARK: - AI

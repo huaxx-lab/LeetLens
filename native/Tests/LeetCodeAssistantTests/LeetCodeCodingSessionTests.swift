@@ -379,3 +379,64 @@ final class LeetCodeFailureActionContractTests: XCTestCase {
         XCTAssertFalse(block.contains("if hasHints"), "第一次失败时就要直接出现，不能依赖提示状态")
     }
 }
+
+@MainActor
+final class LeetCodeJudgeDiagnosticLifecycleTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUp() async throws {
+        directory = FileManager.default.temporaryDirectory
+            .appending(path: "judge-diagnostics-\(UUID().uuidString)", directoryHint: .isDirectory)
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    func testMatchingJudgeSnapshotAddsIssueAndNextEditClearsIt() {
+        let session = makeSession()
+        let judgedCode = session.code
+        let documentID = session.documentID
+        session.applyJudgeDiagnostics(result(line: 2), judgedCode: judgedCode, judgedDocumentID: documentID)
+        XCTAssertEqual(session.judgeDiagnostics.issues.map(\.line), [2])
+
+        session.editorDidChange(judgedCode + "\n// changed", documentID: documentID)
+        XCTAssertTrue(session.judgeDiagnostics.issues.isEmpty, "代码一改，旧评测行号立即失效")
+    }
+
+    func testStaleJudgeSnapshotDoesNotAnnotateChangedCodeOrAnotherDocument() {
+        let session = makeSession()
+        let judgedCode = session.code
+        let documentID = session.documentID
+        session.editorDidChange(judgedCode + "\n// changed while judging", documentID: documentID)
+        session.applyJudgeDiagnostics(result(line: 2), judgedCode: judgedCode, judgedDocumentID: documentID)
+        XCTAssertTrue(session.judgeDiagnostics.issues.isEmpty)
+
+        session.applyJudgeDiagnostics(result(line: 2), judgedCode: session.code, judgedDocumentID: "other|java")
+        XCTAssertTrue(session.judgeDiagnostics.issues.isEmpty)
+    }
+
+    private func makeSession() -> LeetCodeCodingSession {
+        let template = "class Solution {\n    int answer() { return 1; }\n}"
+        let workspace = LeetCodeQuestionWorkspace(
+            titleSlug: "test", questionID: "1", htmlContent: "", difficulty: "EASY",
+            topicTags: [], sampleTestCases: [""],
+            snippets: [LeetCodeCodeSnippet(language: "Java", languageSlug: "java", code: template)],
+            canRun: true, canSubmit: true
+        )
+        let session = LeetCodeCodingSession()
+        session.attach(dataDirectory: directory)
+        session.openQuestion("test", solving: true)
+        session.prepareEditor(for: workspace)
+        return session
+    }
+
+    private func result(line: Int) -> LeetCodeJudgeResult {
+        LeetCodeJudgeResult(
+            kind: "submit", taskID: "t", state: "SUCCESS", status: "Compile Error",
+            statusCode: 20, accepted: false, totalCorrect: 0, totalTestCases: 1,
+            runtime: "", memory: "", compileError: "Line \(line): error: missing return value",
+            runtimeError: "", input: "", output: "", expectedOutput: "", compareResult: "", aiJudgeMessage: ""
+        )
+    }
+}

@@ -241,6 +241,7 @@
     let language = 'java';
     let changeTimer = 0;
     let diagnosticTimer = 0;
+    let externalDiagnostics = [];
     let remoteTimer = 0;
     let completionGeneration = 0;
     let completionSnapshot = null;
@@ -780,21 +781,44 @@
       return issues.slice(0, 24);
     }
 
-    function updateDiagnostics() {
+    function renderDiagnostics(localIssues) {
       editor.clearGutter('diagnostic-gutter');
-      // 回调必须没有返回值：CodeMirror 的 eachLine 遇到回调返回真值就停止遍历，
-      // 而 removeLineClass 删成功时返回行句柄（真值）——写成箭头表达式时只清掉第一条红行，
-      // 后面的红行永远留着（两处以上括号错误、修好之后仍有一行发红）。
+      // 回调必须没有返回值：CodeMirror 的 eachLine 遇到回调返回真值就停止遍历。
       editor.eachLine(handle => { editor.removeLineClass(handle, 'background', 'diagnostic-line'); });
+      const seenLines = new Set();
+      // 编译器 / 运行时诊断优先：它比本地括号扫描更具体；同一行只画一个 marker，
+      // title 合并多条消息，避免后画的一条悄悄覆盖前一条。
+      const grouped = new Map();
+      for (const issue of [...externalDiagnostics, ...localIssues]) {
+        if (!Number.isInteger(issue.line) || issue.line < 0 || issue.line >= editor.lineCount()) continue;
+        const messages = grouped.get(issue.line) || [];
+        if (issue.message && !messages.includes(issue.message)) messages.push(issue.message);
+        grouped.set(issue.line, messages);
+      }
+      for (const [line, messages] of grouped) {
+        if (seenLines.has(line)) continue; seenLines.add(line);
+        const marker = document.createElement('span');
+        marker.className = 'diagnostic-marker'; marker.textContent = '●'; marker.title = messages.join('\n');
+        editor.setGutterMarker(line, 'diagnostic-gutter', marker);
+        editor.addLineClass(line, 'background', 'diagnostic-line');
+      }
+    }
+
+    function updateDiagnostics() {
       const issues = scanDiagnostics(editor.getValue());
-      const seen = new Set();
-      issues.forEach(issue => {
-        if (seen.has(issue.line)) return; seen.add(issue.line);
-        const marker = document.createElement('span'); marker.className = 'diagnostic-marker'; marker.textContent = '●'; marker.title = issue.message;
-        editor.setGutterMarker(issue.line, 'diagnostic-gutter', marker);
-        editor.addLineClass(issue.line, 'background', 'diagnostic-line');
-      });
+      renderDiagnostics(issues);
+      // 只把本地扫描结果回报给 Swift；评测诊断本来就是 Swift 下发的，不能回流后翻倍。
       post('editorDiagnostics', { issues });
+    }
+
+    function setExternalDiagnostics(list) {
+      externalDiagnostics.splice(0, externalDiagnostics.length, ...(Array.isArray(list) ? list : [])
+        .map(issue => ({
+          line: Math.max(0, Number(issue.line || 1) - 1),
+          message: String(issue.message || '')
+        }))
+        .filter(issue => issue.message));
+      renderDiagnostics(scanDiagnostics(editor.getValue()));
     }
 
     // 宿主要按内容高度自适应外框，否则写死的高度会把代码结尾裁掉。
@@ -947,6 +971,10 @@
     }
 
     editor.on('change', (_, change) => {
+      if (!['+aiFix', 'setValue', '+reset'].includes(change.origin) && externalDiagnostics.length) {
+        externalDiagnostics.splice(0, externalDiagnostics.length);
+        renderDiagnostics(scanDiagnostics(editor.getValue()));
+      }
       if (change.origin === '+aiFix' || change.origin === 'setValue' || !suggestionEntries.length) return;
       clearTimeout(staleTimer);
       staleTimer = setTimeout(() => {
@@ -999,6 +1027,7 @@
       // CodeMirror 的 setValue 本身是可撤销的——不清历史，换题后 ⌘Z 会把上一题的代码撤回来。
       load(value, lang, id) {
         setSuggestions([]);
+        externalDiagnostics.splice(0, externalDiagnostics.length);
         documentID = id || '';
         language = modes[lang] ? lang : 'java';
         editor.setOption('mode', modes[lang] || modes.java);
@@ -1023,6 +1052,7 @@
       },
       setValue(value, lang) { this.load(value, lang, documentID); },
       setSuggestions(list, id) { if (id && id !== documentID) return; setSuggestions(list); },
+      setExternalDiagnostics(list, id) { if (id && id !== documentID) return; setExternalDiagnostics(list); },
       acceptAllSuggestions() { acceptAllSuggestions(); },
       setLanguage(lang) { language = modes[lang] ? lang : 'java'; editor.setOption('mode', modes[lang] || modes.java); updateDiagnostics(); },
       applyRemoteCompletions(requestID, items) {
