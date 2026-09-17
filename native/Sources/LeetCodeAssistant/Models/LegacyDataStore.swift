@@ -591,6 +591,13 @@ final class LegacyDataStore {
             currentConversationID: currentConversationID,
             limit: max(limit, 8)
         )
+        // 四维置信度闸门：够不上就整批丢弃。
+        // 把无关记忆塞进回答，用户读到的是"监控感"而不是"贴心"——
+        // 宁可这一轮不注入，也不要注入一段跑题的旧对话。
+        let indexedChunks = await conversationMemoryIndex.documentCount
+        guard RetrievalConfidence.evaluate(local, indexedChunkCount: indexedChunks).isAcceptable else {
+            return []
+        }
         guard settings.cloudMemoryRerankingEnabled else { return Array(local.prefix(limit)) }
 
         // Reranker 看宽候选池，失败时无感回退本地 RRF / BM25，绝不让记忆服务拖垮主对话。

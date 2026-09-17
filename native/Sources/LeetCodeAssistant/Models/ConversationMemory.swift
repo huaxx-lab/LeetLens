@@ -5,8 +5,16 @@ struct ConversationMemoryMatch: Equatable {
     let conversationID: String
     let title: String
     let content: String
+    /// 展示用的名次分。RRF 按**名次**算，单路召回时第一名恒定 `1/(k+1)`，
+    /// 归一化后永远是同一个数——它能排序，但**不表示"有多相关"**。
     let score: Int
     let messageIDs: [String]
+    /// 校准过的相关度 [0,1]，由原始 BM25 与词覆盖推导。
+    /// 弃权判断只能看它：RRF 分数天生没有绝对相关度，融合两路垃圾也会给出
+    /// 一个排得很整齐的垃圾列表。
+    var relevance: Double = 0
+    /// 查询里有多少有信息量的词被这一段命中。
+    var coverage: Double = 0
 }
 
 /// 离线评测也走和生产相同的候选生成，只切换排序策略。
@@ -225,6 +233,7 @@ actor ConversationMemoryIndex {
     private struct RankedDocument {
         let document: Document
         let bm25Score: Double
+        let coverage: Double
         let semanticSimilarity: Double
         let bm25Rank: Int?
         let denseRank: Int?
@@ -387,6 +396,7 @@ actor ConversationMemoryIndex {
             return RankedDocument(
                 document: signal.document,
                 bm25Score: signal.bm25,
+                coverage: signal.coverage,
                 semanticSimilarity: signal.dense,
                 bm25Rank: bm25Ranks[id],
                 denseRank: denseRanks[id],
@@ -458,9 +468,43 @@ actor ConversationMemoryIndex {
                 title: candidate.document.title,
                 content: candidate.document.content,
                 score: Int((raw * 100).rounded()),
-                messageIDs: candidate.document.messageIDs
+                messageIDs: candidate.document.messageIDs,
+                // 校准值独立于融合名次：BM25 原始分做饱和压缩，再按词覆盖折扣。
+                // 一个高 IDF 的词就能把 BM25 顶上去，覆盖率不会。
+                relevance: Self.calibratedRelevance(
+                    bm25: candidate.bm25Score,
+                    coverage: candidate.coverage,
+                    dense: candidate.semanticSimilarity
+                ),
+                coverage: candidate.coverage
             )
         }
+    }
+
+    /// 把原始信号压成可跨查询比较的 [0,1]。
+    ///
+    /// BM25 无上界且随语料浮动，先做饱和压缩；再按词覆盖打折——
+    /// 负例的典型形态是"一个偶然的高 IDF 词把分数顶上去"，覆盖率能识破它。
+    /// dense 可用时取两者较高的一方：同义改写的词面覆盖天然低，不该被覆盖率罚死。
+    static func calibratedRelevance(bm25: Double, coverage: Double, dense: Double) -> Double {
+        // 这里**不掺覆盖率**：覆盖率是置信度的独立一维，混进来两维就重复了，
+        // 拟合时会把它的权重压到 0，等于白设一维。
+        let saturated = bm25 / (bm25 + 6)
+        // 千问向量归一化后余弦在 [0,1]；关闭时 dense 恒为 0，不影响结果。
+        let semantic = max(0, min(1, dense))
+        return max(0, min(1, max(saturated, semantic * 0.9)))
+    }
+
+    /// 查询里有多少**有信息量的词**被这一段命中。
+    ///
+    /// 负例的共同特征是只撞上一个偶然的词（"Docker 容器怎么挂载卷" 只命中 `容器`），
+    /// 而正例会命中查询里大部分实词。它和分数本身正交：BM25 分数做了长度归一化，
+    /// 一个高 IDF 的词就能把分数顶上去，覆盖率不会。
+    func queryCoverage(of match: ConversationMemoryMatch, query: String) -> Double {
+        let terms = Set(Self.tokens(in: query).filter { $0.count >= 2 })
+        guard !terms.isEmpty else { return 0 }
+        let matched = Set(Self.tokens(in: match.content).filter { $0.count >= 2 })
+        return Double(terms.intersection(matched).count) / Double(terms.count)
     }
 
     private static func sameDocument(_ lhs: Document, _ rhs: Document) -> Bool {

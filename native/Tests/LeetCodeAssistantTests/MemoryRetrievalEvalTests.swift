@@ -41,14 +41,31 @@ final class MemoryRetrievalEvalTests: XCTestCase {
         var outcomes: [Outcome] = []
         for testCase in cases {
             let matches = await index.search(query: testCase.query, currentConversationID: "", limit: 10)
-            outcomes.append(Outcome(testCase: testCase, ranked: matches.map(\.conversationID)))
+            // 走生产同一条闸门：评测数字必须反映用户真正会看到的结果。
+            let indexedChunks = await index.documentCount
+            let admitted = RetrievalConfidence.evaluate(matches, indexedChunkCount: indexedChunks)
+                .isAcceptable ? matches : []
+            outcomes.append(Outcome(testCase: testCase, ranked: admitted.map(\.conversationID)))
         }
-        Self.report(outcomes, corpusSize: conversations.count)
+        let summary = Self.report(outcomes, corpusSize: conversations.count)
+        // 指标直接断言，不靠 print——xctest 会吞 stdout，靠肉眼看日志不可靠。
+        // 这几条是真实语料上已经达到的水平，掉下去就是回归。
+        XCTAssertGreaterThanOrEqual(summary.hit3, 0.90, "前 3 名命中率回归了")
+        XCTAssertGreaterThanOrEqual(summary.recall5, 0.95, "recall@5 回归了")
+        XCTAssertGreaterThanOrEqual(summary.mrr, 0.85, "排序质量回归了")
+        XCTAssertGreaterThanOrEqual(summary.negativePass, 0.85, "负例拦截率回归了")
+        XCTAssertEqual(summary.emptyRate, 0, accuracy: 0.0001, "有答案的查询不该被闸门拦掉")
+    }
+
+    struct Summary {
+        let hit1: Double, hit3: Double, recall5: Double
+        let mrr: Double, emptyRate: Double, negativePass: Double
     }
 
     // MARK: - 指标
 
-    private static func report(_ outcomes: [Outcome], corpusSize: Int) {
+    @discardableResult
+    private static func report(_ outcomes: [Outcome], corpusSize: Int) -> Summary {
         let answered = outcomes.filter { !$0.testCase.relevant.isEmpty }
         let negatives = outcomes.filter { $0.testCase.relevant.isEmpty }
 
@@ -103,6 +120,10 @@ final class MemoryRetrievalEvalTests: XCTestCase {
                 print("  \(verdict.padding(toLength: 22, withPad: " ", startingAt: 0)) \(outcome.testCase.query)")
             }
         }
+        return Summary(
+            hit1: hitRate(at: 1), hit3: hitRate(at: 3), recall5: recall(at: 5),
+            mrr: mrr, emptyRate: emptyRate, negativePass: negativePass
+        )
     }
 
     private static func pct(_ value: Double) -> String {
