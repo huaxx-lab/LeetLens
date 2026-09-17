@@ -166,6 +166,10 @@ final class WorkspaceState {
     /// 由简报消息的稳定 id 完成，因此不会往 UserDefaults 再藏一份业务状态。
     var presentedDailyBriefDay = ""
     var queuedConversationDrafts: [QueuedConversationDraft] = []
+    /// 会话目录进入会话时冻结一次。它在 prompt 的稳定前缀里，
+    /// 而它本来按"最近更新"排序——别的会话一动就重排，等于每轮把整段历史
+    /// 踢出前缀缓存。冻结不损语义：目录只是一张"存在哪些历史"的地图。
+    @ObservationIgnored var frozenMemoryDirectory: [String: [ConversationMemoryDirectoryEntry]] = [:]
     var queuedConversationID: String?
     @ObservationIgnored var conversationGenerationTask: Task<Void, Never>?
     var studyPlanSuggestion: AIStudyPlanSuggestion?

@@ -1126,6 +1126,47 @@ final class ChatService: @unchecked Sendable {
     /// Extracted from `makeRequest` so the three transports can be compared directly
     /// in tests: the same logical conversation must reach Chat, Responses and Messages
     /// with equivalent semantics.
+    /// 把内部的 `context` 角色落成各协议认识的形状。
+    ///
+    /// - chat / responses：尾部的一条 `system`，位置就是它在数组里的位置。
+    /// - messages（Anthropic）：折进**紧随其后的那条 user 消息**正文。
+    ///   它的 system 是顶层字段，会被提到最前面；而且要求 user/assistant 交替，
+    ///   不能直接插一条同角色消息。
+    static func wireMessages(
+        _ messages: [ChatRequestMessage],
+        mode: String
+    ) -> [ChatRequestMessage] {
+        guard messages.contains(where: { $0.role == PromptAssembly.volatileRole }) else { return messages }
+        guard mode == "messages" else {
+            return messages.map {
+                $0.role == PromptAssembly.volatileRole
+                    ? ChatRequestMessage(role: "system", content: $0.content)
+                    : $0
+            }
+        }
+
+        var result: [ChatRequestMessage] = []
+        var pending: [String] = []
+        for message in messages {
+            guard message.role != PromptAssembly.volatileRole else {
+                pending.append(message.content)
+                continue
+            }
+            if !pending.isEmpty, message.role == "user" {
+                let merged = (pending + [message.content]).joined(separator: "\n\n")
+                result.append(ChatRequestMessage(role: "user", content: merged))
+                pending.removeAll()
+                continue
+            }
+            result.append(message)
+        }
+        // 后面没有 user 消息了（理论上不会发生）：补一条，总比把上下文丢了强。
+        if !pending.isEmpty {
+            result.append(ChatRequestMessage(role: "user", content: pending.joined(separator: "\n\n")))
+        }
+        return result
+    }
+
     static func requestBody(
         mode: String,
         model: String,
@@ -1133,7 +1174,8 @@ final class ChatService: @unchecked Sendable {
         messages: [ChatRequestMessage],
         reasoningLevel: ReasoningLevel
     ) -> [String: Any] {
-        let apiMessages = messages.map { ["role": $0.role, "content": $0.content] }
+        let converted = wireMessages(messages, mode: mode)
+        let apiMessages = converted.map { ["role": $0.role, "content": $0.content] }
         var body: [String: Any] = ["model": model, "stream": true]
         if mode == "responses" {
             body["input"] = apiMessages
@@ -1145,7 +1187,7 @@ final class ChatService: @unchecked Sendable {
         } else if mode == "messages" {
             body["messages"] = apiMessages.filter { $0["role"] != "system" }
             body["max_tokens"] = 8_192
-            if let system = systemEnvelope(from: messages) { body["system"] = system }
+            if let system = systemEnvelope(from: converted) { body["system"] = system }
         } else {
             body["messages"] = apiMessages
             body["stream_options"] = ["include_usage": true]
@@ -1370,6 +1412,7 @@ final class ChatService: @unchecked Sendable {
     static func systemEnvelope(from messages: [ChatRequestMessage]) -> String? {
         let sections = messages
             .lazy
+            // 易变块绝不能进 envelope：进去就被提到队首，前缀缓存白改。
             .filter { $0.role == "system" }
             .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }

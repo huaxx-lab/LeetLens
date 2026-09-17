@@ -351,8 +351,9 @@ struct ConversationWorkspaceView: View {
                 let requestMessages = requestHistory(
                     conversationID: conversationID,
                     excluding: replacingMessageID,
-                    memoryPrompts: memory.prompts,
-                    continuityPrompts: continuityPrompts,
+                    stableMemoryPrompts: memory.stable,
+                    // 宿主上下文（题面、当前代码、评测结果）和衔接说明同样每轮都变。
+                    volatileContextPrompts: memory.volatileContext + continuityPrompts,
                     runtimeIdentity: runtimeIdentity
                 )
                 // 工具跑在主线程拍下的这份快照上：`LegacyDataStore` 是 @MainActor 的，
@@ -570,8 +571,8 @@ struct ConversationWorkspaceView: View {
     private func requestHistory(
         conversationID: String,
         excluding messageID: String?,
-        memoryPrompts: [String],
-        continuityPrompts: [String],
+        stableMemoryPrompts: [String],
+        volatileContextPrompts: [String],
         runtimeIdentity: ConversationRuntimeIdentity
     ) -> [ChatRequestMessage] {
         // 工具是"能力"，不是"义务"：不把它写成必须调用，否则问"快排怎么写"
@@ -594,14 +595,19 @@ struct ConversationWorkspaceView: View {
             return [system]
         }
         let identity = ChatRequestMessage(role: "system", content: runtimeIdentity.systemPrompt)
-        let memory = memoryPrompts.map { ChatRequestMessage(role: "system", content: $0) }
-        let continuity = continuityPrompts.map { ChatRequestMessage(role: "system", content: $0) }
+        let stableMemory = stableMemoryPrompts.map { ChatRequestMessage(role: "system", content: $0) }
         let managed = ConversationContextManager.build(
             messages: conversation.messages.filter { $0.id != messageID },
             contextSummary: conversation.contextSummary,
             settings: dataStore.settings
         )
-        return [system, identity] + memory + continuity + managed
+        // 顺序由缓存决定：稳定前缀 → 历史 → 本轮易变块。
+        // 检索片段和宿主上下文每轮都不同，排在前面会把整段历史踢出前缀缓存。
+        var sections = PromptAssembly.Sections()
+        sections.stable = [system, identity] + stableMemory
+        sections.history = managed
+        sections.volatileContext = volatileContextPrompts
+        return sections.messages
     }
 
     /// 工具卡片上的跳转。`kind` 决定落到哪个页面，`id` 是那个页面要选中的东西。
@@ -694,7 +700,10 @@ struct ConversationWorkspaceView: View {
     }
 
     private struct MemoryInjection {
-        var prompts: [String] = []
+        /// 逐字不变、进稳定前缀：长期事实与会话目录。
+        var stable: [String] = []
+        /// 每轮都不同、必须排在最后：检索出来的原文片段。
+        var volatileContext: [String] = []
         var didRetrieve = false
     }
 
@@ -711,31 +720,44 @@ struct ConversationWorkspaceView: View {
         // L0：极小且稳定，每轮都相关，不值得为它做一次判断。
         let facts = await ConversationMemoryFactStore.shared.facts(dataDirectory: dataStore.dataDirectory)
         if let factPrompt = ConversationMemoryFactPrompt.prompt(for: facts) {
-            injection.prompts.append(factPrompt)
+            injection.stable.append(factPrompt)
         }
 
-        let directory = ConversationMemoryDirectory.entries(
-            from: dataStore.conversations,
-            excluding: conversationID
-        )
-        let tier = ConversationMemoryPolicy.tier(for: query, directory: directory)
-        guard tier != .none else { return injection }
-
-        // L1：目录常驻。模型是在"有地图"的情况下判断，而不是盲猜存过什么。
+        // 目录**常驻**，不再按轮开关。它以前跟着 tier 整块出现或消失，
+        // 等于每轮切一次前缀——比它自己那几百 token 贵得多。
+        // 进入会话时冻结一次：本会话内不随别的会话更新而重排。
+        let directory = frozenDirectory(for: conversationID)
         if let index = ConversationMemoryDirectory.prompt(for: directory) {
-            injection.prompts.append(index)
+            injection.stable.append(index)
         }
-        guard tier == .retrieve else { return injection }
 
+        guard ConversationMemoryPolicy.tier(for: query, directory: directory) == .retrieve else {
+            return injection
+        }
         let matches = await dataStore.searchMemory(
             query: query,
             currentConversationID: conversationID
         )
         if let retrieved = ConversationMemoryIndex.prompt(for: matches) {
-            injection.prompts.append(retrieved)
+            // 检索片段是每轮都变的那一块，只能排在最后。
+            injection.volatileContext.append(retrieved)
             injection.didRetrieve = true
         }
         return injection
+    }
+
+    /// 会话目录在进入会话时冻结。
+    ///
+    /// 它本来按"最近更新"排序，别的会话一动就重排——前缀里放一个会变的东西，
+    /// 等于每轮把它后面的全部内容踢出缓存。冻结不损语义：目录只是一张地图。
+    private func frozenDirectory(for conversationID: String) -> [ConversationMemoryDirectoryEntry] {
+        if let cached = workspace.frozenMemoryDirectory[conversationID] { return cached }
+        let entries = ConversationMemoryDirectory.entries(
+            from: dataStore.conversations,
+            excluding: conversationID
+        )
+        workspace.frozenMemoryDirectory[conversationID] = entries
+        return entries
     }
 
     private func persistGeneratedMessage(conversationID: String, messageID: String) throws {
