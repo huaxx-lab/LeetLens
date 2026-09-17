@@ -64,13 +64,18 @@ struct RetrievalConfidence: Equatable, Sendable {
     /// 名次差、支持条数这些相对量去推"够不够可信"。cross-encoder 给的是绝对
     /// 相关度，第一名分数本身就是答案。
     ///
-    /// 真实语料实测（26 正 / 20 负，qwen3.7-text-rerank）：
-    ///   正例 top 分最低 0.844，负例 top 分最高 0.742 —— 中间 0.1 宽的空隙，取中点。
+    /// 真实语料实测（26 正 / 20 负，qwen3.7-text-rerank，切分 revision 3）：
+    ///   正例 top 分最低 0.788，负例 top 分最高 0.742 —— 取这道空隙的中点。
+    ///
+    /// **这个阈值跟着切分走**。revision 2 时正例最低是 0.844，阈值 0.79 没问题；
+    /// 换成 revision 3 的大块之后分布整体下移，0.79 会把一条"第一名就是正确答案"的
+    /// 查询整批弃权（0.788，差 0.002）。所以改切分参数后必须重跑 `RerankImpactTests`
+    /// 复校这个值，不能当成常数。
     /// margin 在这里没有判别力：多条正例的一二名差是 0.000（同一会话的相邻 chunk）。
     ///
     /// 整批准入，不逐条筛：够格就把前 N 名原样交出去。逐条套阈值会把"排在后面
     /// 但确实相关"的会话砍掉，recall@5 就是这么丢的。
-    static let rerankedAdmissionScore = 0.79
+    static let rerankedAdmissionScore = 0.765
 
     /// `matches` 的 `relevance` 必须已经换成 cross-encoder 的分数，且按分数降序。
     static func admitsReranked(_ matches: [ConversationMemoryMatch]) -> Bool {

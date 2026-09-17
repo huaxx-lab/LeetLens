@@ -167,3 +167,73 @@ final class ConversationChunkerTests: XCTestCase {
         )
     }
 }
+
+// MARK: - 重叠必须是完整语义单元
+
+extension ConversationChunkerTests {
+    /// 最硬的一条不变量：重叠回带的永远是完整句子 / 完整列表项 / 完整代码块。
+    func testOverlapNeverCarriesHalfASentence() {
+        let answer = """
+        先说结论：用双指针。第一步是排序，让相同的数挨在一起。\
+        第二步左右夹逼，遇到重复就跳过。第三步注意边界，左指针不能越过右指针。\
+        最后复杂度是 O(n^2)，排序那一步是 O(n log n)。
+        """
+        let chunks = ConversationChunker.chunks(
+            title: "三数之和",
+            archive: [],
+            messages: [("u1", "user", "怎么做"), ("a1", "assistant", answer)],
+            limits: .init(targetTokens: 40, minimumTokens: 10, maximumTokens: 80, overlapTokens: 16)
+        )
+        XCTAssertGreaterThan(chunks.count, 1, "语料要足够切成多块才验证得了重叠")
+
+        for chunk in chunks {
+            let body = chunk.content
+                .components(separatedBy: "\n")
+                .filter { !$0.hasPrefix("【") && !$0.hasPrefix("（承接问题：") }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty, !body.contains("```") else { continue }
+            // 正文必须以句末标点收尾——出现半句话说明切在了句子中间。
+            let last = body.last.map(String.init) ?? ""
+            XCTAssertTrue(
+                "。！？；：".contains(last) || body.hasSuffix("）") || body.hasSuffix(")"),
+                "出现半句：…\(body.suffix(24))"
+            )
+        }
+    }
+
+    /// 重叠必须保持原文顺序，不能把跨过大句子的两段拼在一起。
+    func testOverlapKeepsSourceOrder() {
+        let answer = "第一句很短。" + String(repeating: "这是一个非常长的句子需要占掉很多预算", count: 12) + "。最后一句也很短。"
+        let chunks = ConversationChunker.chunks(
+            title: "顺序",
+            archive: [],
+            messages: [("u1", "user", "问"), ("a1", "assistant", answer)],
+            limits: .init(targetTokens: 60, minimumTokens: 10, maximumTokens: 120, overlapTokens: 20)
+        )
+        for chunk in chunks {
+            if let a = chunk.content.range(of: "第一句很短。"),
+               let b = chunk.content.range(of: "最后一句也很短。") {
+                XCTAssertLessThan(a.lowerBound, b.lowerBound, "重叠拼接把原文顺序打乱了")
+            }
+        }
+    }
+
+    /// 碎块不单独入库：只有标签、正文一个字都没有的块是纯噪声。
+    func testTinyFragmentsAreMergedInsteadOfIndexedAlone() {
+        let answer = "**示例 1**\n\n```java\nint a = 1;\n```\n\n**示例 2**\n\n```java\nint b = 2;\n```"
+        let chunks = ConversationChunker.chunks(
+            title: "示例",
+            archive: [],
+            messages: [("u1", "user", "给例子"), ("a1", "assistant", answer)],
+            limits: .init(targetTokens: 360, minimumTokens: 120, maximumTokens: 620)
+        )
+        for chunk in chunks {
+            let body = chunk.content
+                .components(separatedBy: "\n")
+                .filter { !$0.hasPrefix("【") && !$0.hasPrefix("（承接问题：") && !$0.isEmpty }
+                .joined()
+            XCTAssertFalse(body == "AI：**示例 1**" || body == "AI：**示例 2**", "标签被单独切成一块")
+        }
+    }
+}

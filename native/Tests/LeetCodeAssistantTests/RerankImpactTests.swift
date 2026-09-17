@@ -85,6 +85,7 @@ final class RerankImpactTests: XCTestCase {
         say("规则当场定案 \(settledCount)/\(cases.count)，其余交给模型路由")
 
         var bm25: [Run] = [], fused: [Run] = [], full: [Run] = [], production: [Run] = []
+        var topScores: [(String, Bool, Double, Bool)] = []
         var dump: [[String: Any]] = []
         for testCase in cases {
             let skip = narrowSkipped.contains(testCase.query)
@@ -122,6 +123,10 @@ final class RerankImpactTests: XCTestCase {
                 if RetrievalConfidence.admitsReranked(scored) {
                     ranked = scored.prefix(10).map(\.conversationID)
                 }
+                if let top = scored.first {
+                    topScores.append((testCase.query, !testCase.relevant.isEmpty, top.relevance,
+                                      testCase.relevant.contains(top.conversationID)))
+                }
                 dump.append([
                     "query": testCase.query,
                     "positive": !testCase.relevant.isEmpty,
@@ -153,6 +158,15 @@ final class RerankImpactTests: XCTestCase {
             try JSONSerialization.data(withJSONObject: dump, options: [.prettyPrinted])
                 .write(to: URL(fileURLWithPath: NSString(string: dumpPath).expandingTildeInPath))
         }
+        say("")
+        say("── 正例里 top 分最低的几条（准入阈值 \(RetrievalConfidence.rerankedAdmissionScore)）──")
+        for (q, positive, score, correct) in topScores.filter(\.1).sorted(by: { $0.2 < $1.2 }).prefix(8) {
+            let mark = score >= RetrievalConfidence.rerankedAdmissionScore ? "放行" : "弃权"
+            say(String(format: "  %.3f %@ %@ %@ %@", score, mark,
+                       positive ? "正例" : "负例", correct ? "命中" : "未中", q))
+        }
+        let negativeTop = topScores.filter { !$0.1 }.map(\.2).max() ?? 0
+        say(String(format: "  负例 top 分最高 %.3f", negativeTop))
         try report.joined(separator: "\n").write(
             toFile: NSString(string: reportPath).expandingTildeInPath, atomically: true, encoding: .utf8)
 

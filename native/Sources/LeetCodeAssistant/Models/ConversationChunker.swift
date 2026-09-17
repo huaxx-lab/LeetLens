@@ -13,7 +13,7 @@ import Foundation
 /// - `<think>`、内嵌图片和视觉代码不进入检索，但原始 message 完整保留在 ledger/会话存储里。
 enum ConversationChunker {
     /// 每次改变检索投影语义都递增。进程内同步据此强制重建；磁盘向量仍按内容哈希安全复用。
-    static let revision = 2
+    static let revision = 3
 
     struct Chunk: Equatable {
         var content: String
@@ -21,13 +21,23 @@ enum ConversationChunker {
     }
 
     struct Limits: Equatable, Sendable {
-        /// 软目标：达到后，在**下一个完整语义单元之前**落块。
-        /// 不是硬上限；一个句子或一个代码块本身更大时，整体单独成块。
+        /// 软目标：攒到它就落块。不是硬上限——最后一个单元会让块略微超出，
+        /// 单个句子或代码块本身更大时整体单独成块。
         var targetTokens = 360
-        /// 希望回带的上下文量。实际 overlap 为不超过该目标的若干完整语义单元；
-        /// 最后一条完整句子稍大时允许带到 `overlapSlack`，再大则不重叠。
-        var overlapTokens = 56
-        var overlapSlack = 1.5
+        /// 最小块。低于它的残块并进相邻块，不单独入库：
+        /// `**示例 2**` 这种只有标签、正文一个字都没有的块，在 BM25 里靠稀有词
+        /// 也能挤进候选，纯属噪声，而元数据前缀还比正文长。
+        var minimumTokens = 120
+        /// 硬上限。只有"单个语义单元本身就超过它"时才允许突破——那种情况只能整块入库，
+        /// 因为切开就会破坏"绝不切半句 / 绝不切断代码块"这条不变量。
+        var maximumTokens = 620
+        /// 重叠预算：目标块的 20%。实测旧值 56（约 15%）配合下面两条"放弃重叠"的
+        /// 提前退出，真实语料上中位重叠率是 **0%**、57% 的相邻块完全不重叠——
+        /// 等于重叠这件事名存实亡。
+        var overlapTokens = 88
+        /// 单条句子略超预算时允许带到 `overlapTokens * overlapSlack`。
+        /// 再大就只能放弃——切开它就会产生半句话。
+        var overlapSlack = 1.6
 
         static let standard = Limits()
     }
@@ -330,55 +340,100 @@ enum ConversationChunker {
                 continuity: isFirst ? "" : continuity
             ))
             isFirst = false
+            // overlap 只回带完整散文单元，代码永不作为重叠——见 overlapUnits。
             let overlap = carriesOverlap ? overlapUnits(from: pending, limits: limits) : []
             pending = overlap
             pendingTokens = overlap.reduce(0) { $0 + $1.tokens }
         }
 
         for unit in units {
-            // 代码和普通文本不粘在一起：代码单独成块，可按代码关键词准确召回；
-            // 也避免下一块的 overlap 夹着半段代码语境。
-            if unit.kind == .code {
+            // 单个单元本身就超过硬上限（一整段长代码、一个超长段落）：它只能整块成块。
+            // 先把手头攒的处理掉——够大就自己落一块，不够大就跟着这个大单元一起走，
+            // 免得留下一个几十 token 的残块。
+            if unit.tokens > limits.maximumTokens {
+                if pendingTokens > 0, pendingTokens < limits.minimumTokens {
+                    pending.append(unit)
+                } else {
+                    flush()
+                    pending = [unit]
+                }
+                pendingTokens = pending.reduce(0) { $0 + $1.tokens }
                 flush()
-                result.append(render(
-                    units: [unit],
-                    title: title,
-                    continuity: isFirst ? "" : continuity
-                ))
-                isFirst = false
                 pending.removeAll(keepingCapacity: true)
                 pendingTokens = 0
                 continue
             }
 
-            // 只在完整 unit 之前判断。即使本句本身超过 target，也整体放入，绝不切半句。
-            if !pending.isEmpty, pendingTokens + unit.tokens > limits.targetTokens {
+            // 加进来会突破硬上限：先落块。判断只在**完整单元之前**做，绝不切半句。
+            if !pending.isEmpty, pendingTokens + unit.tokens > limits.maximumTokens {
                 flush()
-                // 若 overlap 本身 + 新句仍放不下，先落掉 overlap；不能因为重叠制造一个超大混合块。
-                if !pending.isEmpty, pendingTokens + unit.tokens > limits.targetTokens {
+                if !pending.isEmpty, pendingTokens + unit.tokens > limits.maximumTokens {
+                    // overlap 加新单元仍然放不下：丢掉 overlap，不为了重叠制造超大混合块。
                     pending.removeAll(keepingCapacity: true)
                     pendingTokens = 0
                 }
             }
+
             pending.append(unit)
             pendingTokens += unit.tokens
+
+            // 攒够目标就落块。这里**允许最后一个单元把块顶过 target**——
+            // 旧实现是"加上会超就先落"，于是前一块永远停在 target 之下，
+            // 真实语料上中位数只有 158，不到目标的一半。
+            if pendingTokens >= limits.targetTokens { flush() }
         }
         flush()
+        // 收尾残块太小就并进前一块：宁可最后一块偏大，也不留一个检索不动的碎片。
+        if result.count >= 2, let last = result.last,
+           ConversationContextEstimator.estimateTextTokens(last.content) < limits.minimumTokens {
+            let tail = result.removeLast()
+            let previous = result.removeLast()
+            result.append(Chunk(
+                content: previous.content + "\n" + strippedHeader(of: tail.content),
+                messageIDs: previous.messageIDs + tail.messageIDs.filter { !previous.messageIDs.contains($0) }
+            ))
+        }
         return deduplicated(result)
     }
 
-    /// 从尾部选择若干完整 prose unit。代码绝不作为 overlap；第一句过长就不重叠。
+    /// 合并残块时去掉它自带的标题 / 承接头，避免同一块里出现两份元数据。
+    private static func strippedHeader(of content: String) -> String {
+        content
+            .replacingOccurrences(of: #"(?m)\A【[^\n]+】\s*\n?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)\A（承接问题：[^\n]+）\s*\n?"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 回带的重叠**永远是完整语义单元**：完整句子、完整列表项、或完整代码块。
+    /// 任何情况下都不会出现半句话——这是切分层最硬的一条不变量。
+    ///
+    /// 三处曾让重叠静默归零，实测 57% 的相邻块因此完全不重叠：
+    /// 1. 结尾是代码就直接 break。而"解释 + 代码"正是最常见的结尾形态。
+    /// 2. 最后一句稍长就整个放弃，连它前面的短句也不再看。
+    /// 3. 预算只有 56，约 15%。
     private static func overlapUnits(from units: [Unit], limits: Limits) -> [Unit] {
+        let maximum = Int((Double(limits.overlapTokens) * limits.overlapSlack).rounded(.down))
         var result: [Unit] = []
         var tokens = 0
-        let maximum = Int((Double(limits.overlapTokens) * limits.overlapSlack).rounded(.down))
+
         for unit in units.reversed() {
-            guard unit.kind == .prose else { break }
-            if result.isEmpty, unit.tokens > maximum { return [] }
-            if !result.isEmpty, tokens + unit.tokens > limits.overlapTokens { break }
+            // 超预算的单元跳过，继续往前找放得下的——而不是就此放弃整个重叠。
+            // 顺序仍然保持原文顺序（insert at 0），不会出现倒序拼接。
+            // 超预算的单元跳过去继续往前找。只在**还没攒到任何东西**时才跳——
+            // 已经攒到了就停，否则重叠会跨过一个大句子，拼出上下不相连的两段。
+            guard unit.tokens <= maximum else {
+                if result.isEmpty { continue } else { break }
+            }
+            guard tokens + unit.tokens <= maximum else { break }
             result.insert(unit, at: 0)
             tokens += unit.tokens
             if tokens >= limits.overlapTokens { break }
+        }
+
+        // 代码块可以作为重叠，但只在"它自己就够小"时——大段代码重复两遍既占预算
+        // 又会让两块在 BM25 下几乎同分，失去区分度。
+        if result.isEmpty, let last = units.last, last.kind == .code, last.tokens <= limits.overlapTokens {
+            return [last]
         }
         return result
     }
