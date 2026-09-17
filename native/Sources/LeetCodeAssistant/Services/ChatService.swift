@@ -159,6 +159,12 @@ final class ChatService: @unchecked Sendable {
                         ["role": $0.role, "content": $0.content] as [String: Any]
                     }
                     var didYieldText = false
+                    // 三道计数闸：轮数（maximumAgentRounds）只管轮，管不住一轮里
+                    // 并行对同一个坏工具反复调用，也管不住工具返回一轮轮累积。
+                    var toolBudget = AgentToolBudget()
+                    let toolResultBudget = AgentToolBudgetLimits.resolve(
+                        availableInputTokens: Self.availableInputTokens(dataDirectory: dataDirectory)
+                    ).totalTokens
                     /// Responses 终止事件里带回的完整 output 条目（含 reasoning）。
                     /// 下一轮要把它们原样回灌——不少供应商拒绝「上一轮思考丢了」的续写，
                     /// 只送 function_call / function_call_output 会直接报错。
@@ -289,7 +295,16 @@ final class ChatService: @unchecked Sendable {
                             try Task.checkCancellation()
                             let run = AgentToolRun(id: call.id, name: call.name, arguments: call.arguments)
                             continuation.yield(.agentToolStarted(run))
-                            let result = await agentTools?(call.name, call.arguments) ?? "{}"
+                            // 同一个工具已经失败够多次就不再真的执行：模型会对坏掉的
+                            // 工具死磕，每次都要一次真实往返。
+                            let result: String
+                            if toolBudget.isExhausted(call.name) {
+                                result = Self.exhaustedToolPayload(call.name)
+                            } else {
+                                result = await agentTools?(call.name, call.arguments)
+                                    ?? Self.executorMissingPayload(call.name)
+                                if Self.isFailedToolResult(result) { toolBudget.recordFailure(call.name) }
+                            }
                             observedTools[call.name, default: 0] += 1
                             var finished = run
                             finished.resultJSON = result
@@ -307,6 +322,21 @@ final class ChatService: @unchecked Sendable {
                                     "content": result
                                 ])
                             }
+                        }
+
+                        // 本轮结果落定后再守一次：工具返回是一轮轮堆上去的，
+                        // 静态预算挡不住累积。超限只折叠最老的内容，绝不删消息
+                        // ——删掉会破坏 tool_call_id 配对，供应商直接 400。
+                        _ = Self.degradeOldestToolResults(&wireMessages, budgetTokens: toolResultBudget)
+
+                        // 多个工具连续失败时，与其让它继续空转，不如收手让模型作答。
+                        if toolBudget.shouldStopOfferingTools {
+                            wireMessages.append([
+                                "role": "system",
+                                "content": "多个工具连续失败，本轮不再提供工具。请基于已经获得的信息给出最终回答，"
+                                    + "并如实说明哪些信息没查到，不要编造。"
+                            ])
+                            break
                         }
                     }
                     guard didYieldText else { throw ChatServiceError.emptyResponse }
@@ -1194,6 +1224,91 @@ final class ChatService: @unchecked Sendable {
             outcome: outcome,
             durationMilliseconds: elapsed
         )
+    }
+
+    /// 上下文窗口减去预留输出。工具预算按它推导，所以换小窗口的模型时
+    /// 工具返回会自动变短，而不是等着 400。
+    static func availableInputTokens(dataDirectory: URL) -> Int {
+        let url = dataDirectory.appending(path: "settings.json")
+        guard let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let policy = root["contextPolicy"] as? [String: Any]
+        else { return 120_000 }
+        let window = (policy["contextWindowTokens"] as? NSNumber)?.doubleValue ?? 128_000
+        let reserved = min((policy["reservedOutputTokens"] as? NSNumber)?.doubleValue ?? 8_192, window * 0.25)
+        return max(4_096, Int(window - reserved))
+    }
+
+    /// 工具结果是不是失败态。三态契约里 `status` 是显式的。
+    static func isFailedToolResult(_ json: String) -> Bool {
+        guard let data = json.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return true }
+        return root["status"] as? String == AgentToolStatus.failed.rawValue
+    }
+
+    static func exhaustedToolPayload(_ tool: String) -> String {
+        let summary = "\(tool) 本轮已经失败 \(AgentToolBudget.failuresPerTool) 次，不再重试。"
+            + "请不要再调用它，直接基于已有信息作答。"
+        return Self.failurePayload(tool: tool, summary: summary)
+    }
+
+    static func executorMissingPayload(_ tool: String) -> String {
+        Self.failurePayload(tool: tool, summary: "本轮没有可用的工具执行器，请基于已有信息作答。")
+    }
+
+    private static func failurePayload(tool: String, summary: String) -> String {
+        let payload: [String: Any] = [
+            "tool": tool,
+            "status": AgentToolStatus.failed.rawValue,
+            "summary": summary,
+            "items": []
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return #"{"status":"failed","summary":"工具不可用，请基于已有信息作答"}"#
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// ReAct 循环里的运行时守卫。
+    ///
+    /// 静态预算挡不住动态累积：工具返回会一轮轮堆在 `wireMessages` 里。超限时
+    /// **只能替换 tool 消息的内容，绝不能删除它**——删掉会破坏 `tool_call_id` 配对，
+    /// 供应商直接 400。降级从最老的一条开始，保留最近拿到的证据。
+    static func degradeOldestToolResults(
+        _ messages: inout [[String: Any]],
+        budgetTokens: Int
+    ) -> Bool {
+        func isToolResult(_ message: [String: Any]) -> Bool {
+            message["role"] as? String == "tool" || message["type"] as? String == "function_call_output"
+        }
+        func body(_ message: [String: Any]) -> String {
+            (message["content"] as? String) ?? (message["output"] as? String) ?? ""
+        }
+        let placeholder = "【这条工具结果因为上下文超限已被折叠，请基于后面的结果作答】"
+
+        var used = messages.reduce(0) { $0 + ConversationContextEstimator.estimateTextTokens(body($1)) }
+        guard used > budgetTokens else { return false }
+
+        // 最近一条工具结果永远保留：把它也折掉，这一轮工具就白跑了，
+        // 模型只剩一堆"已被折叠"，反而更容易编。宁可略超预算。
+        let newest = messages.lastIndex(where: isToolResult)
+        var didDegrade = false
+        for index in messages.indices where isToolResult(messages[index]) {
+            guard index != newest else { continue }
+            let text = body(messages[index])
+            guard text != placeholder, !text.isEmpty else { continue }
+            used -= ConversationContextEstimator.estimateTextTokens(text)
+            if messages[index]["content"] != nil {
+                messages[index]["content"] = placeholder
+            } else {
+                messages[index]["output"] = placeholder
+            }
+            used += ConversationContextEstimator.estimateTextTokens(placeholder)
+            didDegrade = true
+            if used <= budgetTokens { break }
+        }
+        return didDegrade
     }
 
     static func isCancellation(_ error: Error) -> Bool {

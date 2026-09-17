@@ -183,12 +183,14 @@ struct LearningAgentToolsTests {
             arguments: "{}",
             snapshot: AgentDataSnapshot(),
             memorySearch: { _ in [] },
-            solutionSearch: { _ in [] },
-            solutionRead: { _ in nil },
-            videoSearch: { _ in [] }
+            solutionSearch: { _ in .success([]) },
+            solutionRead: { _ in .success(nil) },
+            videoSearch: { _ in .success([]) }
         )
         let payload = try decode(output)
-        #expect(payload["error"] is String)
+        // 未知工具现在也走三态：给的是"该怎么办"，不是一个裸 error 字段。
+        #expect(payload["status"] as? String == "failed")
+        #expect((payload["summary"] as? String)?.isEmpty == false)
     }
 
     @Test("题目解析不到时不去发网络请求")
@@ -201,10 +203,10 @@ struct LearningAgentToolsTests {
             memorySearch: { _ in [] },
             solutionSearch: { _ in
                 await probe.markSearched()
-                return []
+                return .success([])
             },
-            solutionRead: { _ in nil },
-            videoSearch: { _ in [] }
+            solutionRead: { _ in .success(nil) },
+            videoSearch: { _ in .success([]) }
         )
         #expect(await !probe.wasSearched())
         let payload = try decode(output)
@@ -231,9 +233,9 @@ struct LearningAgentToolsTests {
             arguments: "{\"problem\":\"两数之和\"}",
             snapshot: snapshot,
             memorySearch: { _ in [] },
-            solutionSearch: { _ in hits },
-            solutionRead: { _ in nil },
-            videoSearch: { _ in [] }
+            solutionSearch: { _ in .success(hits) },
+            solutionRead: { _ in .success(nil) },
+            videoSearch: { _ in .success([]) }
         )
 
         let payload = try decode(output)
@@ -251,14 +253,15 @@ struct LearningAgentToolsTests {
             arguments: "{\"slug\":\"x\"}",
             snapshot: AgentDataSnapshot(),
             memorySearch: { _ in [] },
-            solutionSearch: { _ in [] },
-            solutionRead: { _ in String(repeating: "字", count: 9_000) },
-            videoSearch: { _ in [] }
+            solutionSearch: { _ in .success([]) },
+            solutionRead: { _ in .success(String(repeating: "字", count: 9_000)) },
+            videoSearch: { _ in .success([]) }
         )
         let payload = try decode(output)
         let markdown = try #require(payload["markdown"] as? String)
         #expect(markdown.count == 6_000)
         #expect((payload["summary"] as? String)?.contains("只读了前") == true)
+        #expect((payload["summary"] as? String)?.contains("片段") == true)
     }
 
     @Test("B 站视频结果带封面和安全的外部跳转")
@@ -268,10 +271,10 @@ struct LearningAgentToolsTests {
             arguments: "{\"query\":\"前缀和\"}",
             snapshot: AgentDataSnapshot(),
             memorySearch: { _ in [] },
-            solutionSearch: { _ in [] },
-            solutionRead: { _ in nil },
+            solutionSearch: { _ in .success([]) },
+            solutionRead: { _ in .success(nil) },
             videoSearch: { _ in
-                [LearningAgentTools.VideoHit(
+                .success([LearningAgentTools.VideoHit(
                     bvid: "BV1abc",
                     title: "前缀和从入门到实战",
                     description: "用例题讲清楚前缀和。",
@@ -280,7 +283,7 @@ struct LearningAgentToolsTests {
                     duration: "12:30",
                     playCount: 12345,
                     publishedAt: "2026-08-18"
-                )]
+                )])
             }
         )
         let payload = try decode(output)

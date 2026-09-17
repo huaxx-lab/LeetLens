@@ -358,6 +358,12 @@ struct ConversationWorkspaceView: View {
                 // 工具跑在主线程拍下的这份快照上：`LegacyDataStore` 是 @MainActor 的，
                 // 而 ReAct 循环在后台任务里；快照也保证一轮对话里模型看到的数据前后一致。
                 let toolContext = AgentDataSnapshot.capture(from: dataStore)
+                // 工具返回的长度上限由模型窗口推出来，不是写死的 6000 字：
+                // 4 轮 × 并行 × 单条长文会一直累积在 wireMessages 里，小窗口必然超窗。
+                let settings = dataStore.settings
+                let toolLimits = AgentToolBudgetLimits.resolve(
+                    availableInputTokens: max(4_096, Int(settings.contextWindowTokens - settings.reservedOutputTokens))
+                )
                 for try await chunk in service.stream(
                     messages: requestMessages,
                     reasoningLevel: workspace.reasoningLevel,
@@ -367,7 +373,8 @@ struct ConversationWorkspaceView: View {
                     agentTools: Self.agentToolExecutor(
                         snapshot: toolContext,
                         dataStore: dataStore,
-                        conversationID: conversationID
+                        conversationID: conversationID,
+                        limits: toolLimits
                     )
                 ) {
                     try Task.checkCancellation()
@@ -629,7 +636,8 @@ struct ConversationWorkspaceView: View {
     private static func agentToolExecutor(
         snapshot: AgentDataSnapshot,
         dataStore: LegacyDataStore,
-        conversationID: String
+        conversationID: String,
+        limits: AgentToolBudgetLimits
     ) -> AgentToolExecutor {
         { name, arguments in
             await LearningAgentTools.run(
@@ -650,26 +658,37 @@ struct ConversationWorkspaceView: View {
                         )
                     }
                 },
+                // 这三条外部能力以前一律 `try?`：网络错误被吞成空数组，模型收到
+                // 「暂时读不到题解」，就当成"这题没人写题解"，然后放弃或者自己编一篇。
+                // 失败必须原样传到模型，由它决定下一步。
                 solutionSearch: { slug in
-                    guard let page = try? await LeetCodeAPIClient.shared.fetchSolutions(titleSlug: slug, first: 20)
-                    else { return [] }
-                    return page.items.map { item in
-                        LearningAgentTools.SolutionHit(
-                            slug: item.slug,
-                            title: item.title,
-                            author: item.authorName,
-                            summary: String(item.summary.prefix(240)),
-                            views: item.views,
-                            isOfficial: item.isOfficial
-                        )
+                    do {
+                        let page = try await LeetCodeAPIClient.shared.fetchSolutions(titleSlug: slug, first: 20)
+                        return .success(page.items.map { item in
+                            LearningAgentTools.SolutionHit(
+                                slug: item.slug,
+                                title: item.title,
+                                author: item.authorName,
+                                summary: String(item.summary.prefix(240)),
+                                views: item.views,
+                                isOfficial: item.isOfficial
+                            )
+                        })
+                    } catch {
+                        return .failure(AgentToolFailure.from(error))
                     }
                 },
                 solutionRead: { slug in
-                    try? await LeetCodeAPIClient.shared.fetchSolutionArticle(slug: slug).markdown
+                    do {
+                        return .success(try await LeetCodeAPIClient.shared.fetchSolutionArticle(slug: slug).markdown)
+                    } catch {
+                        return .failure(AgentToolFailure.from(error))
+                    }
                 },
                 videoSearch: { query in
-                    await BilibiliAPIClient.search(query: query)
-                }
+                    .success(await BilibiliAPIClient.search(query: query))
+                },
+                limits: limits
             ).json
         }
     }

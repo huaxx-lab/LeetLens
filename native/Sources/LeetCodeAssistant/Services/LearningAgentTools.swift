@@ -20,11 +20,40 @@ enum LearningAgentTools {
         let json: String
 
         init(payload: [String: Any]) {
-            guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
-                json = "{}"
+            var enriched = payload
+            // 三态必须显式：模型只读 summary / status，界面读 items。
+            // 任何一条路径都不允许 summary 为空——空 JSON 会让模型自己脑补。
+            let items = payload["items"] as? [Any] ?? []
+            let hasBody = !items.isEmpty || !(payload["markdown"] as? String ?? "").isEmpty
+            if enriched["status"] == nil {
+                enriched["status"] = (hasBody ? AgentToolStatus.ok : .empty).rawValue
+            }
+            if (enriched["summary"] as? String ?? "").isEmpty {
+                enriched["summary"] = hasBody ? "已取得结果" : "没有查到相关内容"
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: enriched, options: [.sortedKeys]) else {
+                json = #"{"status":"failed","summary":"工具结果无法序列化，请基于已有信息作答"}"#
                 return
             }
             json = String(decoding: data, as: UTF8.self)
+        }
+
+        /// 失败态。和空结果严格分开：空结果可以下结论，失败不能。
+        static func failure(
+            tool: String,
+            title: String,
+            query: String,
+            failure: AgentToolFailure
+        ) -> Output {
+            Output(payload: [
+                "tool": tool,
+                "title": title,
+                "layout": Layout.list.rawValue,
+                "query": query,
+                "status": AgentToolStatus.failed.rawValue,
+                "summary": failure.narration(tool: tool, query: query),
+                "items": []
+            ])
         }
     }
 
@@ -297,9 +326,10 @@ enum LearningAgentTools {
         arguments: String,
         snapshot: AgentDataSnapshot,
         memorySearch: @Sendable (String) async -> [AgentDataSnapshot.MemoryMatch],
-        solutionSearch: @Sendable (String) async -> [SolutionHit],
-        solutionRead: @Sendable (String) async -> String?,
-        videoSearch: @Sendable (String) async -> [VideoHit]
+        solutionSearch: @Sendable (String) async -> Result<[SolutionHit], AgentToolFailure>,
+        solutionRead: @Sendable (String) async -> Result<String?, AgentToolFailure>,
+        videoSearch: @Sendable (String) async -> Result<[VideoHit], AgentToolFailure>,
+        limits: AgentToolBudgetLimits = .resolve(availableInputTokens: 120_000)
     ) async -> Output {
         let parsed = parseArguments(arguments)
         switch name {
@@ -321,26 +351,51 @@ enum LearningAgentTools {
             guard let slug = snapshot.resolveSlug(problem) else {
                 return notFound(tool: name, title: "题解检索", query: problem, reason: "题单里没有找到「\(problem)」")
             }
-            return solutions(
-                slug: slug,
-                problem: problem,
-                keyword: parsed.string("keyword"),
-                limit: parsed.limit,
-                hits: await solutionSearch(slug)
-            )
+            switch await solutionSearch(slug) {
+            case .success(let hits):
+                return solutions(
+                    slug: slug,
+                    problem: problem,
+                    keyword: parsed.string("keyword"),
+                    limit: parsed.limit,
+                    hits: hits
+                )
+            case .failure(let failure):
+                return Output.failure(tool: name, title: "题解检索", query: problem, failure: failure)
+            }
         case "read_leetcode_solution":
             let slug = parsed.string("slug")
-            return solutionArticle(slug: slug, markdown: await solutionRead(slug))
+            guard !slug.isEmpty else {
+                return Output.failure(
+                    tool: name, title: "题解正文", query: slug,
+                    failure: AgentToolFailure(
+                        kind: .invalidArguments,
+                        detail: #"缺少 slug。正确形状：{"slug":"trapping-rain-water"}"#
+                    )
+                )
+            }
+            switch await solutionRead(slug) {
+            case .success(let markdown):
+                return solutionArticle(slug: slug, markdown: markdown, limits: limits)
+            case .failure(let failure):
+                return Output.failure(tool: name, title: "题解正文", query: slug, failure: failure)
+            }
         case "search_bilibili_videos":
             let query = parsed.string("query")
-            return bilibiliVideos(query: query, limit: parsed.limit, hits: await videoSearch(query))
+            switch await videoSearch(query) {
+            case .success(let hits):
+                return bilibiliVideos(query: query, limit: parsed.limit, hits: hits)
+            case .failure(let failure):
+                return Output.failure(tool: name, title: "B 站视频", query: query, failure: failure)
+            }
         default:
-            return Output(payload: [
-                "tool": name,
-                "title": "未知工具",
-                "layout": Layout.list.rawValue,
-                "error": "没有名为 \(name) 的工具"
-            ])
+            return Output.failure(
+                tool: name, title: "未知工具", query: "",
+                failure: AgentToolFailure(
+                    kind: .invalidArguments,
+                    detail: "没有名为 \(name) 的工具，请只调用工具列表里给出的那几个"
+                )
+            )
         }
     }
 
@@ -553,6 +608,7 @@ enum LearningAgentTools {
             "title": title,
             "layout": Layout.list.rawValue,
             "query": query,
+            "status": AgentToolStatus.empty.rawValue,
             "summary": reason,
             "items": []
         ])
@@ -632,11 +688,18 @@ enum LearningAgentTools {
 
     /// 正文按 6000 字截断：一篇长题解能轻松吃掉几千 token，
     /// 而模型要的是解法本身，不是把整篇原样搬回来。
-    private static func solutionArticle(slug: String, markdown: String?) -> Output {
+    private static func solutionArticle(
+        slug: String,
+        markdown: String?,
+        limits: AgentToolBudgetLimits
+    ) -> Output {
         guard let markdown, !markdown.isEmpty else {
-            return notFound(tool: "read_leetcode_solution", title: "题解正文", query: slug, reason: "这篇题解读不到正文")
+            // 确定的空结果：接口答了，就是没正文。和"取不到"不是一回事。
+            return notFound(tool: "read_leetcode_solution", title: "题解正文", query: slug, reason: "这篇题解没有正文")
         }
-        let limit = 6_000
+        // 截断长度由模型窗口推出来：写死 6000 字是按 128k 窗口调的，
+        // 换成 32k 的模型，4 轮工具返回累积起来必然超窗。
+        let limit = limits.perCallCharacters
         let truncated = markdown.count > limit
         let body = truncated ? String(markdown.prefix(limit)) : markdown
         return Output(payload: [
@@ -644,7 +707,9 @@ enum LearningAgentTools {
             "title": "题解正文",
             "layout": Layout.list.rawValue,
             "query": slug,
-            "summary": truncated ? "正文较长，只读了前 \(limit) 字" : "已读取全文",
+            "summary": truncated
+                ? "正文较长，本轮窗口只读了前 \(limit) 字；这是片段，不是全文"
+                : "已读取全文",
             "markdown": body,
             "items": []
         ])
