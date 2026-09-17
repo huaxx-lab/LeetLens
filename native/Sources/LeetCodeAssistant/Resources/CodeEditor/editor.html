@@ -151,7 +151,10 @@
         ['new', '关键字'], ['if', '关键字'], ['else', '关键字'], ['for', '关键字'], ['while', '关键字'], ['int', '类型'], ['long', '类型'],
         ['double', '类型'], ['boolean', '类型'], ['String', '类型'], ['StringBuilder', '类型'], ['List', '类型'], ['ArrayList', '类型'],
         ['Map', '类型'], ['HashMap', '类型'], ['Set', '类型'], ['HashSet', '类型'], ['Deque', '类型'], ['ArrayDeque', '类型'],
-        ['PriorityQueue', '类型'], ['length', '属性'], ['size()', '方法'], ['add()', '方法'], ['get()', '方法'], ['set()', '方法'],
+        ['PriorityQueue', '类型'], ['Integer', '包装类型'], ['Character', '包装类型'], ['Long', '包装类型'],
+        ['Boolean', '包装类型'], ['Object', '类型'], ['LinkedList', '类型'], ['TreeMap', '有序 Map'], ['TreeSet', '有序 Set'],
+        ['Queue', '类型'], ['Stack', '类型'], ['Comparator', '类型'], ['Collections', '工具类'], ['Arrays', '工具类'],
+        ['Math', '工具类'], ['TreeNode', '力扣节点'], ['ListNode', '力扣节点'], ['length', '属性'], ['size()', '方法'], ['add()', '方法'], ['get()', '方法'], ['set()', '方法'],
         ['put()', '方法'], ['contains()', '方法'], ['containsKey()', '方法'], ['getOrDefault()', '方法'], ['computeIfAbsent()', '方法'],
         ['charAt()', '方法'], ['substring()', '方法'], ['toCharArray()', '方法'], ['append()', '方法'], ['reverse()', '方法'],
         ['Arrays.sort()', '函数'], ['Arrays.fill()', '函数'], ['Collections.sort()', '函数'], ['Math.max()', '函数'], ['Math.min()', '函数'], ['Math.abs()', '函数']
@@ -223,6 +226,14 @@
         ['ArrayDeque<>()', '双端队列'], ['PriorityQueue<>()', '优先队列'], ['StringBuilder()', '字符串构建器']
       ]
     };
+
+    /// 泛型参数位置的候选。尖括号里只可能是类型，给关键字没有意义。
+    const JAVA_TYPE_ARGUMENTS = [
+      ['Integer', '包装类型'], ['String', '类型'], ['Character', '包装类型'], ['Long', '包装类型'],
+      ['Double', '包装类型'], ['Boolean', '包装类型'], ['Object', '类型'],
+      ['List<Integer>', '集合'], ['List<String>', '集合'], ['Map<Integer, Integer>', '映射'],
+      ['Set<Integer>', '集合'], ['int[]', '数组'], ['TreeNode', '力扣节点'], ['ListNode', '力扣节点']
+    ];
 
     let language = 'java';
     let changeTimer = 0;
@@ -358,6 +369,39 @@
         .map(([text, detail]) => ({ text, displayText: text, detail, kind: 'type', render: renderCodeCompletion }));
     }
 
+    /// 把字符串、字符字面量和行注释涂成下划线，长度不变。
+    /// 不涂的话 `String s = "a<b"` 会被当成泛型没闭合。
+    function maskLiterals(text) {
+      return text
+        .replace(/\\./g, '__')
+        .replace(/"[^"]*"?/g, match => '_'.repeat(match.length))
+        .replace(/'[^']*'?/g, match => '_'.repeat(match.length))
+        .replace(/\/\/.*$/, match => '_'.repeat(match.length));
+    }
+
+    /// 光标是不是停在 Java 泛型参数里（`Map<String, I|`）。是就返回已输入的前缀，不是返回 null。
+    ///
+    /// `<` 前面必须是**大写开头的标识符**才算泛型开口，否则 `if (i < n` 也会被当成泛型；
+    /// 不算数的开口照样入栈（记 -1），这样 `a < b && c > d` 能正常配平。
+    /// `->` 里的 `>` 是 lambda 箭头，不是闭合。
+    function javaGenericArgumentPrefix(lineBeforeCursor, normalizedLanguage) {
+      if (normalizedLanguage !== 'java') return null;
+      const source = maskLiterals(lineBeforeCursor);
+      const openings = [];
+      for (let i = 0; i < source.length; i++) {
+        const ch = source[i];
+        if (ch === '<') {
+          const owner = source.slice(0, i).match(/[A-Za-z_$][\w$]*$/)?.[0] || '';
+          openings.push(/^[A-Z]/.test(owner) ? i : -1);
+        } else if (ch === '>') {
+          if (source[i - 1] === '-') continue;
+          openings.pop();
+        }
+      }
+      if (!openings.length || openings[openings.length - 1] < 0) return null;
+      return lineBeforeCursor.match(/[\w$]*$/)?.[0] ?? '';
+    }
+
     function codeCompletionHint(cm, hintLanguage) {
       const cursor = cm.getCursor();
       const line = cm.getLine(cursor.line);
@@ -390,6 +434,24 @@
           from: CodeMirror.Pos(cursor.line, cursor.ch - prefix.length),
           to: cursor
         };
+      }
+      const genericPrefix = javaGenericArgumentPrefix(lineBeforeCursor, normalizedLanguage);
+      if (genericPrefix !== null) {
+        const needle = genericPrefix.toLowerCase();
+        const words = CodeMirror.hint.anyword(cm, { word: /[\w$]+/, range: 500 }).list || [];
+        // 文件里出现过的大写标识符多半是类名（自定义的 Node、Pair 这些）。
+        const classNames = words
+          .map(item => (typeof item === 'string' ? item : (item && item.text)) || '')
+          .filter(text => /^[A-Z][\w$]*$/.test(text))
+          .map(text => [text, '当前文件']);
+        const seen = new Set();
+        const list = [];
+        for (const [text, detail] of [...JAVA_TYPE_ARGUMENTS, ...classNames]) {
+          if (seen.has(text) || !text.toLowerCase().startsWith(needle)) continue;
+          seen.add(text);
+          list.push({ text, displayText: text, detail, kind: 'type', render: renderCodeCompletion, hint: applyCompletion });
+        }
+        return { list, from: CodeMirror.Pos(cursor.line, cursor.ch - genericPrefix.length), to: cursor };
       }
       let start = cursor.ch;
       while (start && /[\w$+#-]/.test(line.charAt(start - 1))) start -= 1;
@@ -433,35 +495,62 @@
         .replace(/\$\d+/g, '');
     }
 
-    /// 括号里那段的范围。`sort(int[] a)` → 参数从 `(` 之后到配对的 `)`。
+    /// 一对括号里那段内容的范围（要选中的部分）。空括号返回 null——里面没东西可选。
     /// 按深度配对，不用正则：`max(a, min(b, c))` 的外层右括号在最后。
-    function parameterSpan(text) {
-      const open = text.indexOf('(');
-      if (open < 0) return null;
+    function bracketSpan(text, open, close) {
+      const start = text.indexOf(open);
+      if (start < 0) return null;
       let depth = 0;
-      for (let i = open; i < text.length; i++) {
-        if (text[i] === '(') depth++;
-        else if (text[i] === ')') {
+      for (let i = start; i < text.length; i++) {
+        if (text[i] === open) depth++;
+        else if (text[i] === close) {
           depth--;
-          if (depth === 0) return { open, close: i };
+          if (depth === 0) return i > start + 1 ? { from: start + 1, to: i } : null;
         }
       }
-      return { open, close: -1 };
+      // JDT 偶尔给半截（`sort(int[] a`）：有内容就选到末尾。
+      return text.length > start + 1 ? { from: start + 1, to: text.length } : null;
     }
 
-    /// 接受函数类补全后，光标落在括号里；括号里已经有参数名（JDT 给的
-    /// `sort(int[] a)` 这种）就整段选中，直接打字覆盖，不用自己退回去删。
+    /// 不接参数的方法。补全后光标留在末尾更顺手，收进空括号反而要多按一下右方向键。
+    const NO_ARGUMENT_METHODS = new Set([
+      'size', 'length', 'isEmpty', 'toCharArray', 'reverse', 'clear', 'iterator', 'hashCode', 'toString',
+      'trim', 'toLowerCase', 'toUpperCase', 'keySet', 'values', 'entrySet', 'getKey', 'getValue',
+      'pop', 'poll', 'peek', 'pollFirst', 'pollLast', 'peekFirst', 'peekLast', 'removeFirst', 'removeLast',
+      'next', 'hasNext', 'popleft', 'items', 'keys', 'begin', 'end', 'top', 'front', 'back', 'empty', 'pop_back'
+    ]);
+
+    /// `(` 之前那个标识符（先剥掉泛型）：`Arrays.sort(` → `sort`，`ArrayList<>(` → `ArrayList`。
+    function calleeName(text, open) {
+      return text.slice(0, open).replace(/<[^<>]*>\s*$/, '').match(/[\w$]+$/)?.[0] || '';
+    }
+
+    /// 接受候选后光标落在哪。只有**真的有东西要填**才把光标收进去：
+    ///   sort(int[] a)              → 整段选中 `int[] a`，打字直接覆盖
+    ///   Map<K, V>                  → 整段选中 `K, V`
+    ///   add() / Arrays.sort()      → 光标进空括号：这些方法还得填参数
+    ///   new ArrayList<>() / size() → 不动，光标停在末尾，接着写 `;` 就行
+    function placeholderSpan(text) {
+      const filled = bracketSpan(text, '(', ')') || bracketSpan(text, '<', '>');
+      if (filled) return filled;
+      const open = text.indexOf('(');
+      if (open < 0 || text[open + 1] !== ')') return null;
+      const name = calleeName(text, open);
+      // 大写开头 = 构造器或类型（`new ArrayList<>()`、`StringBuilder()`），补完就该往下写。
+      if (!name || /^[A-Z]/.test(name) || NO_ARGUMENT_METHODS.has(name)) return null;
+      return { from: open + 1, to: open + 1 };
+    }
+
     function applyCompletion(cm, data, completion) {
       const text = String(completion.text || '');
       cm.replaceRange(text, data.from, data.to, 'complete');
       if (text.includes('\n')) return;
-      const span = parameterSpan(text);
+      const span = placeholderSpan(text);
       if (!span) return;
       const line = data.from.line;
-      const inside = data.from.ch + span.open + 1;
-      const end = span.close < 0 ? inside : data.from.ch + span.close;
-      if (end > inside) cm.setSelection({ line, ch: inside }, { line, ch: end });
-      else cm.setCursor({ line, ch: inside });
+      const from = { line, ch: data.from.ch + span.from };
+      if (span.to > span.from) cm.setSelection(from, { line, ch: data.from.ch + span.to });
+      else cm.setCursor(from);
     }
 
     function mergeRemoteCompletions(local, remoteItems) {
@@ -768,6 +857,8 @@
       const constructorContext = language === 'java' && /\bnew\s+(?:[A-Za-z_$][\w$]*)?$/.test(before);
       if (/[\w$.]$/.test(inserted) && (prefix.length >= 1 || before.endsWith('.'))) complete(cm);
       else if (/\s$/.test(inserted) && constructorContext) complete(cm);
+      // `Map<` 刚敲下尖括号时还没有任何前缀，但这一刻正是最该给类型候选的时候。
+      else if (inserted === '<' && javaGenericArgumentPrefix(before, normalizedCompletionLanguage(language)) !== null) complete(cm);
       else { completionGeneration += 1; clearTimeout(remoteTimer); }
     });
 

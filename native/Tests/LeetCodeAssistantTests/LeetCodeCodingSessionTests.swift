@@ -328,9 +328,8 @@ final class CodeEditorScriptTests: XCTestCase {
     }
 }
 
-/// 编辑器里的两条交互约定，改动时容易顺手删掉，用源码守卫钉住。
-/// 行为本身在 WKWebView harness 里验证过（本地 `sort()` 光标进括号、
-/// 远端 `sort(int[] a)` 参数整段选中、普通标识符不受影响）。
+/// 补全的**接线**约定，改动时容易顺手删掉，用源码守卫钉住。
+/// 落位与泛型判定的逻辑本身在 `CodeEditorCompletionTests` 里真跑。
 final class CompletionInsertionScriptTests: XCTestCase {
     private func editorSource() throws -> String {
         let url = URL(fileURLWithPath: #filePath)
@@ -343,12 +342,21 @@ final class CompletionInsertionScriptTests: XCTestCase {
         let source = try editorSource()
         XCTAssertTrue(source.contains("function applyCompletion(cm, data, completion)"))
         XCTAssertTrue(source.contains("hint: applyCompletion"), "远端候选必须走 applyCompletion，否则光标停在末尾")
-        XCTAssertTrue(source.contains("function parameterSpan(text)"))
+        XCTAssertTrue(source.contains("function placeholderSpan(text)"))
     }
 
     /// 补全候选和已输入内容一样时回车要换行（PR #5），但我们把光标挪进括号时不能再补换行。
     func testEnterFallbackChecksCursorMovement() throws {
         let source = try editorSource()
         XCTAssertTrue(source.contains("!moved && !instance.somethingSelected()"))
+    }
+
+    /// `Map<` 刚敲下尖括号时没有任何前缀，不专门触发的话这一刻什么都不弹。
+    func testOpeningAngleBracketTriggersCompletion() throws {
+        let source = try editorSource()
+        XCTAssertTrue(
+            source.contains("inserted === '<' && javaGenericArgumentPrefix("),
+            "`<` 要能触发补全，否则泛型位只有先打个字母才有候选"
+        )
     }
 }
