@@ -237,3 +237,74 @@ extension ConversationChunkerTests {
         }
     }
 }
+
+// MARK: - 表格
+
+extension ConversationChunkerTests {
+    private static let tableLimits = ConversationChunker.Limits(
+        targetTokens: 80, minimumTokens: 10, maximumTokens: 400, overlapTokens: 16
+    )
+
+    private func tableChunks(_ markdown: String) -> [String] {
+        ConversationChunker.chunks(
+            title: "表",
+            archive: [],
+            messages: [("u1", "user", "看表"), ("a1", "assistant", markdown)],
+            limits: Self.tableLimits
+        ).map(\.content)
+    }
+
+    /// 小表整张进，不拆——拆开就丢了行与行之间的对比关系。
+    func testSmallTableStaysWhole() {
+        let table = """
+        | 方案 | 命中率 | 说明 |
+        | --- | --- | --- |
+        | BM25 | 76.9% | 单路 |
+        | 融合 | 96.2% | 双路 |
+        """
+        let holding = tableChunks(table).filter { $0.contains("BM25") || $0.contains("融合") }
+        XCTAssertEqual(holding.count, 1, "小表被拆到了不同块里")
+    }
+
+    /// 大表按行切，且**每一个含数据行的块都必须带表头**。
+    /// 断言口径要盯"所有含数据行的块"，不能只挑含某关键词的块——
+    /// 后者会把缺表头的块自己筛掉，等于没测。
+    func testLargeTableSplitsPerRowAndEveryRowCarriesItsHeader() {
+        let header = "| 题号 | 题目 | 错因 |"
+        let separator = "| --- | --- | --- |"
+        var rows = [header, separator]
+        for i in 1...30 {
+            rows.append("| \(i) | 第\(i)题名称占位内容 | 边界没考虑清楚导致越界 |")
+        }
+        let chunks = tableChunks(rows.joined(separator: "\n"))
+        let withRows = chunks.filter { $0.contains("题名称占位内容") }
+
+        XCTAssertGreaterThan(withRows.count, 1, "大表应该被切成多块")
+        // 每一块都要能独立渲染成一张合法的小表。
+        let missing = withRows.filter { !$0.contains(header) || !$0.contains(separator) }
+        XCTAssertTrue(missing.isEmpty, "\(missing.count)/\(withRows.count) 个块缺表头或分隔行")
+    }
+
+    /// 行本身永远不被切断。
+    func testTableRowIsNeverSplitInHalf() {
+        var rows = ["| 键 | 值 |", "| --- | --- |"]
+        for i in 1...40 { rows.append("| key\(i) | value\(i)非常长的一段说明文字占位内容 |") }
+        for chunk in tableChunks(rows.joined(separator: "\n")) {
+            for line in chunk.components(separatedBy: "\n") where line.hasPrefix("| key") {
+                XCTAssertTrue(line.hasSuffix("|"), "行被切断了：\(line)")
+            }
+        }
+    }
+
+    /// 竖线分隔的普通文本不能被误判成表格。
+    func testPipeSeparatedProseIsNotTreatedAsTable() {
+        let prose = """
+        管道命令是 cat a | grep b | wc -l 这种形式。
+        它和表格没有关系，只是碰巧有竖线。
+        再写一句让它够长一点，避免被当成碎块合并掉。
+        """
+        let joined = tableChunks(prose).joined()
+        XCTAssertTrue(joined.contains("管道命令"))
+        XCTAssertFalse(joined.contains("| --- |"), "普通文本被当成表格处理了")
+    }
+}

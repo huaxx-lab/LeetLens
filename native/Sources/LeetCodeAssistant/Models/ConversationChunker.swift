@@ -163,7 +163,13 @@ enum ConversationChunker {
         func appendProse() {
             guard !proseLines.isEmpty else { return }
             for block in proseBlocks(from: proseLines) where !block.isEmpty {
-                if isAtomicMarkdownBlock(block) {
+                if let rows = tableUnits(in: block) {
+                    // 表格：整张放得下就整张进，放不下才按行切，且**每行都补回表头**。
+                    // 不补表头的话 `| 融合 | 96.2% |` 单独出现时没人知道这几列是什么。
+                    result.append(contentsOf: rows.map {
+                        Unit(text: $0, messageID: messageID, role: role, kind: .prose)
+                    })
+                } else if isAtomicMarkdownBlock(block) {
                     // 列表项 + 它的缩进续行是一个语义单元。若再按句号切一次，
                     // "- 结论。\n  解释。" 仍会被劈开，等于前面的 Markdown 识别白做。
                     result.append(Unit(text: block, messageID: messageID, role: role, kind: .prose))
@@ -215,6 +221,36 @@ enum ConversationChunker {
 
     /// 列表项自身及其缩进续行必须保持原子性；token 预算只能决定它前后在哪落块，
     /// 不能把一项内部的"结论"和"解释"分开。
+    /// 表格整张放得下就不拆。超过这个预算才按行切——
+    /// 目标块 360，一张 240 token 的表整块进去仍留得下上下文。
+    private static let tableWholeLimit = 240
+
+    /// Markdown 表格识别。返回 nil 表示这不是表格。
+    ///
+    /// 判据要两条同时成立：每行都以 `|` 开头，且第二行是 `|---|---|` 这种分隔行。
+    /// 只看 `|` 会把"竖线当分隔符的普通文本"误判成表格。
+    private static func tableUnits(in block: String) -> [String]? {
+        let lines = block.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard lines.count >= 3 else { return nil }
+        guard lines.allSatisfy({ $0.hasPrefix("|") }) else { return nil }
+        let separator = lines[1]
+        guard separator.range(
+            of: #"^\|(?:\s*:?-{2,}:?\s*\|)+$"#, options: .regularExpression
+        ) != nil else { return nil }
+
+        // 整张放得下就整块入库：拆开反而丢了行与行之间的对比关系。
+        if ConversationContextEstimator.estimateTextTokens(block) <= tableWholeLimit {
+            return [block]
+        }
+        let header = lines[0]
+        let body = lines.dropFirst(2)
+        guard !body.isEmpty else { return [block] }
+        // 每行独立成单元，自带表头与分隔行——单独被召回时仍是一张合法的小表。
+        return body.map { "\(header)\n\(separator)\n\($0)" }
+    }
+
     private static func isAtomicMarkdownBlock(_ text: String) -> Bool {
         text.range(of: #"^\s*(?:[-*+]\s+|\d+[.)]\s+)"#, options: .regularExpression) != nil
     }
